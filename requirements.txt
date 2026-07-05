@@ -1,0 +1,4 @@
+PyQt6
+python-osc
+SpeechRecognition
+pyaudio
