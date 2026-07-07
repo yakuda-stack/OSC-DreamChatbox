@@ -2,7 +2,7 @@
 
 All notable changes to OSC-DreamChatbox are documented here.
 
-## [Unreleased]
+## [v1.0.1-alpha] – 2026-07-07
 
 ### Removed
 - **OSC Routing** removed completely (UDP relay, source list, managed
