@@ -6,3 +6,5 @@ build/
 dist/
 *.spec
 appimagetool
+AppDir/
+*.AppImage

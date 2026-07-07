@@ -15,13 +15,28 @@
 
 ## ✨ What can it do?
 
+*(Personal Status, MediaPlay, Hardware and All-in-one live on the **Text Apps** page.)*
+
 ### 📝 Personal Status
-- Up to **10 rotating status texts** with an adjustable change interval
+- Up to **10 status texts** with an adjustable change interval
+- Texts switch **randomly** (never the same one twice in a row)
 - Built-in **icon picker** (🔥 🎵 🎮 …) for every text field
 
 ### 🎵 MediaPlay
 - Shows the song you are listening to – **Spotify, YT Music, browsers, VLC, any player** (via MPRIS/D-Bus, no extra setup)
 - Toggle artist / title (max 24 chars) / time / progress songbar individually
+- Time is shown **without seconds** (hours:minutes, e.g. `0:03/0:04`)
+- **6 selectable songbar styles**:
+
+  | # | Style |
+  |---|---|
+  | 1 | `[───●────────────────]` |
+  | 2 | `──■──` |
+  | 3 | `[████████░░░░░░░░░░░░]` |
+  | 4 | `▰▰▰▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱▱` |
+  | 5 | `🎵🎵🎵🎵🎵🎵🎵─────────────` |
+  | 6 | `▓▓▓▓▓▓▓▓░░░░░░░░░░░░` (classic) |
+
 - Custom string with placeholders: `{artist} {title} {time} {bar} {icon_sound}`
 
 ### 🖥️ Hardware
@@ -42,11 +57,6 @@
   - "Block apps" toggle that pauses all automatic senders while you talk
 - All cards freely **drag & drop reorderable**
 
-### 🎛️ OSC Routing
-- Tiny **UDP relay**: other OSC programs (OSC Leash, face tracking, …) send to the router, it forwards everything bundled through one connection to VRChat – no more port conflicts
-- Live list of connected programs with per-program blocking
-- **Managed programs**: add AppImages/.sh/commands, start & stop them from inside the app, per-program **debug console** with live output
-
 ### 🥚 Slim Chatbox (default ON)
 - Appends the invisible characters `\u0003\u001f` so VRChat renders a **slim bar instead of the huge box** (the hidden "BlankEgg" trick from MagicChatbox – here it's just a normal setting)
 - The suffix is guaranteed to survive even at the 144-char limit
@@ -56,13 +66,15 @@
 - Character counter with limit warning
 - Debug console, update checker, dark UI, everything saved to `~/.config/OSC-DreamChatbox/config.json`
 
+> ℹ️ The former **OSC Routing** and **Addons/OSC Apps** features were removed – external tools (OSCLeash, face tracking, …) handle port discovery via **OSCQuery** nowadays, so the built-in relay and installer were unnecessary ballast.
+
 ---
 
 ## 🚀 Installation
 
 ### One-line install
 ```bash
-curl -sL https://raw.githubusercontent.com/yakuda-stack/OSC-DreamChatbox/main/install.sh | bash
+curl -sL https://raw.githubusercontent.com/yakuda-stack/OSC-DreamChatbox/main/scripts/install.sh | bash
 ```
 Then launch **OSC DreamChatbox** from your app menu or run `osc-dreamchatbox`.
 
@@ -87,6 +99,32 @@ yay -S python-python-osc
 | Speech to Text | `SpeechRecognition` + `pyaudio` (Arch: `python-pyaudio`) |
 | Exact GPU name | `mesa-utils` (glxinfo) |
 | NVIDIA stats | `nvidia-smi` (driver package) |
+
+---
+
+## 📁 Project structure
+
+```
+OSC-DreamChatbox/
+├── osc_dreamchatbox.py   # entry point (GUI starter)
+├── core/                 # backend logic
+│   ├── constants.py      #   app name, version, paths
+│   ├── textutils.py      #   time format, songbar styles, templates
+│   ├── mediafetch.py     #   MPRIS/D-Bus media fetcher
+│   ├── hardware.py       #   CPU/RAM/GPU monitoring
+│   └── speechtotext.py   #   speech recognition + translation
+├── ui/                   # UI widgets & stylesheet
+│   ├── mainwindow.py     #   main window (Text Apps, Textbox, Options)
+│   └── ui_main.py
+├── assets/               # icons & images
+│   └── icon.png          #   window/taskbar icon (loaded from here)
+├── scripts/              # install & build scripts
+│   ├── install.sh
+│   ├── build-appimage.sh   (PyInstaller one-file build)
+│   └── build_appimage.sh   (bundled-source build)
+├── start.sh              # run from a local venv
+└── requirements.txt
+```
 
 ---
 
