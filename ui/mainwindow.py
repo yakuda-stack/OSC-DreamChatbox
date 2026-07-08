@@ -20,7 +20,7 @@ from PyQt6.QtCore import QUrl
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QLabel, QLineEdit, QPushButton,
     QVBoxLayout, QHBoxLayout, QFrame, QCheckBox, QSpinBox, QStackedWidget,
-    QScrollArea, QComboBox, QFileDialog
+    QScrollArea, QComboBox, QFileDialog, QListWidget
 )
 
 from core.constants import (APP_NAME, VERSION, GITHUB_REPO, DISCORD_URL,
@@ -29,7 +29,10 @@ from core.constants import (APP_NAME, VERSION, GITHUB_REPO, DISCORD_URL,
                             CHATBOX_LIMIT, TITLE_MAX_LEN, SONGBAR_LEN)
 from core.textutils import (fmt_time, fmt_time_hm,
                             apply_template, make_songbar,
-                            SONGBAR_STYLES)
+                            SONGBAR_STYLES, CUSTOM_STYLE_INDEX,
+                            DEFAULT_CUSTOM_BAR)
+from core import queryfix
+from core.oscquery import OSCQueryService, HAS_ZEROCONF
 from core.mediafetch import MediaFetcher
 from core.hardware import HardwareMonitor
 from core.speechtotext import SpeechWorker, LANGUAGES, OUTPUT_LANGUAGES
@@ -64,6 +67,8 @@ class MainWindow(QMainWindow):
         self.aio_index = 0
         self.stt = SpeechWorker()
         self.stt_recording = False
+        self.oscq = OSCQueryService(APP_NAME, self.log)
+        self._oscq_applied = None   # zuletzt uebernommenes VRChat-Ziel
         self._block_updating = False
         self.hw = HardwareMonitor(self.log)
         self.hw_info = None
@@ -87,6 +92,12 @@ class MainWindow(QMainWindow):
 
         self.build_ui()
         self.apply_config_to_ui()
+        # natives OSCQuery: dynamische Ports + VRChat-Discovery
+        self.oscq_timer = QTimer(self)
+        self.oscq_timer.timeout.connect(self.poll_oscquery)
+        if self.cfg.get("oscquery_enabled") and HAS_ZEROCONF:
+            if self.oscq.start():
+                self.oscq_timer.start(2000)
         self.update_osc_client()
         self.update_timers()
 
@@ -103,7 +114,9 @@ class MainWindow(QMainWindow):
             "media_show_title": True,
             "media_show_time": True,
             "media_show_bar": True,
-            "media_bar_style": 2,   # 0-4, see SONGBAR_STYLES
+            "oscquery_enabled": True,   # natives OSCQuery (mDNS)
+            "media_bar_style": 2,   # 0-5 presets, 6 = custom
+            "media_bar_custom": dict(DEFAULT_CUSTOM_BAR),
             "media_poll_sec": 1,
             "hw_active": False,
             "app_order": ["status", "media", "hardware"],
@@ -506,10 +519,47 @@ class MainWindow(QMainWindow):
         self.bar_style_combo = QComboBox()
         for preview in SONGBAR_STYLES:
             self.bar_style_combo.addItem(preview)
+        self.bar_style_combo.addItem("Custom \u2026")   # own style
         self.bar_style_combo.currentIndexChanged.connect(self.on_bar_style)
         style_row.addWidget(self.bar_style_combo)
         style_row.addStretch()
         mc.addLayout(style_row)
+
+        # custom style editor (only visible when "Custom" is selected)
+        self.bar_custom_box = QWidget()
+        cb = QVBoxLayout(self.bar_custom_box)
+        cb.setContentsMargins(24, 0, 0, 0)
+        cb.setSpacing(6)
+        chint = QLabel("Build your own songbar: start/end are optional "
+                       "brackets, \"filled\"/\"empty\" are the bar "
+                       "characters. If \"knob\" is set, a knob travels "
+                       "over the empty character instead of filling.")
+        chint.setObjectName("dim")
+        chint.setWordWrap(True)
+        cb.addWidget(chint)
+        crow = QHBoxLayout()
+        self.bar_custom_inputs = {}
+        for key, label, width in (("prefix", "Start", 44),
+                                  ("filled", "Filled", 44),
+                                  ("knob", "Knob", 44),
+                                  ("empty", "Empty", 44),
+                                  ("suffix", "End", 44)):
+            crow.addWidget(QLabel(label + ":"))
+            edit = QLineEdit()
+            edit.setFixedWidth(width)
+            edit.setMaxLength(4)
+            edit.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            edit.textChanged.connect(
+                lambda text, k=key: self.on_bar_custom(k, text))
+            self.bar_custom_inputs[key] = edit
+            crow.addWidget(edit)
+        crow.addSpacing(10)
+        self.bar_custom_preview = QLabel("")
+        self.bar_custom_preview.setObjectName("dim")
+        crow.addWidget(self.bar_custom_preview)
+        crow.addStretch()
+        cb.addLayout(crow)
+        mc.addWidget(self.bar_custom_box)
 
         poll_row = QHBoxLayout()
         poll_row.addWidget(QLabel("Query media player every"))
@@ -1296,6 +1346,111 @@ class MainWindow(QMainWindow):
         title.setObjectName("pagetitle")
         layout.addWidget(title)
 
+        # ---------------- OSCQuery Fix (core/queryfix.py) ----------------
+        qcard = QFrame()
+        qcard.setObjectName("card")
+        qc = QVBoxLayout(qcard)
+        qc.setContentsMargins(16, 14, 16, 16)
+        qc.setSpacing(10)
+        qhead = QHBoxLayout()
+        qtitle = QLabel("OSCQuery")
+        qtitle.setObjectName("cardtitle")
+        qhead.addWidget(qtitle)
+        qhead.addStretch()
+        self.queryfix_btn = QPushButton("\U0001F527  Fix OSCQuery")
+        self.queryfix_btn.setObjectName("sendbtn")
+        self.queryfix_btn.setFixedHeight(30)
+        self.queryfix_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.queryfix_btn.clicked.connect(self.on_queryfix)
+        qhead.addWidget(self.queryfix_btn)
+        qc.addLayout(qhead)
+        qdesc = QLabel("Native OSCQuery: on startup the app picks a free "
+                       "dynamic port, registers itself via mDNS and "
+                       "discovers the real OSC input port of the running "
+                       "VRChat instance – no more hard-coded 9000/9001, "
+                       "no port conflicts with other VR tools.")
+        qdesc.setObjectName("dim")
+        qdesc.setWordWrap(True)
+        qc.addWidget(qdesc)
+        qtog_row = QHBoxLayout()
+        self.toggle_oscquery = ToggleSwitch()
+        self.toggle_oscquery.toggled.connect(self.on_oscquery_toggled)
+        qtog_row.addWidget(self.toggle_oscquery)
+        qtog_row.addWidget(ToggleLabel(
+            "Native OSCQuery (dynamic port + VRChat auto-detect)",
+            self.toggle_oscquery))
+        qtog_row.addStretch()
+        qc.addLayout(qtog_row)
+        self.oscq_status = QLabel("")
+        self.oscq_status.setObjectName("dim")
+        self.oscq_status.setWordWrap(True)
+        qc.addWidget(self.oscq_status)
+        if not HAS_ZEROCONF:
+            self.toggle_oscquery.setEnabled(False)
+
+        qline = QFrame()
+        qline.setFrameShape(QFrame.Shape.HLine)
+        qline.setObjectName("hline")
+        qc.addWidget(qline)
+
+        qfix_desc = QLabel("\"Fix OSCQuery\" enables OSCQuery directly in "
+                           "the config of every supported program (all "
+                           "other settings in the file stay untouched). "
+                           "The program list lives in core/queryfix.py – "
+                           "easy to extend.")
+        qfix_desc.setObjectName("dim")
+        qfix_desc.setWordWrap(True)
+        qc.addWidget(qfix_desc)
+
+        # collapsible, scrollable list of supported programs
+        self.qf_expander = QPushButton(
+            "\u25B8  Show supported programs "
+            f"({len(queryfix.PROGRAMS)})")
+        self.qf_expander.setObjectName("expander")
+        self.qf_expander.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.qf_expander.clicked.connect(self.on_qf_expand)
+        qc.addWidget(self.qf_expander)
+
+        self.qf_body = QWidget()
+        qfb = QVBoxLayout(self.qf_body)
+        qfb.setContentsMargins(12, 0, 0, 0)
+        qfb.setSpacing(6)
+        self.qf_list = QListWidget()
+        self.qf_list.setMaximumHeight(140)   # fixed height -> scrollbar
+        self.qf_list.setStyleSheet(
+            "QListWidget { background: #14161c; border: 1px solid #2c313c;"
+            " border-radius: 10px; padding: 4px; }"
+            "QListWidget::item { padding: 5px 8px; border-radius: 6px; }"
+            "QListWidget::item:hover { background: #232833; }"
+            "QListWidget::item:selected { background: #2a2f3a;"
+            " color: #ffffff; }")
+        for prog in queryfix.PROGRAMS:
+            self.qf_list.addItem(prog["name"])
+        self.qf_list.itemClicked.connect(self.on_qf_select)
+        qfb.addWidget(self.qf_list)
+        # per-program details, fold in/out on click
+        self.qf_details = QFrame()
+        self.qf_details.setObjectName("innerbox")
+        qfd = QVBoxLayout(self.qf_details)
+        qfd.setContentsMargins(14, 10, 14, 12)
+        self.qf_details_lbl = QLabel("")
+        self.qf_details_lbl.setObjectName("dim")
+        self.qf_details_lbl.setStyleSheet(
+            "font-family: monospace; font-size: 12px;")
+        self.qf_details_lbl.setWordWrap(True)
+        qfd.addWidget(self.qf_details_lbl)
+        self.qf_details.hide()
+        self._qf_details_idx = -1
+        qfb.addWidget(self.qf_details)
+        self.qf_body.hide()
+        qc.addWidget(self.qf_body)
+
+        self.queryfix_result = QLabel("")
+        self.queryfix_result.setObjectName("dim")
+        self.queryfix_result.setWordWrap(True)
+        qc.addWidget(self.queryfix_result)
+        layout.addWidget(qcard)
+
         card = QFrame()
         card.setObjectName("card")
         c = QVBoxLayout(card)
@@ -1470,10 +1625,19 @@ class MainWindow(QMainWindow):
         self.chk_time.setChecked(self.cfg["media_show_time"])
         self.chk_bar.setChecked(self.cfg["media_show_bar"])
         self.bar_style_combo.blockSignals(True)
-        self.bar_style_combo.setCurrentIndex(
-            min(len(SONGBAR_STYLES) - 1,
-                max(0, int(self.cfg.get("media_bar_style", 2)))))
+        idx = min(CUSTOM_STYLE_INDEX,
+                  max(0, int(self.cfg.get("media_bar_style", 2))))
+        self.bar_style_combo.setCurrentIndex(idx)
         self.bar_style_combo.blockSignals(False)
+        custom = dict(DEFAULT_CUSTOM_BAR)
+        custom.update(self.cfg.get("media_bar_custom", {}))
+        self.cfg["media_bar_custom"] = custom
+        for key, edit in self.bar_custom_inputs.items():
+            edit.blockSignals(True)
+            edit.setText(custom.get(key, ""))
+            edit.blockSignals(False)
+        self.bar_custom_box.setVisible(idx == CUSTOM_STYLE_INDEX)
+        self._update_bar_custom_preview()
         self.poll_spin.setValue(self.cfg["media_poll_sec"])
         self.chk_media_icon.setChecked(self.cfg["media_icon"])
         self.chk_media_custom.setChecked(self.cfg["media_custom"])
@@ -1524,6 +1688,10 @@ class MainWindow(QMainWindow):
         self.toggle_send.setChecked(self.cfg["send_to_vrchat"])
         self.interval_spin.setValue(self.cfg["interval_sec"])
         self.toggle_slim.setChecked(self.cfg["slim_chatbox"])
+        self.toggle_oscquery.blockSignals(True)
+        self.toggle_oscquery.setChecked(
+            bool(self.cfg.get("oscquery_enabled", True)) and HAS_ZEROCONF)
+        self.toggle_oscquery.blockSignals(False)
         self.ip_input.setText(self.cfg["osc_ip"])
         self.port_input.setValue(self.cfg["osc_port"])
         self.toggle_debug.setChecked(self.cfg["debug"])
@@ -1600,8 +1768,27 @@ class MainWindow(QMainWindow):
 
     def on_bar_style(self, idx):
         self.cfg["media_bar_style"] = int(idx)
+        self.bar_custom_box.setVisible(idx == CUSTOM_STYLE_INDEX)
+        self._update_bar_custom_preview()
         self.save_config()
         self.update_preview()
+
+    def on_bar_custom(self, key, text):
+        custom = dict(DEFAULT_CUSTOM_BAR)
+        custom.update(self.cfg.get("media_bar_custom", {}))
+        custom[key] = text
+        self.cfg["media_bar_custom"] = custom
+        self._update_bar_custom_preview()
+        self.save_config_later()
+        self.update_preview()
+
+    def _update_bar_custom_preview(self):
+        try:
+            bar = make_songbar(0.4, CUSTOM_STYLE_INDEX, SONGBAR_LEN,
+                               self.cfg.get("media_bar_custom"))
+        except Exception:
+            bar = ""
+        self.bar_custom_preview.setText(f"Preview:  {bar}")
 
     def on_media_option(self, key, on):
         self.cfg[key] = on
@@ -1750,6 +1937,46 @@ class MainWindow(QMainWindow):
         self.log(f"Send interval: every {val} seconds")
         self.update_timers()
 
+    def on_qf_expand(self):
+        """Folds the supported-programs list in/out."""
+        show = self.qf_body.isHidden()
+        self.qf_body.setVisible(show)
+        n = len(queryfix.PROGRAMS)
+        self.qf_expander.setText(
+            ("\u25BE  Hide supported programs" if show
+             else f"\u25B8  Show supported programs ({n})"))
+        if not show:
+            self.qf_details.hide()
+            self._qf_details_idx = -1
+
+    def on_qf_select(self, item):
+        """Click on a program: fold its details (path + parameter)
+        in/out below the list."""
+        idx = self.qf_list.row(item)
+        if idx == self._qf_details_idx and not self.qf_details.isHidden():
+            self.qf_details.hide()
+            self._qf_details_idx = -1
+            self.qf_list.clearSelection()
+            return
+        prog = queryfix.PROGRAMS[idx]
+        self.qf_details_lbl.setText(
+            f"{prog['name']}\n"
+            f"      path:      {prog['path']}\n"
+            f"      parameter: \"{prog['key']}\": "
+            f"{json.dumps(prog['value'])}")
+        self.qf_details.show()
+        self._qf_details_idx = idx
+
+    def on_queryfix(self):
+        """'Fix OSCQuery' button: writes the OSCQuery parameter into the
+        config of every supported program (list in core/queryfix.py)."""
+        results = queryfix.fix_all(self.log)
+        parts = [f"{'\u2705' if ok else '\u274C'} {name}: {msg}"
+                 for name, ok, msg in results]
+        self.queryfix_result.setText("\n".join(parts)
+                                     + "\n\u21BB Restart the programs to "
+                                       "apply the change.")
+
     def on_slim_toggled(self, on):
         self.cfg["slim_chatbox"] = on
         self.save_config()
@@ -1763,12 +1990,62 @@ class MainWindow(QMainWindow):
 
     # --------------------------------------------------------------- logic
     def update_osc_client(self):
+        """Creates the UDP client. With native OSCQuery active and a
+        discovered VRChat instance, its REAL input port is used –
+        otherwise the manually configured target (fallback)."""
+        ip, port = self.cfg["osc_ip"], self.cfg["osc_port"]
+        via = ""
+        if self.cfg.get("oscquery_enabled"):
+            target = self.oscq.vrchat_target()
+            if target is not None:
+                ip, port = target
+                via = " (via OSCQuery)"
         try:
-            self.osc_client = SimpleUDPClient(self.cfg["osc_ip"], self.cfg["osc_port"])
-            self.log(f"OSC target: {self.cfg['osc_ip']}:{self.cfg['osc_port']}")
+            self.osc_client = SimpleUDPClient(ip, port)
+            self.log(f"OSC target: {ip}:{port}{via}")
         except Exception as e:
             self.osc_client = None
             self.log(f"ERROR creating OSC client: {e}")
+
+    def poll_oscquery(self):
+        """Checks the discovery thread and applies a newly found (or
+        lost) VRChat target; also refreshes the status label."""
+        target = self.oscq.vrchat_target()
+        if target != self._oscq_applied:
+            self._oscq_applied = target
+            self.update_osc_client()
+        if hasattr(self, "oscq_status"):
+            if not self.cfg.get("oscquery_enabled"):
+                txt = "OSCQuery off – manual target is used."
+            elif not HAS_ZEROCONF:
+                txt = ("zeroconf not installed "
+                       "(pip install zeroconf) – manual target is used.")
+            elif not self.oscq.running:
+                txt = (f"not running ({self.oscq.error}) – "
+                       "manual target is used.")
+            elif target is not None:
+                txt = (f"\u2705 VRChat found: {target[0]}:{target[1]} "
+                       f"\u2013 registered as dynamic udp/"
+                       f"{self.oscq.osc_port}, http/{self.oscq.http_port}")
+            else:
+                txt = (f"\u23F3 searching for VRChat \u2026 registered "
+                       f"as dynamic udp/{self.oscq.osc_port}, "
+                       f"http/{self.oscq.http_port} "
+                       "(manual target used until found)")
+            self.oscq_status.setText(txt)
+
+    def on_oscquery_toggled(self, on):
+        self.cfg["oscquery_enabled"] = bool(on)
+        self.save_config()
+        if on and HAS_ZEROCONF:
+            if self.oscq.start():
+                self.oscq_timer.start(2000)
+        else:
+            self.oscq_timer.stop()
+            self.oscq.stop()
+            self._oscq_applied = None
+        self.update_osc_client()
+        self.poll_oscquery()
 
     def anything_to_send(self):
         status_on = self.cfg["status_active"] and bool(self.current_status_text())
@@ -1835,7 +2112,9 @@ class MainWindow(QMainWindow):
         bar = ""
         if info["length"] > 0:
             frac = min(1.0, max(0.0, info["position"] / info["length"]))
-            bar = make_songbar(frac, self.cfg["media_bar_style"], SONGBAR_LEN)
+            bar = make_songbar(frac, self.cfg["media_bar_style"],
+                               SONGBAR_LEN,
+                               self.cfg.get("media_bar_custom"))
         # music timer WITHOUT seconds – hours and minutes only
         time_str = (f"{fmt_time_hm(info['position'])}/"
                     f"{fmt_time_hm(info['length'])}"
@@ -1885,7 +2164,8 @@ class MainWindow(QMainWindow):
         if self.cfg["media_show_bar"] and info["length"] > 0:
             frac = min(1.0, max(0.0, info["position"] / info["length"]))
             lines.append(make_songbar(frac, self.cfg["media_bar_style"],
-                                      SONGBAR_LEN))
+                                      SONGBAR_LEN,
+                                      self.cfg.get("media_bar_custom")))
         if lines and self.cfg["media_icon"]:
             lines[0] = f"\U0001F3B5 {lines[0]} \U0001F3B5"
         return lines
@@ -2094,6 +2374,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, ev):
         self.stt.stop()
+        self.oscq.stop()
         self._save_timer.stop()
         self._write_config()
         self.debug_console.close()

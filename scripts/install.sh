@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # OSC-DreamChatbox installer
 # One-line install:
-#   curl -sL https://raw.githubusercontent.com/yakuda-stack/OSC-DreamChatbox/main/scripts/install.sh | bash
+#   curl -sL https://raw.githubusercontent.com/yakuda-stack/OSC-DreamChatbox/main/install.sh | bash
 set -e
 
 REPO="https://github.com/yakuda-stack/OSC-DreamChatbox"
@@ -39,8 +39,8 @@ fi
 echo "-> Creating virtual environment ..."
 python3 -m venv "$APP_DIR/venv"
 "$APP_DIR/venv/bin/pip" install --quiet --upgrade pip
-echo "-> Installing dependencies (PyQt6, python-osc, SpeechRecognition) ..."
-"$APP_DIR/venv/bin/pip" install --quiet PyQt6 python-osc SpeechRecognition
+echo "-> Installing dependencies (PyQt6, python-osc, SpeechRecognition, zeroconf) ..."
+"$APP_DIR/venv/bin/pip" install --quiet PyQt6 python-osc SpeechRecognition zeroconf
 
 echo "-> Installing pyaudio (optional, for Speech to Text) ..."
 if ! "$APP_DIR/venv/bin/pip" install --quiet pyaudio 2>/dev/null; then
@@ -62,7 +62,7 @@ chmod +x "$BIN_DIR/osc-dreamchatbox"
 # --- 5) desktop entry ---
 mkdir -p "$DESKTOP_DIR"
 ICON_LINE=""
-[ -f "$APP_DIR/assets/icon.png" ] && ICON_LINE="Icon=$APP_DIR/assets/icon.png"
+[ -f "$APP_DIR/icon.png" ] && ICON_LINE="Icon=$APP_DIR/icon.png"
 cat > "$DESKTOP_DIR/osc-dreamchatbox.desktop" <<DESK
 [Desktop Entry]
 Type=Application

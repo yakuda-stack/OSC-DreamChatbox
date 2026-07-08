@@ -35,10 +35,37 @@ SONGBAR_STYLES = [
 ]
 
 
-def make_songbar(frac: float, style: int, length: int = 13) -> str:
+# index used for the user-defined custom style (= after the presets)
+CUSTOM_STYLE_INDEX = len(SONGBAR_STYLES)
+
+DEFAULT_CUSTOM_BAR = {"prefix": "[", "filled": "\u2588",
+                      "empty": "\u2591", "knob": "", "suffix": "]"}
+
+
+def make_songbar(frac: float, style: int, length: int = 13,
+                 custom: dict | None = None) -> str:
     """Builds the music progress bar in the chosen style.
-    frac = progress 0.0 … 1.0, style = index into SONGBAR_STYLES."""
+    frac = progress 0.0 … 1.0, style = index into SONGBAR_STYLES or
+    CUSTOM_STYLE_INDEX for the user-defined style.
+
+    Custom style dict: {"prefix", "filled", "empty", "knob", "suffix"}
+      - knob EMPTY  -> fill mode:  prefix + filled*n + empty*rest + suffix
+      - knob SET    -> knob mode:  prefix + empty*pos + knob + empty*rest
+                                   + suffix (the knob travels)"""
     frac = min(1.0, max(0.0, frac))
+    if style == CUSTOM_STYLE_INDEX:
+        c = dict(DEFAULT_CUSTOM_BAR)
+        c.update(custom or {})
+        pre, suf = c.get("prefix", ""), c.get("suffix", "")
+        filled_ch = c.get("filled") or "\u2588"
+        empty_ch = c.get("empty") or "\u2591"
+        knob = c.get("knob", "")
+        if knob:
+            pos = min(length - 1, round(frac * (length - 1)))
+            return (pre + empty_ch * pos + knob
+                    + empty_ch * (length - 1 - pos) + suf)
+        filled = round(frac * length)
+        return pre + filled_ch * filled + empty_ch * (length - filled) + suf
     if style == 0:      # [───●────────────────]
         pos = min(length - 1, round(frac * (length - 1)))
         return ("[" + "\u2500" * pos + "\u25CF"

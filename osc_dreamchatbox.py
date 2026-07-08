@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-OSC-DreamChatbox v1.0.1-alpha
+OSC-DreamChatbox v1.0.2-alpha
 A simple, clean VRChat OSC chatbox sender for Linux.
 
 Entry point only – the actual code lives in:
@@ -32,8 +32,17 @@ def main():
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     # lets Wayland/KDE match the window to the .desktop entry, so the
-    # taskbar shows OUR icon instead of the generic Wayland "W"
-    app.setDesktopFileName("osc-dreamchatbox")
+    # taskbar shows OUR icon instead of the generic Wayland "W".
+    # Only register the name if the .desktop file actually exists –
+    # otherwise KDE's portal logs "App info not found for
+    # 'osc-dreamchatbox'" on every start.
+    import os
+    data_dirs = [Path.home() / ".local" / "share"]
+    data_dirs += [Path(d) for d in os.environ.get(
+        "XDG_DATA_DIRS", "/usr/local/share:/usr/share").split(":") if d]
+    if any((d / "applications" / "osc-dreamchatbox.desktop").exists()
+           for d in data_dirs):
+        app.setDesktopFileName("osc-dreamchatbox")
     root = Path(__file__).resolve().parent
     # icon lives in assets/ (fallback: project root for old checkouts)
     icon_path = root / "assets" / "icon.png"

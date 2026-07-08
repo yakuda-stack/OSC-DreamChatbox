@@ -1,26 +1,15 @@
 #!/bin/bash
 # OSC-DreamChatbox — AppImage Builder (bundled source)
 # Benötigt: python3, pip (appimagetool wird automatisch geladen)
-# Verwendung:  bash build_appimage.sh   (egal ob das Skript im
-# Projekt-Root oder in scripts/ liegt und von wo du es aufrufst)
+# Verwendung (aus dem Projekt-Root):  bash scripts/build_appimage.sh
 
 set -e
 
-# immer vom Projekt-Root aus arbeiten: erst ins Skript-Verzeichnis,
-# dann hochgehen bis core/constants.py gefunden ist
-cd "$(dirname "$0")"
-for _ in 1 2 3; do
-    [ -f core/constants.py ] && break
-    cd ..
-done
-if [ ! -f core/constants.py ]; then
-    echo "FEHLER: Projekt-Root nicht gefunden (core/constants.py fehlt)."
-    echo "        Bitte das Skript in den OSC-DreamChatbox-Ordner legen."
-    exit 1
-fi
+# immer vom Projekt-Root aus arbeiten, egal von wo das Skript startet
+cd "$(dirname "$0")/.."
 
 APP="OSC-DreamChatbox"
-# Version automatisch aus core/constants.py lesen (z.B. v1.0.2-alpha)
+# Version automatisch aus core/constants.py lesen (z.B. v1.0.1-alpha)
 VERSION="$(grep -o 'VERSION = "[^"]*"' core/constants.py | cut -d'"' -f2)"
 VERSION="${VERSION#v}"
 ARCH="x86_64"
@@ -102,9 +91,9 @@ cp "$BUILD_DIR/usr/share/applications/osc-dreamchatbox.desktop" "$BUILD_DIR/osc-
 echo "[4/5] Bundele Python-Abhängigkeiten..."
 mkdir -p "$BUILD_DIR/usr/lib/python3"
 pip install --target="$BUILD_DIR/usr/lib/python3" \
-    PyQt6 python-osc SpeechRecognition zeroconf 2>/dev/null || \
+    PyQt6 python-osc SpeechRecognition 2>/dev/null || \
     pip install --break-system-packages --target="$BUILD_DIR/usr/lib/python3" \
-    PyQt6 python-osc SpeechRecognition zeroconf || \
+    PyQt6 python-osc SpeechRecognition || \
     echo "[Warn] Abhängigkeiten konnten nicht gebundelt werden — müssen auf dem System vorhanden sein."
 pip install --target="$BUILD_DIR/usr/lib/python3" pyaudio 2>/dev/null || \
     pip install --break-system-packages --target="$BUILD_DIR/usr/lib/python3" pyaudio 2>/dev/null || \

@@ -26,7 +26,7 @@
 - Shows the song you are listening to – **Spotify, YT Music, browsers, VLC, any player** (via MPRIS/D-Bus, no extra setup)
 - Toggle artist / title (max 24 chars) / time / progress songbar individually
 - Time is shown **without seconds** (hours:minutes, e.g. `0:03/0:04`)
-- **6 selectable songbar styles**:
+- **7 songbar styles (6 presets + custom)**:
 
   | # | Style |
   |---|---|
@@ -36,6 +36,7 @@
   | 4 | `▰▰▰▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱▱` |
   | 5 | `🎵🎵🎵🎵🎵🎵🎵─────────────` |
   | 6 | `▓▓▓▓▓▓▓▓░░░░░░░░░░░░` (classic) |
+  | 7 | **Custom** – build your own (brackets, filled/empty chars, optional knob) with live preview |
 
 - Custom string with placeholders: `{artist} {title} {time} {bar} {icon_sound}`
 
@@ -60,6 +61,17 @@
 ### 🥚 Slim Chatbox (default ON)
 - Appends the invisible characters `\u0003\u001f` so VRChat renders a **slim bar instead of the huge box** (the hidden "BlankEgg" trick from MagicChatbox – here it's just a normal setting)
 - The suffix is guaranteed to survive even at the 144-char limit
+
+### 📡 Native OSCQuery (Options page)
+- No hard-coded ports anymore: the app picks a **free dynamic port**, registers itself via **mDNS/Zeroconf** (`_oscjson._tcp` + `_osc._udp`) and serves OSCQuery `HOST_INFO` over HTTP
+- The running **VRChat instance is auto-discovered** and its real OSC input port is used automatically – the manual target is only a fallback
+- Toggle + live status on the Options page; requires the `zeroconf` package
+
+### 🔧 OSCQuery Fix (Options page)
+- One button enables OSCQuery directly in the config of every supported program – other settings stay untouched
+- Currently supported: **OSCLeash** (`~/.config/OSCLeash/Config.json` → `"UseOSCQuery": true`) and **OscGoesBrrr** (`~/.config/OscGoesBrrr/config.json` → `"useOscQuery": true`)
+- Compact UI: collapsible "Show supported programs" expander with a scrollable list; click a program to fold its details (path + parameter) in/out
+- Easily extensible: all programs live in a single file, `core/queryfix.py`
 
 ### More
 - Drag & drop card order = line order in VRChat
@@ -110,6 +122,8 @@ OSC-DreamChatbox/
 ├── core/                 # backend logic
 │   ├── constants.py      #   app name, version, paths
 │   ├── textutils.py      #   time format, songbar styles, templates
+│   ├── queryfix.py       #   OSCQuery fixer (supported programs list)
+│   ├── oscquery.py       #   native OSCQuery (mDNS + dynamic ports)
 │   ├── mediafetch.py     #   MPRIS/D-Bus media fetcher
 │   ├── hardware.py       #   CPU/RAM/GPU monitoring
 │   └── speechtotext.py   #   speech recognition + translation

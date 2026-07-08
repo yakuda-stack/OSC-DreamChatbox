@@ -1,4 +1,4 @@
 PyQt6
 python-osc
 SpeechRecognition
-pyaudio
+zeroconf

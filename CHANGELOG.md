@@ -2,6 +2,30 @@
 
 All notable changes to OSC-DreamChatbox are documented here.
 
+## [v1.0.2-alpha] – 2026-07-08
+
+### Added
+- **Native OSCQuery** (`core/oscquery.py`): the app no longer binds
+  hard-coded ports. On startup it picks a free dynamic UDP port,
+  serves OSCQuery HOST_INFO over HTTP and registers both via
+  mDNS/Zeroconf; the running VRChat instance is auto-discovered and
+  its REAL OSC input port is used as send target (manual target stays
+  as fallback). Toggle + live status on the Options page. Needs the
+  `zeroconf` package (bundled by install/build scripts).
+- **OSCQuery Fix UI reworked**: collapsible "Show supported programs"
+  expander with a compact, scrollable list (fixed max height) –
+  clicking a program folds its details (path + parameter) in and out
+- **Custom songbar style**: new "Custom …" entry in the songbar style
+  dropdown with its own editor (start/end brackets, filled/empty
+  characters, optional travelling knob) and live preview – build your
+  own bar, stored as `media_bar_custom`
+- **OSCQuery Fix** on the Options page: one button writes the OSCQuery
+  parameter directly into the config of every supported program
+  (other settings in the file stay untouched). Supported programs
+  live in a single, easily extensible `core/queryfix.py`:
+  - OSCLeash    – `~/.config/OSCLeash/Config.json` → `"UseOSCQuery": true`
+  - OscGoesBrrr – `~/.config/OscGoesBrrr/config.json` → `"useOscQuery": true`
+
 ## [v1.0.1-alpha] – 2026-07-07
 
 ### Removed
