@@ -54,7 +54,8 @@
 - **Editable presets** (default 5, expandable to 20) with one-click send
 - **Speech to Text** 🎤 – speak, it transcribes in realtime and sends to VRChat
   - 15 input languages, **live translation** to 13 output languages
-  - Optional **DeepL API** support (own key) for better quality, with Google fallback
+  - **Four selectable translation services**: Lingva Translate (default – anonymous proxy, no key, no Google tracking), Google Translate direct (fastest, no proxy hop), LibreTranslate (local instance, 100% offline – install once with `pip install libretranslate`, then a **Start/Stop server button** appears right in the UI; the server is shut down automatically when the app closes) or the official DeepL API (own key, typed error handling)
+  - Automatic fallback chain if the chosen service fails: **Lingva first, then direct Google** (e.g. DeepL monthly limit reached or local instance down)
   - "Block apps" toggle that pauses all automatic senders while you talk
 - All cards freely **drag & drop reorderable**
 
@@ -109,6 +110,8 @@ yay -S python-python-osc
 | Feature | Needs |
 |---|---|
 | Speech to Text | `SpeechRecognition` + `pyaudio` (Arch: `python-pyaudio`) |
+| DeepL translation | `deepl` (official library, in requirements.txt) |
+| Offline translation | local LibreTranslate: `pip install libretranslate`, then run `libretranslate` |
 | Exact GPU name | `mesa-utils` (glxinfo) |
 | NVIDIA stats | `nvidia-smi` (driver package) |
 
@@ -124,6 +127,7 @@ OSC-DreamChatbox/
 │   ├── textutils.py      #   time format, songbar styles, templates
 │   ├── queryfix.py       #   OSCQuery fixer (supported programs list)
 │   ├── oscquery.py       #   native OSCQuery (mDNS + dynamic ports)
+│   ├── translators.py    #   translation backends (Lingva/Libre/DeepL)
 │   ├── mediafetch.py     #   MPRIS/D-Bus media fetcher
 │   ├── hardware.py       #   CPU/RAM/GPU monitoring
 │   └── speechtotext.py   #   speech recognition + translation

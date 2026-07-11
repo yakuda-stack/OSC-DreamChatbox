@@ -10,6 +10,7 @@ import sys
 import json
 import time
 import subprocess
+import threading
 import queue as _queue
 from collections import deque
 from pathlib import Path
@@ -36,6 +37,10 @@ from core.oscquery import OSCQueryService, HAS_ZEROCONF
 from core.mediafetch import MediaFetcher
 from core.hardware import HardwareMonitor
 from core.speechtotext import SpeechWorker, LANGUAGES, OUTPUT_LANGUAGES
+from core.translators import (METHODS as TR_METHODS, METHOD_LINGVA,
+                              METHOD_GOOGLE, METHOD_LIBRE, METHOD_DEEPL,
+                              DEFAULT_LIBRE_URL, libretranslate_installed,
+                              LibreTranslateServer, get_translator)
 from ui.ui_main import (STYLE, ToggleSwitch, ToggleLabel, DebugConsole,
                         DragHandle, EmojiPopup)
 
@@ -68,6 +73,7 @@ class MainWindow(QMainWindow):
         self.stt = SpeechWorker()
         self.stt_recording = False
         self.oscq = OSCQueryService(APP_NAME, self.log)
+        self.libre_server = LibreTranslateServer(self.log)
         self._oscq_applied = None   # zuletzt uebernommenes VRChat-Ziel
         self._block_updating = False
         self.hw = HardwareMonitor(self.log)
@@ -131,8 +137,9 @@ class MainWindow(QMainWindow):
             "stt_language": "de-DE",
             "stt_block": False,
             "stt_output": "",
-            "stt_deepl": False,
+            "stt_method": METHOD_LINGVA,  # lingva | libre | deepl
             "stt_deepl_key": "",
+            "stt_libre_url": "",
             "stt_block_saved": [],
             "aio_active": False,
             "aio_count": 1,
@@ -1053,25 +1060,63 @@ class MainWindow(QMainWindow):
         tr_hint.setWordWrap(True)
         sc.addWidget(tr_hint)
 
-        self.chk_deepl = QCheckBox("Use DeepL API for translation "
-                                   "(better quality, own API key required)")
-        self.chk_deepl.toggled.connect(self.on_deepl_toggled)
-        sc.addWidget(self.chk_deepl)
-        key_row = QHBoxLayout()
+        # ---- translation method (three-tier system) ----
+        method_row = QHBoxLayout()
+        method_row.addWidget(QLabel("Translation service:"))
+        self.tr_method_combo = QComboBox()
+        for label, mid in TR_METHODS:
+            self.tr_method_combo.addItem(label, mid)
+        self.tr_method_combo.currentIndexChanged.connect(
+            self.on_tr_method)
+        method_row.addWidget(self.tr_method_combo, 1)
+        self.tr_test_btn = QPushButton("\U0001F9EA  Test")
+        self.tr_test_btn.setObjectName("linkbtn")
+        self.tr_test_btn.setFixedHeight(30)
+        self.tr_test_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.tr_test_btn.setToolTip(
+            "Sends a short test phrase through the selected service "
+            "and shows the result or the exact error.")
+        self.tr_test_btn.clicked.connect(self.on_tr_test)
+        method_row.addWidget(self.tr_test_btn)
+        sc.addLayout(method_row)
+
+        # method 3: DeepL API key (only visible when DeepL is selected)
+        self.deepl_row = QWidget()
+        key_row = QHBoxLayout(self.deepl_row)
+        key_row.setContentsMargins(0, 0, 0, 0)
         key_row.addWidget(QLabel("DeepL API key:"))
         self.deepl_key_input = QLineEdit()
         self.deepl_key_input.setEchoMode(QLineEdit.EchoMode.Password)
         self.deepl_key_input.setPlaceholderText("xxxxxxxx-xxxx-...-xxxx:fx")
         self.deepl_key_input.textChanged.connect(self.on_deepl_key)
         key_row.addWidget(self.deepl_key_input, 1)
-        sc.addLayout(key_row)
-        dl_hint = QLabel("Free key at deepl.com (API Free plan, 500k chars/month). "
-                         "Keys ending in ':fx' are detected as free-plan keys "
-                         "automatically. Without the checkbox, the free Google "
-                         "endpoint is used. If DeepL fails, it falls back to Google.")
-        dl_hint.setObjectName("dim")
-        dl_hint.setWordWrap(True)
-        sc.addWidget(dl_hint)
+        sc.addWidget(self.deepl_row)
+
+        # method 2: LibreTranslate URL (only visible when selected)
+        self.libre_row = QWidget()
+        lr = QHBoxLayout(self.libre_row)
+        lr.setContentsMargins(0, 0, 0, 0)
+        lr.addWidget(QLabel("LibreTranslate URL:"))
+        self.libre_url_input = QLineEdit()
+        self.libre_url_input.setPlaceholderText(DEFAULT_LIBRE_URL)
+        self.libre_url_input.textChanged.connect(self.on_libre_url)
+        lr.addWidget(self.libre_url_input, 1)
+        # server Start/Stop button (only shown while LibreTranslate
+        # is selected and installed)
+        self.libre_install_btn = QPushButton(
+            "\U0001F680  Start LibreTranslate")
+        self.libre_install_btn.setObjectName("linkbtn")
+        self.libre_install_btn.setFixedHeight(30)
+        self.libre_install_btn.setCursor(
+            Qt.CursorShape.PointingHandCursor)
+        self.libre_install_btn.clicked.connect(self.on_libre_btn)
+        lr.addWidget(self.libre_install_btn)
+        sc.addWidget(self.libre_row)
+
+        self.tr_method_hint = QLabel("")
+        self.tr_method_hint.setObjectName("dim")
+        self.tr_method_hint.setWordWrap(True)
+        sc.addWidget(self.tr_method_hint)
 
         rec_row = QHBoxLayout()
         self.stt_button = QPushButton("\U0001F3A4  Start recording")
@@ -1240,11 +1285,172 @@ class MainWindow(QMainWindow):
         self.log(f"Speech to Text output: "
                  f"{self.cfg['stt_output'] or 'same as spoken'}")
 
-    def on_deepl_toggled(self, on):
-        self.cfg["stt_deepl"] = on
+    def on_tr_method(self, idx):
+        method = self.tr_method_combo.itemData(idx) or METHOD_LINGVA
+        self.cfg["stt_method"] = method
         self.save_config()
-        self.stt.use_deepl = on  # applies live
-        self.log(f"Translation via DeepL API: {'ON' if on else 'OFF (Google)'}")
+        self.stt.method = method  # applies live
+        self._update_tr_method_ui()
+        self.log(f"Translation service: {method}")
+
+    def _update_tr_method_ui(self):
+        """Shows only the option fields of the selected method and
+        updates the hint text. The LibreTranslate install button only
+        appears while LibreTranslate is selected and not installed."""
+        method = self.cfg.get("stt_method", METHOD_LINGVA)
+        self.deepl_row.setVisible(method == METHOD_DEEPL)
+        self.libre_row.setVisible(method == METHOD_LIBRE)
+        if method == METHOD_LIBRE:
+            btn = self.libre_install_btn
+            if self.libre_server.running:
+                btn.setVisible(True)
+                btn.setText("\U0001F6D1  Stop LibreTranslate")
+                btn.setStyleSheet(
+                    "QPushButton { background: #c95b5b; color: #ffffff;"
+                    " border: 1px solid #c95b5b; border-radius: 8px;"
+                    " padding: 4px 16px; font-weight: 600; }"
+                    "QPushButton:hover { background: #d46d6d; }")
+            elif libretranslate_installed():
+                btn.setVisible(True)
+                btn.setText("\U0001F680  Start LibreTranslate")
+                btn.setStyleSheet("")
+            else:
+                # not installed -> no button; the hint explains the
+                # manual install command
+                btn.setVisible(False)
+        hints = {
+            METHOD_GOOGLE: (
+                "Direct Google Translate web endpoint \u2013 fastest "
+                "(no proxy hop), no API key. Note: requests go straight "
+                "to Google, so tracking is possible."),
+            METHOD_LINGVA: (
+                "Anonymous Lingva-Translate proxy (lingva.adminforge.de) "
+                "\u2013 no API key, no direct Google tracking."),
+            METHOD_LIBRE: (
+                "Local LibreTranslate instance \u2013 100% offline on "
+                "your own PC. Install it yourself once: "
+                "pip install libretranslate \u2013 afterwards the "
+                "Start/Stop button appears here (default "
+                "http://127.0.0.1:5000). If it is not reachable, "
+                "Lingva is used as fallback."),
+            METHOD_DEEPL: (
+                "Official DeepL API \u2013 free key at deepl.com (API "
+                "Free plan, 500k chars/month); keys ending in ':fx' are "
+                "detected as free-plan keys automatically. If DeepL "
+                "fails (e.g. monthly limit reached), Lingva is used as "
+                "fallback."),
+        }
+        self.tr_method_hint.setText(hints.get(method, ""))
+
+    def on_tr_test(self):
+        """Tests the currently selected translation service with a
+        short phrase and shows the translation or the EXACT error in
+        the hint line – no more guessing why the fallback kicked in."""
+        method = self.cfg.get("stt_method", METHOD_LINGVA)
+        self.tr_test_btn.setEnabled(False)
+        self.tr_method_hint.setText(
+            f"\U0001F9EA Testing '{method}' \u2026")
+        if not hasattr(self, "_tr_test_result"):
+            self._tr_test_result = _queue.Queue()
+
+        def worker():
+            tr = get_translator(method,
+                                deepl_key=self.cfg["stt_deepl_key"],
+                                libre_url=self.cfg["stt_libre_url"])
+            out = tr.translate("wie geht es dir", "de", "en")
+            self._tr_test_result.put((tr.name, out, tr.last_error))
+        threading.Thread(target=worker, daemon=True).start()
+        if not hasattr(self, "_tr_test_timer"):
+            self._tr_test_timer = QTimer(self)
+            self._tr_test_timer.timeout.connect(self._poll_tr_test)
+        self._tr_test_timer.start(300)
+
+    def _poll_tr_test(self):
+        try:
+            name, out, err = self._tr_test_result.get_nowait()
+        except _queue.Empty:
+            return
+        self._tr_test_timer.stop()
+        self.tr_test_btn.setEnabled(True)
+        if out:
+            self.tr_method_hint.setText(
+                f"\u2705 {name} works: \"wie geht es dir\" \u2192 "
+                f"\"{out}\"")
+            self.log(f"Translation test ({name}): OK -> {out}")
+        else:
+            self.tr_method_hint.setText(
+                f"\u274C {name} failed: {err or 'no result'}")
+            self.log(f"Translation test ({name}): {err or 'no result'}")
+
+    def _libre_port(self):
+        """Port from the configured LibreTranslate URL (default 5000)."""
+        try:
+            from urllib.parse import urlparse
+            p = urlparse(self.cfg.get("stt_libre_url")
+                         or DEFAULT_LIBRE_URL)
+            return p.port or 5000
+        except Exception:
+            return 5000
+
+    def on_libre_btn(self):
+        """One dynamic button: Start <-> Stop, depending on the
+        current state."""
+        if self.libre_server.running:
+            self.on_stop_libre()
+        elif libretranslate_installed():
+            self.on_start_libre()
+
+    def on_start_libre(self):
+        """'Start LibreTranslate': spawns the server detached and
+        watches readiness via a poll timer (UI stays fluid)."""
+        port = self._libre_port()
+        if not self.libre_server.start(port):
+            self.tr_method_hint.setText(
+                f"\u274C Could not start LibreTranslate: "
+                f"{self.libre_server.error}")
+            return
+        if not hasattr(self, "_libre_srv_timer"):
+            self._libre_srv_timer = QTimer(self)
+            self._libre_srv_timer.timeout.connect(self._poll_libre_server)
+        self._libre_srv_timer.start(750)
+        self._update_tr_method_ui()
+        # status line AFTER the generic refresh (which resets the hint)
+        self.tr_method_hint.setText(
+            "\u23F3 Starting LibreTranslate server \u2026 (first run "
+            "downloads language models and can take a while)")
+
+    def on_stop_libre(self):
+        """'Stop LibreTranslate': terminates the process group in the
+        background (SIGTERM, SIGKILL after 5 s)."""
+        self.libre_server.stop()
+        if hasattr(self, "_libre_srv_timer"):
+            self._libre_srv_timer.stop()
+        self._update_tr_method_ui()
+        self.tr_method_hint.setText("LibreTranslate server stopped.")
+
+    def _poll_libre_server(self):
+        """Watches the starting/running server: flips the status line
+        to 'running' once it answers, reports errors if it dies."""
+        srv = self.libre_server
+        if srv.check_ready():
+            self._libre_srv_timer.setInterval(3000)  # watchdog mode
+            self._update_tr_method_ui()
+            self.tr_method_hint.setText(
+                f"\u2705 LibreTranslate Server running on port "
+                f"{srv.port}")
+            return
+        if not srv.running:
+            self._libre_srv_timer.stop()
+            msg = srv.error or "server exited"
+            self.log(f"LibreTranslate: {msg}")
+            self._update_tr_method_ui()
+            self.tr_method_hint.setText(
+                f"\u274C LibreTranslate: {msg}")
+
+    def on_libre_url(self, text):
+        self.cfg["stt_libre_url"] = text.strip()
+        self.save_config_later()
+        self.stt.libre_url = text.strip()  # applies live
 
     def on_deepl_key(self, text):
         self.cfg["stt_deepl_key"] = text
@@ -1262,7 +1468,9 @@ class MainWindow(QMainWindow):
             self.log(f"Speech to Text: recording started "
                      f"({self.cfg['stt_language']}) \u2013 apps are blocked")
             self.stt.start(self.cfg["stt_language"], self.cfg["stt_output"],
-                           self.cfg["stt_deepl"], self.cfg["stt_deepl_key"])
+                           self.cfg["stt_method"],
+                           self.cfg["stt_deepl_key"],
+                           self.cfg["stt_libre_url"])
             self.stt_timer.start(200)
         else:
             self.stt.stop()
@@ -1655,8 +1863,19 @@ class MainWindow(QMainWindow):
         oidx = self.stt_out_combo.findData(self.cfg["stt_output"])
         if oidx >= 0:
             self.stt_out_combo.setCurrentIndex(oidx)
-        self.chk_deepl.setChecked(self.cfg["stt_deepl"])
+        # Migration: alte "stt_deepl"-Checkbox-Configs uebernehmen
+        if self.cfg.get("stt_deepl") and self.cfg.get(
+                "stt_method", METHOD_LINGVA) == METHOD_LINGVA:
+            self.cfg["stt_method"] = METHOD_DEEPL
+        self.tr_method_combo.blockSignals(True)
+        midx = next((i for i in range(self.tr_method_combo.count())
+                     if self.tr_method_combo.itemData(i)
+                     == self.cfg.get("stt_method", METHOD_LINGVA)), 0)
+        self.tr_method_combo.setCurrentIndex(midx)
+        self.tr_method_combo.blockSignals(False)
         self.deepl_key_input.setText(self.cfg["stt_deepl_key"])
+        self.libre_url_input.setText(self.cfg.get("stt_libre_url", ""))
+        self._update_tr_method_ui()
         self.toggle_aio.setChecked(self.cfg["aio_active"])
         self.aio_count_spin.setValue(self.cfg["aio_count"])
         self.chk_aio_rotate.setChecked(self.cfg["aio_rotate"])
@@ -2374,6 +2593,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, ev):
         self.stt.stop()
+        self.libre_server.stop_sync()   # no orphaned server on exit
         self.oscq.stop()
         self._save_timer.stop()
         self._write_config()

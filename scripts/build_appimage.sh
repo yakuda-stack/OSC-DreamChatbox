@@ -102,9 +102,9 @@ cp "$BUILD_DIR/usr/share/applications/osc-dreamchatbox.desktop" "$BUILD_DIR/osc-
 echo "[4/5] Bundele Python-Abhängigkeiten..."
 mkdir -p "$BUILD_DIR/usr/lib/python3"
 pip install --target="$BUILD_DIR/usr/lib/python3" \
-    PyQt6 python-osc SpeechRecognition zeroconf 2>/dev/null || \
+    PyQt6 python-osc SpeechRecognition zeroconf deepl 2>/dev/null || \
     pip install --break-system-packages --target="$BUILD_DIR/usr/lib/python3" \
-    PyQt6 python-osc SpeechRecognition zeroconf || \
+    PyQt6 python-osc SpeechRecognition zeroconf deepl || \
     echo "[Warn] Abhängigkeiten konnten nicht gebundelt werden — müssen auf dem System vorhanden sein."
 pip install --target="$BUILD_DIR/usr/lib/python3" pyaudio 2>/dev/null || \
     pip install --break-system-packages --target="$BUILD_DIR/usr/lib/python3" pyaudio 2>/dev/null || \

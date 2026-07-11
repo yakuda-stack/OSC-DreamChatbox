@@ -2,6 +2,50 @@
 
 All notable changes to OSC-DreamChatbox are documented here.
 
+## [v1.0.3-alpha] – 2026-07-2026
+
+### Fixed
+- **LibreTranslate integration hardened** (local server worked in the
+  browser but the app fell back): default URL is now
+  `http://127.0.0.1:5000` (avoids localhost/IPv6 mismatches), URLs
+  typed without a scheme get `http://` prepended, the REAL server
+  error message (`{"error": …}` body) is surfaced instead of a
+  generic HTTP code, and a 400 for an explicit source language
+  triggers one automatic retry with auto-detect (like the web UI)
+- New **🧪 Test button** next to the translation-service dropdown:
+  sends a test phrase through the selected service and shows the
+  translation or the exact error in the hint line
+
+### Changed
+- **Translation reworked into a four-tier system** (dropdown
+  "Translation service" replaces the old DeepL checkbox; modular
+  backends in `core/translators.py` with one unified
+  `translate(text, source, target)` interface):
+  1. **Lingva Translate** (new default) – anonymous proxy
+     (lingva.adminforge.de), no API key, no direct Google tracking
+  2. **Google Translate (direct)** – the un-anonymised gtx web
+     endpoint for minimal latency (fast live chat; user's choice)
+  3. **LibreTranslate** (optional/local) – local instance for 100%
+     offline translation (URL field, default http://localhost:5000)
+     with a **Start/Stop server button**: once LibreTranslate is
+     installed (manually: `pip install libretranslate`) the button
+     "🚀 Start LibreTranslate" appears (spawns the server
+     detached, status line shows "⏳ Starting …" and then
+     "✅ Server running on port X"), while running it turns into a
+     red "🛑 Stop LibreTranslate" (clean process-group terminate).
+     A watchdog reports if the server dies; on app close a running
+     server is always shut down – no orphaned processes.
+     The automatic pip installation from within the app was removed
+  4. **DeepL API** (optional/power user) – official `deepl` library
+     with typed error handling (quota exceeded, invalid key, rate
+     limit); raw-HTTP fallback when the library is missing
+  If the chosen method fails for any reason, the chain automatically
+  falls back to **Lingva first, then direct Google** – speech-to-text
+  never crashes on a dead API.
+  Old configs with the DeepL checkbox enabled are migrated to the
+  DeepL method automatically. The direct free Google endpoint was
+  removed.
+
 ## [v1.0.2-alpha] – 2026-07-08
 
 ### Added

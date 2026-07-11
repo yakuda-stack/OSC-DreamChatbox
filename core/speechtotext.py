@@ -1,6 +1,11 @@
 """
 speechtotext.py – speech to text for OSC-DreamChatbox
 
+Translation uses the modular four-tier system in core/translators.py
+(Lingva proxy = default, direct Google endpoint for lowest latency,
+local LibreTranslate, DeepL API). If the chosen method fails, the
+chain falls back to Lingva first and then to direct Google.
+
 Uses the SpeechRecognition library (Google Web Speech API) with your
 microphone. Runs in a background thread and pushes recognized phrases
 into a queue that the UI polls.
@@ -14,9 +19,10 @@ import os
 import json
 import queue
 import threading
-import urllib.parse
-import urllib.request
 from contextlib import contextmanager
+
+from core.translators import (METHOD_LINGVA,
+                              translate_with_fallback)
 
 
 @contextmanager
@@ -83,53 +89,6 @@ OUTPUT_LANGUAGES = [
 ]
 
 
-def translate_text(text, target, source="auto"):
-    """Free Google Translate endpoint (no API key). Returns the
-    translated text or None on failure."""
-    try:
-        url = ("https://translate.googleapis.com/translate_a/single"
-               "?client=gtx&dt=t"
-               f"&sl={urllib.parse.quote(source)}"
-               f"&tl={urllib.parse.quote(target)}"
-               "&q=" + urllib.parse.quote(text))
-        with urllib.request.urlopen(url, timeout=6) as r:
-            data = json.loads(r.read().decode("utf-8"))
-        out = "".join(seg[0] for seg in data[0] if seg and seg[0])
-        return out.strip() or None
-    except Exception:
-        return None
-
-
-_DEEPL_TARGETS = {"en": "EN-US", "pt": "PT-PT", "zh-CN": "ZH"}
-
-
-def translate_deepl(text, target, api_key, source=""):
-    """Translation via the official DeepL API (needs your own API key).
-    Free keys (ending in ':fx') use the api-free host automatically.
-    Returns the translated text or None on failure."""
-    try:
-        key = api_key.strip()
-        host = "api-free.deepl.com" if key.endswith(":fx") else "api.deepl.com"
-        params = {
-            "text": text,
-            "target_lang": _DEEPL_TARGETS.get(target,
-                                              target.split("-")[0].upper()),
-        }
-        if source:
-            params["source_lang"] = source.split("-")[0].upper()
-        req = urllib.request.Request(
-            f"https://{host}/v2/translate",
-            data=urllib.parse.urlencode(params).encode("utf-8"),
-            headers={"Authorization": f"DeepL-Auth-Key {key}",
-                     "Content-Type": "application/x-www-form-urlencoded"})
-        with urllib.request.urlopen(req, timeout=8) as r:
-            data = json.loads(r.read().decode("utf-8"))
-        out = " ".join(t["text"] for t in data.get("translations", []))
-        return out.strip() or None
-    except Exception:
-        return None
-
-
 class SpeechWorker:
     """Background microphone -> text worker.
     Messages arrive in self.messages as (kind, payload):
@@ -142,8 +101,9 @@ class SpeechWorker:
         self._thread = None
         self.language = "en-US"
         self.translate_to = ""  # e.g. "en" - empty = no translation
-        self.use_deepl = False
+        self.method = METHOD_LINGVA   # "lingva" | "libre" | "deepl"
         self.deepl_key = ""
+        self.libre_url = ""
 
     @staticmethod
     def available():
@@ -153,7 +113,8 @@ class SpeechWorker:
     def running(self):
         return self._thread is not None and self._thread.is_alive()
 
-    def start(self, language, translate_to="", use_deepl=False, deepl_key=""):
+    def start(self, language, translate_to="", method=METHOD_LINGVA,
+              deepl_key="", libre_url=""):
         # make sure a previous recording thread is fully stopped first
         # (otherwise restarting after a language change silently fails)
         if self.running:
@@ -167,8 +128,9 @@ class SpeechWorker:
                 break
         self.language = language
         self.translate_to = translate_to or ""
-        self.use_deepl = use_deepl
+        self.method = method or METHOD_LINGVA
         self.deepl_key = deepl_key or ""
+        self.libre_url = libre_url or ""
         self._stop.clear()
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
@@ -212,18 +174,13 @@ class SpeechWorker:
                             if tgt and not self.language.lower().startswith(
                                     tgt.lower().split("-")[0]):
                                 self.messages.put(("status", "Translating \u2026"))
-                                tr = None
-                                if self.use_deepl and self.deepl_key.strip():
-                                    tr = translate_deepl(
-                                        text, tgt, self.deepl_key,
-                                        self.language)
-                                    if tr is None:
-                                        self.messages.put(
-                                            ("status", "DeepL failed \u2013 "
-                                                       "falling back to Google"))
-                                if tr is None:
-                                    tr = translate_text(
-                                        text, tgt, self.language.split("-")[0])
+                                tr = translate_with_fallback(
+                                    self.method, text,
+                                    self.language, tgt,
+                                    deepl_key=self.deepl_key,
+                                    libre_url=self.libre_url,
+                                    log=lambda m: self.messages.put(
+                                        ("status", m)))
                                 if tr:
                                     self.messages.put(
                                         ("status", f'\"{text}\" \u2192 \"{tr}\"'))
