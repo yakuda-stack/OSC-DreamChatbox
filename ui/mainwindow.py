@@ -1,6 +1,6 @@
 """
 ui/mainwindow.py – main window of OSC-DreamChatbox
-(pages: Text Apps, Textbox, Options)
+(pages: Apps, Textbox, Options)
 """
 
 import os
@@ -36,7 +36,8 @@ from core import queryfix
 from core.oscquery import OSCQueryService, HAS_ZEROCONF
 from core.mediafetch import MediaFetcher
 from core.hardware import HardwareMonitor
-from core.speechtotext import SpeechWorker, LANGUAGES, OUTPUT_LANGUAGES
+from core.speechtotext import (SpeechWorker, LANGUAGES,
+                               OUTPUT_LANGUAGES, list_microphones)
 from core.translators import (METHODS as TR_METHODS, METHOD_LINGVA,
                               METHOD_GOOGLE, METHOD_LIBRE, METHOD_DEEPL,
                               DEFAULT_LIBRE_URL, libretranslate_installed,
@@ -111,9 +112,15 @@ class MainWindow(QMainWindow):
     def load_config(self):
         defaults = {
             "status_text": "",
-            "status_texts": [""] * 10,
+            "status_texts": [""] * 20,   # mirror of the ACTIVE template
             "status_count": 1,
             "status_cycle_sec": 10,
+            # 10 switchable text templates, each with its own 1-20 texts
+            "status_templates": [
+                {"name": f"Template {i + 1}", "texts": [""] * 20,
+                 "count": 1} for i in range(10)
+            ],
+            "status_template_active": 0,
             "status_active": True,
             "media_active": False,
             "media_show_artist": True,
@@ -137,7 +144,8 @@ class MainWindow(QMainWindow):
             "stt_language": "de-DE",
             "stt_block": False,
             "stt_output": "",
-            "stt_method": METHOD_LINGVA,  # lingva | libre | deepl
+            "stt_method": METHOD_LINGVA,  # lingva | google | libre | deepl
+            "stt_mic": "",   # microphone name, "" = system default
             "stt_deepl_key": "",
             "stt_libre_url": "",
             "stt_block_saved": [],
@@ -194,7 +202,30 @@ class MainWindow(QMainWindow):
         if defaults.get("status_text") and not any(t.strip() for t in texts):
             texts[0] = defaults["status_text"]
         defaults["status_texts"] = texts
-        defaults["status_count"] = min(10, max(1, int(defaults.get("status_count", 1))))
+        # pad the active texts to 20 (older configs had 10)
+        while len(defaults["status_texts"]) < 20:
+            defaults["status_texts"].append("")
+        defaults["status_count"] = min(20, max(1, int(defaults.get("status_count", 1))))
+        # templates: normalise / migrate old single-list configs
+        tpls = defaults.get("status_templates")
+        if not isinstance(tpls, list) or len(tpls) != 10:
+            tpls = [{"name": f"Template {i + 1}", "texts": [""] * 20,
+                     "count": 1} for i in range(10)]
+        for t in tpls:
+            t.setdefault("name", "Template")
+            t["texts"] = (list(t.get("texts", [])) + [""] * 20)[:20]
+            t["count"] = min(20, max(1, int(t.get("count", 1))))
+        defaults["status_templates"] = tpls
+        idx = min(9, max(0, int(defaults.get("status_template_active", 0))))
+        defaults["status_template_active"] = idx
+        # keep the active template in sync with the mirror fields
+        if any(x.strip() for x in defaults["status_texts"]) and \
+                not any(x.strip() for x in tpls[idx]["texts"]):
+            tpls[idx]["texts"] = list(defaults["status_texts"])
+            tpls[idx]["count"] = defaults["status_count"]
+        else:
+            defaults["status_texts"] = list(tpls[idx]["texts"])
+            defaults["status_count"] = tpls[idx]["count"]
         # migrate old default templates to the current one
         old_defaults = (
             "{gpu_name}: {gpu_usage} {gpu_temp} {vram_usage} | "
@@ -269,7 +300,7 @@ class MainWindow(QMainWindow):
         sb_layout.setContentsMargins(12, 20, 12, 12)
         sb_layout.setSpacing(6)
 
-        self.btn_apps = QPushButton("Text Apps")
+        self.btn_apps = QPushButton("Apps")
         self.btn_textbox = QPushButton("Textbox")
         self.btn_options = QPushButton("Options")
         self.nav_buttons = (self.btn_apps, self.btn_textbox,
@@ -378,7 +409,7 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(24, 20, 24, 20)
         layout.setSpacing(16)
 
-        title = QLabel("Text Apps")
+        title = QLabel("Apps")
         title.setObjectName("pagetitle")
         layout.addWidget(title)
 
@@ -412,11 +443,40 @@ class MainWindow(QMainWindow):
         sc = QVBoxLayout(self.status_content)
         sc.setContentsMargins(0, 0, 0, 0)
         sc.setSpacing(8)
+        # ---- text templates 1-10 (exclusive toggles: enabling one
+        #      switches all others off) ----
+        tpl_row = QHBoxLayout()
+        tpl_row.setSpacing(4)
+        tpl_row.addWidget(QLabel("Template:"))
+        from PyQt6.QtWidgets import QButtonGroup
+        self.tpl_group = QButtonGroup(self)
+        self.tpl_group.setExclusive(True)
+        self.tpl_buttons = []
+        for i in range(10):
+            b = QPushButton(str(i + 1))
+            b.setCheckable(True)
+            b.setFixedSize(30, 26)
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.setToolTip(f"Text template {i + 1} \u2013 own set of "
+                         "up to 20 texts")
+            b.setStyleSheet(
+                "QPushButton { background: #232833; border: 1px solid"
+                " #333947; border-radius: 6px; color: #aeb4bf; }"
+                "QPushButton:hover { border-color: #5b8dc9; }"
+                "QPushButton:checked { background: #5b8dc9;"
+                " border-color: #5b8dc9; color: #ffffff; }")
+            self.tpl_group.addButton(b, i)
+            tpl_row.addWidget(b)
+            self.tpl_buttons.append(b)
+        tpl_row.addStretch()
+        sc.addLayout(tpl_row)
+        self.tpl_group.idClicked.connect(self.on_status_template)
+
         cnt_row = QHBoxLayout()
         cnt_row.addWidget(QLabel("Number of texts"))
         self.status_count_spin = QSpinBox()
         self.status_count_spin.setObjectName("smallspin")
-        self.status_count_spin.setRange(1, 10)
+        self.status_count_spin.setRange(1, 20)
         self.status_count_spin.setFixedSize(64, 28)
         self.status_count_spin.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.status_count_spin.valueChanged.connect(self.on_status_count)
@@ -434,10 +494,22 @@ class MainWindow(QMainWindow):
         cnt_row.addStretch()
         sc.addLayout(cnt_row)
 
-        # 10 text fields, visibility follows "Number of texts"
+        # texts fold in/out so the card stays compact
+        self.texts_expander = QPushButton("\u25B8  Texts")
+        self.texts_expander.setObjectName("expander")
+        self.texts_expander.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.texts_expander.clicked.connect(self.on_texts_expand)
+        sc.addWidget(self.texts_expander)
+        self.texts_container = QWidget()
+        tc = QVBoxLayout(self.texts_container)
+        tc.setContentsMargins(0, 0, 0, 0)
+        tc.setSpacing(8)
+        self.texts_container.setVisible(False)
+
+        # 20 text fields, visibility follows "Number of texts"
         self.status_rows = []
         self.status_edits = []
-        for i in range(10):
+        for i in range(20):
             row_w = QWidget()
             row = QHBoxLayout(row_w)
             row.setContentsMargins(0, 0, 0, 0)
@@ -458,9 +530,10 @@ class MainWindow(QMainWindow):
             icon_btn.clicked.connect(
                 lambda _, e=edit, b=icon_btn: self.emoji_popup.open_for(e, b))
             row.addWidget(icon_btn)
-            sc.addWidget(row_w)
+            tc.addWidget(row_w)
             self.status_rows.append(row_w)
             self.status_edits.append(edit)
+        sc.addWidget(self.texts_container)
 
         self.status_expander = self.make_settings_expander(
             lambda on: self.set_expanded(self.status_expander, self.status_content, on))
@@ -889,7 +962,7 @@ class MainWindow(QMainWindow):
             self.aio_edits.append(edit)
 
         a_ph = QLabel("Placeholders: {text} (current rotating status text), "
-                      "{text_1} \u2026 {text_10}, all Hardware placeholders "
+                      "{text_1} \u2026 {text_20}, all Hardware placeholders "
                       "({gpu_name} {gpu_usage} {gpu_temp} {temp_icon} {vram_usage} "
                       "{cpu_name} {cpu_usage} {cpu_temp} {ram_usage} {ram_type} "
                       "{icon_flame}) and all MediaPlay placeholders ({artist} "
@@ -1060,7 +1133,23 @@ class MainWindow(QMainWindow):
         tr_hint.setWordWrap(True)
         sc.addWidget(tr_hint)
 
-        # ---- translation method (three-tier system) ----
+        # ---- microphone selection ----
+        mic_row = QHBoxLayout()
+        mic_row.addWidget(QLabel("Microphone:"))
+        self.mic_combo = QComboBox()
+        self._fill_mic_combo()
+        self.mic_combo.currentIndexChanged.connect(self.on_mic_changed)
+        mic_row.addWidget(self.mic_combo, 1)
+        mic_refresh = QPushButton("\u27F3")
+        mic_refresh.setObjectName("iconbtn")
+        mic_refresh.setFixedSize(30, 30)
+        mic_refresh.setToolTip("Refresh microphone list")
+        mic_refresh.setCursor(Qt.CursorShape.PointingHandCursor)
+        mic_refresh.clicked.connect(self._fill_mic_combo)
+        mic_row.addWidget(mic_refresh)
+        sc.addLayout(mic_row)
+
+        # ---- translation method (four-tier system) ----
         method_row = QHBoxLayout()
         method_row.addWidget(QLabel("Translation service:"))
         self.tr_method_combo = QComboBox()
@@ -1342,6 +1431,39 @@ class MainWindow(QMainWindow):
         }
         self.tr_method_hint.setText(hints.get(method, ""))
 
+    def _fill_mic_combo(self):
+        """(Re)populates the microphone dropdown; keeps the configured
+        selection when the device is still present."""
+        self.mic_combo.blockSignals(True)
+        self.mic_combo.clear()
+        self.mic_combo.addItem("System default", "")
+        for name, idx in list_microphones():
+            self.mic_combo.addItem(name, name)
+        want = self.cfg.get("stt_mic", "") if hasattr(self, "cfg") else ""
+        pos = self.mic_combo.findData(want)
+        self.mic_combo.setCurrentIndex(pos if pos >= 0 else 0)
+        self.mic_combo.blockSignals(False)
+
+    def on_mic_changed(self, idx):
+        self.cfg["stt_mic"] = self.mic_combo.itemData(idx) or ""
+        self.save_config()
+        self.log("Speech to Text: microphone = "
+                 + (self.cfg["stt_mic"] or "system default"))
+
+    def _mic_index(self):
+        """Resolves the configured microphone NAME to its current
+        device index (devices can shift between sessions);
+        -1 = system default."""
+        name = self.cfg.get("stt_mic", "")
+        if not name:
+            return -1
+        for n, i in list_microphones():
+            if n == name:
+                return i
+        self.log(f"Speech to Text: microphone '{name}' not found "
+                 "\u2013 using system default")
+        return -1
+
     def on_tr_test(self):
         """Tests the currently selected translation service with a
         short phrase and shows the translation or the EXACT error in
@@ -1470,7 +1592,8 @@ class MainWindow(QMainWindow):
             self.stt.start(self.cfg["stt_language"], self.cfg["stt_output"],
                            self.cfg["stt_method"],
                            self.cfg["stt_deepl_key"],
-                           self.cfg["stt_libre_url"])
+                           self.cfg["stt_libre_url"],
+                           self._mic_index())
             self.stt_timer.start(200)
         else:
             self.stt.stop()
@@ -1824,6 +1947,8 @@ class MainWindow(QMainWindow):
             edit.setText(self.cfg["status_texts"][i])
         self.status_count_spin.setValue(self.cfg["status_count"])
         self.status_cycle_spin.setValue(self.cfg["status_cycle_sec"])
+        self.tpl_buttons[self.cfg["status_template_active"]].setChecked(True)
+        self._update_texts_expander_label()
         for i, row in enumerate(self.status_rows):
             row.setVisible(i < self.cfg["status_count"])
         self.toggle_active.setChecked(self.cfg["status_active"])
@@ -1875,6 +2000,10 @@ class MainWindow(QMainWindow):
         self.tr_method_combo.blockSignals(False)
         self.deepl_key_input.setText(self.cfg["stt_deepl_key"])
         self.libre_url_input.setText(self.cfg.get("stt_libre_url", ""))
+        pos = self.mic_combo.findData(self.cfg.get("stt_mic", ""))
+        self.mic_combo.blockSignals(True)
+        self.mic_combo.setCurrentIndex(pos if pos >= 0 else 0)
+        self.mic_combo.blockSignals(False)
         self._update_tr_method_ui()
         self.toggle_aio.setChecked(self.cfg["aio_active"])
         self.aio_count_spin.setValue(self.cfg["aio_count"])
@@ -1917,16 +2046,66 @@ class MainWindow(QMainWindow):
         self.update_preview()
         self._block_updating = False
 
+    def on_texts_expand(self):
+        """Folds the 20 text fields in/out (keeps the card compact)."""
+        show = self.texts_container.isHidden()
+        self.texts_container.setVisible(show)
+        self._update_texts_expander_label(show)
+
+    def _update_texts_expander_label(self, expanded=None):
+        if expanded is None:
+            expanded = not self.texts_container.isHidden()
+        n = self.cfg["status_count"]
+        self.texts_expander.setText(
+            ("\u25BE  Hide texts" if expanded
+             else f"\u25B8  Texts (1\u2013{n})"))
+
+    def on_status_template(self, idx):
+        """Exclusive template toggle: activates template idx (all
+        others switch off) and loads its own texts/count."""
+        idx = min(9, max(0, int(idx)))
+        self.cfg["status_template_active"] = idx
+        tpl = self.cfg["status_templates"][idx]
+        self.cfg["status_texts"] = list(tpl["texts"])
+        self.cfg["status_count"] = tpl["count"]
+        self._block_updating = True
+        for i, edit in enumerate(self.status_edits):
+            edit.setText(self.cfg["status_texts"][i])
+        self.status_count_spin.setValue(self.cfg["status_count"])
+        self._block_updating = False
+        for i, row in enumerate(self.status_rows):
+            row.setVisible(i < self.cfg["status_count"])
+        self._update_texts_expander_label()
+        self.status_index = 0
+        self.save_config()
+        self.update_preview()
+        self.log(f"Personal Status: template {idx + 1} active")
+
+    def _sync_active_template(self):
+        """Writes the current texts/count back into the active
+        template so every template keeps its own set."""
+        tpl = self.cfg["status_templates"][
+            self.cfg["status_template_active"]]
+        tpl["texts"] = list(self.cfg["status_texts"])
+        tpl["count"] = self.cfg["status_count"]
+
     def on_status_text(self, idx, text):
+        if getattr(self, "_block_updating", False):
+            return
         self.cfg["status_texts"][idx] = text
+        self._sync_active_template()
         self.save_config_later()
         self.update_preview()
 
     def on_status_count(self, val):
+        if getattr(self, "_block_updating", False):
+            return
         self.cfg["status_count"] = val
+        self._sync_active_template()
         self.save_config()
         for i, row in enumerate(self.status_rows):
             row.setVisible(i < val)
+        self._update_texts_expander_label()
         self.status_index = 0
         self.update_timers()
         self.update_preview()
@@ -2107,12 +2286,12 @@ class MainWindow(QMainWindow):
         # Personal Status texts
         if self.cfg["status_active"]:
             vals["text"] = self.current_status_text() or None
-            for i in range(10):
+            for i in range(20):
                 vals[f"text_{i + 1}"] = (self.cfg["status_texts"][i].strip()
                                          or None)
         else:
             vals["text"] = None
-            for i in range(10):
+            for i in range(20):
                 vals[f"text_{i + 1}"] = None
         # MediaPlay values
         if self.cfg["media_active"] and self.media_info:
@@ -2228,11 +2407,18 @@ class MainWindow(QMainWindow):
 
     def poll_oscquery(self):
         """Checks the discovery thread and applies a newly found (or
-        lost) VRChat target; also refreshes the status label."""
+        lost) VRChat target. Cheap by design: the mDNS browser is
+        event-driven (no active re-scanning), this timer only reads a
+        flag. Once VRChat is found the interval slows to 10 s; the
+        label is only repainted when the text actually changes."""
         target = self.oscq.vrchat_target()
         if target != self._oscq_applied:
             self._oscq_applied = target
             self.update_osc_client()
+        # adaptive interval: fast while searching, relaxed once found
+        want = 10000 if target is not None else 2000
+        if self.oscq_timer.interval() != want:
+            self.oscq_timer.setInterval(want)
         if hasattr(self, "oscq_status"):
             if not self.cfg.get("oscquery_enabled"):
                 txt = "OSCQuery off – manual target is used."
@@ -2251,7 +2437,8 @@ class MainWindow(QMainWindow):
                        f"as dynamic udp/{self.oscq.osc_port}, "
                        f"http/{self.oscq.http_port} "
                        "(manual target used until found)")
-            self.oscq_status.setText(txt)
+            if self.oscq_status.text() != txt:
+                self.oscq_status.setText(txt)
 
     def on_oscquery_toggled(self, on):
         self.cfg["oscquery_enabled"] = bool(on)

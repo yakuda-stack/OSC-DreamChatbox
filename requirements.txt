@@ -3,3 +3,4 @@ python-osc
 SpeechRecognition
 zeroconf
 deepl
+setproctitle

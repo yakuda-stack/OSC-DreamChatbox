@@ -15,11 +15,12 @@
 
 ## ✨ What can it do?
 
-*(Personal Status, MediaPlay, Hardware and All-in-one live on the **Text Apps** page.)*
+*(Personal Status, MediaPlay, Hardware and All-in-one live on the **Apps** page.)*
 
 ### 📝 Personal Status
-- Up to **10 status texts** with an adjustable change interval
-- Texts switch **randomly** (never the same one twice in a row)
+- **10 switchable text templates**, each with its own set of up to **20 texts** – exclusive toggles, enabling one switches the others off
+- Adjustable change interval; texts switch **randomly** (never the same one twice in a row)
+- Text fields fold in/out so the card stays compact
 - Built-in **icon picker** (🔥 🎵 🎮 …) for every text field
 
 ### 🎵 MediaPlay
@@ -47,12 +48,13 @@
 
 ### 🧩 All in one (AIO)
 - Combine **everything into one master string** – up to 5 rotating layouts
-- All placeholders from every app work here, incl. `{text_1}…{text_10}`
+- All placeholders from every app work here, incl. `{text_1}…{text_20}`
 
 ### 💬 Textbox
 - Free chat field → sends straight to VRChat (apps pause briefly so nothing overwrites your message)
 - **Editable presets** (default 5, expandable to 20) with one-click send
 - **Speech to Text** 🎤 – speak, it transcribes in realtime and sends to VRChat
+  - **Microphone selection** dropdown (system default or any input device)
   - 15 input languages, **live translation** to 13 output languages
   - **Four selectable translation services**: Lingva Translate (default – anonymous proxy, no key, no Google tracking), Google Translate direct (fastest, no proxy hop), LibreTranslate (local instance, 100% offline – install once with `pip install libretranslate`, then a **Start/Stop server button** appears right in the UI; the server is shut down automatically when the app closes) or the official DeepL API (own key, typed error handling)
   - Automatic fallback chain if the chosen service fails: **Lingva first, then direct Google** (e.g. DeepL monthly limit reached or local instance down)
@@ -83,7 +85,30 @@
 
 ---
 
+## 📸 Screenshots
+
+<table>
+  <tr>
+    <td><b>Apps – Personal Status</b><br><img src="assets/p1.png" alt="Personal Status" width="300"/></td>
+    <td><b>MediaPlay & Songbar</b><br><img src="assets/p2.png" alt="MediaPlay" width="300"/></td>
+    <td><b>Hardware Monitor</b><br><img src="assets/p3.png" alt="Hardware" width="300"/></td>
+  </tr>
+  <tr>
+    <td><b>All in one (AIO)</b><br><img src="assets/p4.png" alt="All in one" width="300"/></td>
+    <td><b>Textbox & Presets</b><br><img src="assets/p5.png" alt="Textbox" width="300"/></td>
+    <td><b>Speech to Text</b><br><img src="assets/p6.png" alt="Speech to Text" width="300"/></td>
+  </tr>
+  <tr>
+    <td><b>Options – OSCQuery</b><br><img src="assets/p7.png" alt="Options" width="300"/></td>
+  </tr>
+</table>
+
 ## 🚀 Installation
+
+### Arch Linux / CachyOS (AUR)
+```bash
+yay -S osc-dreamchatbox      # oder: paru -S osc-dreamchatbox
+```
 
 ### One-line install
 ```bash
@@ -132,10 +157,11 @@ OSC-DreamChatbox/
 │   ├── hardware.py       #   CPU/RAM/GPU monitoring
 │   └── speechtotext.py   #   speech recognition + translation
 ├── ui/                   # UI widgets & stylesheet
-│   ├── mainwindow.py     #   main window (Text Apps, Textbox, Options)
+│   ├── mainwindow.py     #   main window (Apps, Textbox, Options)
 │   └── ui_main.py
 ├── assets/               # icons & images
 │   └── icon.png          #   window/taskbar icon (loaded from here)
+├── packaging/            # AUR PKGBUILD + .desktop file
 ├── scripts/              # install & build scripts
 │   ├── install.sh
 │   ├── build-appimage.sh   (PyInstaller one-file build)

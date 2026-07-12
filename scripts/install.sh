@@ -40,7 +40,7 @@ echo "-> Creating virtual environment ..."
 python3 -m venv "$APP_DIR/venv"
 "$APP_DIR/venv/bin/pip" install --quiet --upgrade pip
 echo "-> Installing dependencies (PyQt6, python-osc, SpeechRecognition, zeroconf) ..."
-"$APP_DIR/venv/bin/pip" install --quiet PyQt6 python-osc SpeechRecognition zeroconf deepl
+"$APP_DIR/venv/bin/pip" install --quiet PyQt6 python-osc SpeechRecognition zeroconf deepl setproctitle
 
 echo "-> Installing pyaudio (optional, for Speech to Text) ..."
 if ! "$APP_DIR/venv/bin/pip" install --quiet pyaudio 2>/dev/null; then

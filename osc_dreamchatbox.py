@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-OSC-DreamChatbox v1.0.2-alpha
+OSC-DreamChatbox v1.0.3-alpha
 A simple, clean VRChat OSC chatbox sender for Linux.
 
 Entry point only – the actual code lives in:
@@ -24,7 +24,27 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from core.constants import APP_NAME  # noqa: E402
 
 
+def _set_process_name(name=APP_NAME):
+    """Makes the process show up as 'OSC-DreamChatbox' instead of
+    'python' in htop/btop/KDE system monitor.
+    1) setproctitle rewrites the full command line (cmdline view)
+    2) prctl(PR_SET_NAME) sets the kernel comm name (max 15 chars),
+       which top/btop and KDE use in the process column."""
+    try:
+        from setproctitle import setproctitle
+        setproctitle(name)
+    except Exception:
+        pass
+    try:
+        import ctypes
+        libc = ctypes.CDLL("libc.so.6", use_errno=True)
+        libc.prctl(15, name.encode()[:15], 0, 0, 0)  # 15 = PR_SET_NAME
+    except Exception:
+        pass
+
+
 def main():
+    _set_process_name()
     from PyQt6.QtGui import QFont, QIcon
     from PyQt6.QtWidgets import QApplication
     from ui.mainwindow import MainWindow

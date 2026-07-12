@@ -2,7 +2,36 @@
 
 All notable changes to OSC-DreamChatbox are documented here.
 
-## [v1.0.3-alpha] – 2026-07-2026
+## [v1.0.3-alpha] – 2026-07-12
+
+### Added
+- **AUR packaging**: `packaging/aur/PKGBUILD` + `.desktop` file for
+  publishing as `osc-dreamchatbox` in the Arch User Repository
+  (installs to /usr/share, launcher in /usr/bin, hicolor icon)
+- **README screenshots** (assets/p1–p7)
+- **Process name**: the app now shows up as `OSC-DreamChatbox`
+  instead of `python` in htop/btop/KDE system monitor
+  (setproctitle for the command line + prctl PR_SET_NAME for the
+  kernel comm name)
+- **Personal Status text templates (1–10)**: exclusive toggle row at
+  the top of the card – enabling one template switches all others
+  off. Every template stores its OWN set of up to 20 texts + count,
+  so you can flip between predefined text sets you define yourself.
+  Old configs are migrated into template 1 automatically
+- **Personal Status: up to 20 texts** (was 10); AIO placeholders now
+  go up to `{text_20}`. The text fields fold in/out ("Texts (1–20)"
+  expander) so the card stays compact
+- **Speech to Text: microphone selection** dropdown (system default +
+  every input device, with refresh button). The device is stored by
+  NAME and re-resolved on every recording start, so shifting device
+  indexes between sessions can't pick the wrong mic
+
+### Changed
+- "Text Apps" page renamed back to **Apps**
+- **Native OSCQuery smoother**: stays ON by default; the mDNS
+  discovery is event-driven (no active re-scanning), the status
+  poll only repaints on changes and relaxes from 2 s to 10 s once
+  VRChat is found – near-zero idle cost
 
 ### Fixed
 - **LibreTranslate integration hardened** (local server worked in the

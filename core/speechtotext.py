@@ -52,6 +52,19 @@ try:
 except ImportError:
     HAS_SR = False
 
+def list_microphones():
+    """[(name, device_index)] of available input devices, for the UI
+    dropdown. Empty list when SpeechRecognition/pyaudio is missing."""
+    if not HAS_SR:
+        return []
+    try:
+        with _silence_stderr():
+            names = sr.Microphone.list_microphone_names()
+        return [(n, i) for i, n in enumerate(names) if n]
+    except Exception:
+        return []
+
+
 LANGUAGES = [
     ("German", "de-DE"),
     ("English (US)", "en-US"),
@@ -104,6 +117,7 @@ class SpeechWorker:
         self.method = METHOD_LINGVA   # "lingva" | "libre" | "deepl"
         self.deepl_key = ""
         self.libre_url = ""
+        self.mic_index = -1   # -1 = system default microphone
 
     @staticmethod
     def available():
@@ -114,7 +128,7 @@ class SpeechWorker:
         return self._thread is not None and self._thread.is_alive()
 
     def start(self, language, translate_to="", method=METHOD_LINGVA,
-              deepl_key="", libre_url=""):
+              deepl_key="", libre_url="", mic_index=-1):
         # make sure a previous recording thread is fully stopped first
         # (otherwise restarting after a language change silently fails)
         if self.running:
@@ -131,6 +145,7 @@ class SpeechWorker:
         self.method = method or METHOD_LINGVA
         self.deepl_key = deepl_key or ""
         self.libre_url = libre_url or ""
+        self.mic_index = mic_index if mic_index is not None else -1
         self._stop.clear()
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
@@ -147,11 +162,16 @@ class SpeechWorker:
             with _silence_stderr():
                 r = sr.Recognizer()
                 r.dynamic_energy_threshold = True
-                mic = sr.Microphone()
+                mic = (sr.Microphone(device_index=self.mic_index)
+                       if self.mic_index >= 0 else sr.Microphone())
         except Exception as e:
-            self.messages.put(("error",
-                               f"Microphone not available ({e}). "
-                               "Install pyaudio (Arch: pacman -S python-pyaudio)."))
+            self.messages.put((
+                "error",
+                f"Microphone not available ({e}). NOTE: the app runs "
+                "inside its own venv \u2013 a pacman/system install of "
+                "pyaudio is NOT visible there. Install it into the "
+                "venv instead:  ./venv/bin/pip install pyaudio  "
+                "(needs portaudio: pacman -S portaudio)."))
             return
         try:
             with _silence_stderr(), mic as source:

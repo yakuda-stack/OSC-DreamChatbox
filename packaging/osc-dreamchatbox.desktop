@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=OSC DreamChatbox
+GenericName=VRChat OSC Chatbox Companion
+Comment=VRChat OSC chatbox companion for Linux
+Exec=osc-dreamchatbox
+Icon=osc-dreamchatbox
+Terminal=false
+Categories=Utility;Network;Chat;
+Keywords=VRChat;OSC;Chatbox;VR;
+StartupWMClass=osc-dreamchatbox
