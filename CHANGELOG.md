@@ -2,7 +2,7 @@
 
 All notable changes to OSC-DreamChatbox are documented here.
 
-## [v1.0.3-alpha] – 2026-07-12
+## [v1.0.4-alpha] – 2026-07-12
 
 ### Added
 - **AUR packaging**: `packaging/aur/PKGBUILD` + `.desktop` file for

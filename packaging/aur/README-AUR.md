@@ -13,10 +13,10 @@
    ```
 
 ## Vor jedem Release beachten
-- GitHub-Release/Tag MUSS existieren (z.B. v1.0.3-alpha), sonst laeuft
+- GitHub-Release/Tag MUSS existieren (z.B. v1.0.4-alpha), sonst laeuft
   die source=()-URL ins Leere.
 - pkgver darf KEINEN Bindestrich enthalten -> im PKGBUILD steht
-  `1.0.3_alpha`, der echte Tag wird via `_tag` daraus gebaut.
+  `1.0.4_alpha`, der echte Tag wird via `_tag` daraus gebaut.
 - Maintainer-Zeile: echte E-Mail eintragen.
 - python-python-osc, python-speechrecognition und python-deepl kommen
   selbst aus dem AUR -> voellig ok, AUR-Pakete duerfen von AUR-Paketen
@@ -43,7 +43,7 @@ makepkg --printsrcinfo > .SRCINFO
 
 # 5) veroeffentlichen
 git add PKGBUILD .SRCINFO
-git commit -m "Initial release v1.0.3-alpha"
+git commit -m "Initial release v1.0.4-alpha"
 git push origin master           # AUR nutzt 'master'
 ```
 
