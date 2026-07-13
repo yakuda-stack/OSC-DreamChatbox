@@ -1,3 +1,10 @@
+> STATUS Juli 2026: Die AUR-Registrierung ist derzeit vom Arch-Team
+> deaktiviert (Malware-Welle Juni 2026, >1500 kompromittierte Pakete).
+> Regelmaessig https://aur.archlinux.org pruefen – sobald der Banner
+> 'Account registration is currently disabled' verschwindet, die
+> Schritte unten ausfuehren. Bis dahin koennen Nutzer das Paket direkt
+> aus dem GitHub-Repo bauen (siehe README, Abschnitt Arch Linux).
+
 # AUR-Veroeffentlichung: osc-dreamchatbox
 
 ## Einmalige Vorbereitung

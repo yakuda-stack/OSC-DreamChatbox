@@ -4,6 +4,10 @@ All notable changes to OSC-DreamChatbox are documented here.
 
 ## [v1.0.4-alpha] – 2026-07-12
 
+### Changed
+- **License changed from MIT to GPL-3.0-or-later** (LICENSE, README
+  badge, PKGBUILD). Previously published releases remain MIT
+
 ### Added
 - **AUR packaging**: `packaging/aur/PKGBUILD` + `.desktop` file for
   publishing as `osc-dreamchatbox` in the Arch User Repository

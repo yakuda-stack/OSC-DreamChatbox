@@ -5,7 +5,7 @@ pkgrel=1
 pkgdesc="Simple, clean VRChat OSC chatbox companion for Linux (status, media, hardware, speech-to-text)"
 arch=('any')
 url="https://github.com/yakuda-stack/OSC-DreamChatbox"
-license=('MIT')
+license=('GPL-3.0-or-later')
 depends=('python' 'python-pyqt6' 'python-zeroconf' 'python-python-osc' 'python-setproctitle')
 optdepends=('python-speechrecognition: Speech to Text'
             'python-pyaudio: Speech to Text (microphone access)'

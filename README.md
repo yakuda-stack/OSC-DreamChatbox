@@ -4,7 +4,7 @@
 
 **A simple, clean VRChat OSC chatbox companion for Linux.**
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![License: GPL--3.0--or--later](https://img.shields.io/badge/License-GPL--3.0--or--later-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-Linux-green.svg)]()
 [![Python](https://img.shields.io/badge/Python-3.10%2B-yellow.svg)]()
 [![Discord](https://img.shields.io/badge/Discord-Join-5865F2.svg)](https://discord.gg/X5TaN4A47h)
@@ -105,10 +105,17 @@
 
 ## 🚀 Installation
 
-### Arch Linux / CachyOS (AUR)
+### Arch Linux / CachyOS (package build)
+> ℹ️ AUR publication is pending – AUR account registration is currently
+> disabled by the Arch team (June 2026 malware-cleanup). Until the
+> package lands there, build it directly from the included PKGBUILD:
 ```bash
-yay -S osc-dreamchatbox      # oder: paru -S osc-dreamchatbox
+git clone https://github.com/yakuda-stack/OSC-DreamChatbox.git
+cd OSC-DreamChatbox/packaging/aur
+updpkgsums          # pacman -S pacman-contrib (once)
+makepkg -si         # builds & installs osc-dreamchatbox as a real pacman package
 ```
+Once the AUR reopens: `yay -S osc-dreamchatbox`
 
 ### One-line install
 ```bash
@@ -187,4 +194,6 @@ Default target is `127.0.0.1:9000`. VRChat chatbox limit is 144 characters (the 
 
 ## 📄 License
 
-MIT – see [LICENSE](LICENSE).
+GPL-3.0-or-later – see [LICENSE](LICENSE).
+Copyright (C) 2026 yakuda. Derivative works must remain open source
+under the same license.
