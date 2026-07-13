@@ -2,11 +2,14 @@
 
 All notable changes to OSC-DreamChatbox are documented here.
 
-## [v1.0.4-alpha] – 2026-07-12
+## [v1.0.5-alpha] – 2026-07-12
 
 ### Changed
 - **License changed from MIT to GPL-3.0-or-later** (LICENSE, README
-  badge, PKGBUILD). Previously published releases remain MIT
+  badge, PKGBUILD). Releases up to and including v1.0.4-alpha remain
+  MIT; this release and everything after is GPL-3.0-or-later
+
+## [v1.0.4-alpha] – 2026-07-12
 
 ### Added
 - **AUR packaging**: `packaging/aur/PKGBUILD` + `.desktop` file for

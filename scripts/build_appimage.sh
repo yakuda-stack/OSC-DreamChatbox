@@ -20,7 +20,7 @@ if [ ! -f core/constants.py ]; then
 fi
 
 APP="OSC-DreamChatbox"
-# Version automatisch aus core/constants.py lesen (z.B. v1.0.4-alpha)
+# Version automatisch aus core/constants.py lesen (z.B. v1.0.5-alpha)
 VERSION="$(grep -o 'VERSION = "[^"]*"' core/constants.py | cut -d'"' -f2)"
 VERSION="${VERSION#v}"
 ARCH="x86_64"
