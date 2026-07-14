@@ -3,6 +3,7 @@
 # 🌙 OSC-DreamChatbox
 
 **A simple, clean VRChat OSC chatbox companion for Linux.**
+*The native Linux alternative to [MagicChatbox](https://github.com/BoiHanny/vrcosc-magicchatbox) (VRCOSC) – which is Windows-only.*
 
 [![License: GPL--3.0--or--later](https://img.shields.io/badge/License-GPL--3.0--or--later-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-Linux-green.svg)]()
@@ -14,6 +15,8 @@
 ---
 
 ## ✨ What can it do?
+
+Everything you know from MagicChatbox/VRCOSC on Windows – status rotation, now-playing, hardware stats, speech-to-text, the slim-chatbox trick – built natively for Linux (PyQt6, MPRIS/D-Bus, sysfs).
 
 *(Personal Status, MediaPlay, Hardware and All-in-one live on the **Apps** page.)*
 
@@ -105,19 +108,22 @@
 
 ## 🚀 Installation
 
-### Arch Linux / CachyOS (package build)
-> ℹ️ AUR publication is pending – AUR account registration is currently
-> disabled by the Arch team (June 2026 malware-cleanup). Until the
-> package lands there, build it directly from the included PKGBUILD:
+### Arch Linux / CachyOS (AUR) — recommended
+Available on the **[AUR](https://aur.archlinux.org/packages/osc-dreamchatbox)** – install with any AUR helper:
 ```bash
-git clone https://github.com/yakuda-stack/OSC-DreamChatbox.git
-cd OSC-DreamChatbox/packaging/aur
-updpkgsums          # pacman -S pacman-contrib (once)
-makepkg -si         # builds & installs osc-dreamchatbox as a real pacman package
+yay -S osc-dreamchatbox      # or: paru -S osc-dreamchatbox
 ```
-Once the AUR reopens: `yay -S osc-dreamchatbox`
+<details>
+<summary>Without an AUR helper (plain <code>makepkg</code>)</summary>
 
-### One-line install
+```bash
+git clone https://aur.archlinux.org/osc-dreamchatbox.git
+cd osc-dreamchatbox
+makepkg -si
+```
+</details>
+
+### One-line install (any distro)
 ```bash
 curl -sL https://raw.githubusercontent.com/yakuda-stack/OSC-DreamChatbox/main/scripts/install.sh | bash
 ```
@@ -130,12 +136,6 @@ cd OSC-DreamChatbox
 python3 -m venv venv
 ./venv/bin/pip install -r requirements.txt
 ./venv/bin/python osc_dreamchatbox.py
-```
-
-### Arch Linux packages (alternative)
-```bash
-sudo pacman -S python-pyqt6 python-pyaudio mesa-utils xdotool
-yay -S python-python-osc
 ```
 
 ### Optional features
