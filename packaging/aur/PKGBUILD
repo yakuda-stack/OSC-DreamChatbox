@@ -1,12 +1,12 @@
 # Maintainer: yakuda <DEINE-EMAIL@example.com>
 pkgname=osc-dreamchatbox
 pkgver=1.0.5_alpha
-pkgrel=1
-pkgdesc="Simple, clean VRChat OSC chatbox companion for Linux (status, media, hardware, speech-to-text)"
+pkgrel=2
+pkgdesc="Native Linux alternative to MagicChatbox (VRCOSC) - VRChat OSC chatbox companion (status, now-playing, hardware, speech-to-text, OSCQuery)"
 arch=('any')
 url="https://github.com/yakuda-stack/OSC-DreamChatbox"
 license=('GPL-3.0-or-later')
-depends=('python' 'python-pyqt6' 'python-zeroconf' 'python-python-osc' 'python-setproctitle')
+depends=('python' 'python-pyqt6' 'python-zeroconf' 'python-osc' 'python-setproctitle')
 optdepends=('python-speechrecognition: Speech to Text'
             'python-pyaudio: Speech to Text (microphone access)'
             'python-deepl: DeepL translation backend'
