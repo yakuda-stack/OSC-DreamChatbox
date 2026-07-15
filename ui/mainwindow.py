@@ -21,7 +21,7 @@ from PyQt6.QtCore import QUrl
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QLabel, QLineEdit, QPushButton,
     QVBoxLayout, QHBoxLayout, QFrame, QCheckBox, QSpinBox, QStackedWidget,
-    QScrollArea, QComboBox, QFileDialog, QListWidget
+    QScrollArea, QComboBox, QFileDialog, QListWidget, QSlider
 )
 
 from core.constants import (APP_NAME, VERSION, GITHUB_REPO, DISCORD_URL,
@@ -31,7 +31,8 @@ from core.constants import (APP_NAME, VERSION, GITHUB_REPO, DISCORD_URL,
 from core.textutils import (fmt_time, fmt_time_hm,
                             apply_template, make_songbar,
                             SONGBAR_STYLES, CUSTOM_STYLE_INDEX,
-                            DEFAULT_CUSTOM_BAR)
+                            DEFAULT_CUSTOM_BAR, TIME_POSITIONS,
+                            TIME_POS_LINE, bar_length, compose_bar_line)
 from core import queryfix
 from core.oscquery import OSCQueryService, HAS_ZEROCONF
 from core.mediafetch import MediaFetcher
@@ -129,6 +130,8 @@ class MainWindow(QMainWindow):
             "media_show_bar": True,
             "oscquery_enabled": True,   # natives OSCQuery (mDNS)
             "media_bar_style": 2,   # 0-5 presets, 6 = custom
+            "media_bar_size": 100,  # songbar length in % (30-100)
+            "media_time_pos": TIME_POS_LINE,  # line|before|after|split
             "media_bar_custom": dict(DEFAULT_CUSTOM_BAR),
             "media_poll_sec": 1,
             "hw_active": False,
@@ -605,6 +608,42 @@ class MainWindow(QMainWindow):
         style_row.addStretch()
         mc.addLayout(style_row)
 
+        # songbar size: shorter bar = room for the time on the same line
+        size_row = QHBoxLayout()
+        size_row.setContentsMargins(24, 0, 0, 0)
+        size_row.addWidget(QLabel("Songbar size:"))
+        self.bar_size_slider = QSlider(Qt.Orientation.Horizontal)
+        self.bar_size_slider.setRange(30, 100)
+        self.bar_size_slider.setSingleStep(5)
+        self.bar_size_slider.setPageStep(10)
+        self.bar_size_slider.setFixedWidth(160)
+        self.bar_size_slider.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.bar_size_slider.valueChanged.connect(self.on_bar_size)
+        size_row.addWidget(self.bar_size_slider)
+        self.bar_size_lbl = QLabel("100%")
+        self.bar_size_lbl.setObjectName("dim")
+        self.bar_size_lbl.setFixedWidth(42)
+        size_row.addWidget(self.bar_size_lbl)
+        size_row.addStretch()
+        mc.addLayout(size_row)
+
+        # where the time goes: merging it with the bar keeps the
+        # chatbox at two lines instead of three
+        tpos_row = QHBoxLayout()
+        tpos_row.setContentsMargins(24, 0, 0, 0)
+        tpos_row.addWidget(QLabel("Time position:"))
+        self.time_pos_combo = QComboBox()
+        for label, tid in TIME_POSITIONS:
+            self.time_pos_combo.addItem(label, tid)
+        self.time_pos_combo.currentIndexChanged.connect(self.on_time_pos)
+        tpos_row.addWidget(self.time_pos_combo)
+        tpos_row.addStretch()
+        mc.addLayout(tpos_row)
+        self.bar_line_preview = QLabel("")
+        self.bar_line_preview.setObjectName("dim")
+        self.bar_line_preview.setContentsMargins(24, 0, 0, 0)
+        mc.addWidget(self.bar_line_preview)
+
         # custom style editor (only visible when "Custom" is selected)
         self.bar_custom_box = QWidget()
         cb = QVBoxLayout(self.bar_custom_box)
@@ -681,7 +720,8 @@ class MainWindow(QMainWindow):
             lambda _, e=self.media_custom_input, b=m_ico: self.emoji_popup.open_for(e, b))
         m_custom_row.addWidget(m_ico)
         mc.addLayout(m_custom_row)
-        m_ph = QLabel("Placeholders: {artist} {title} {time} {position} {length} "
+        m_ph = QLabel("Placeholders: {artist} {title} {time} {time_status} "
+                      "{time_end} {position} {length} "
                       "{bar} {player} {icon_sound}  \u2013  use \\n for a line break. "
                       "Values follow the checkboxes above.")
         m_ph.setObjectName("dim")
@@ -966,7 +1006,8 @@ class MainWindow(QMainWindow):
                       "({gpu_name} {gpu_usage} {gpu_temp} {temp_icon} {vram_usage} "
                       "{cpu_name} {cpu_usage} {cpu_temp} {ram_usage} {ram_type} "
                       "{icon_flame}) and all MediaPlay placeholders ({artist} "
-                      "{title} {time} {bar} {icon_sound} \u2026). Use \\n for a "
+                      "{title} {time} {time_status} {time_end} {bar} "
+                      "{icon_sound} \u2026). Use \\n for a "
                       "line break. The apps must be Active for their values to fill in.")
         a_ph.setObjectName("dim")
         a_ph.setWordWrap(True)
@@ -1970,7 +2011,20 @@ class MainWindow(QMainWindow):
             edit.setText(custom.get(key, ""))
             edit.blockSignals(False)
         self.bar_custom_box.setVisible(idx == CUSTOM_STYLE_INDEX)
+        size = min(100, max(30, int(self.cfg.get("media_bar_size", 100))))
+        self.cfg["media_bar_size"] = size
+        self.bar_size_slider.blockSignals(True)
+        self.bar_size_slider.setValue(size)
+        self.bar_size_slider.blockSignals(False)
+        self.bar_size_lbl.setText(f"{size}%")
+        tpos = self.cfg.get("media_time_pos", TIME_POS_LINE)
+        tidx = next((i for i in range(self.time_pos_combo.count())
+                     if self.time_pos_combo.itemData(i) == tpos), 0)
+        self.time_pos_combo.blockSignals(True)
+        self.time_pos_combo.setCurrentIndex(tidx)
+        self.time_pos_combo.blockSignals(False)
         self._update_bar_custom_preview()
+        self._update_bar_line_preview()
         self.poll_spin.setValue(self.cfg["media_poll_sec"])
         self.chk_media_icon.setChecked(self.cfg["media_icon"])
         self.chk_media_custom.setChecked(self.cfg["media_custom"])
@@ -2167,9 +2221,60 @@ class MainWindow(QMainWindow):
     def on_bar_style(self, idx):
         self.cfg["media_bar_style"] = int(idx)
         self.bar_custom_box.setVisible(idx == CUSTOM_STYLE_INDEX)
+        size = min(100, max(30, int(self.cfg.get("media_bar_size", 100))))
+        self.cfg["media_bar_size"] = size
+        self.bar_size_slider.blockSignals(True)
+        self.bar_size_slider.setValue(size)
+        self.bar_size_slider.blockSignals(False)
+        self.bar_size_lbl.setText(f"{size}%")
+        tpos = self.cfg.get("media_time_pos", TIME_POS_LINE)
+        tidx = next((i for i in range(self.time_pos_combo.count())
+                     if self.time_pos_combo.itemData(i) == tpos), 0)
+        self.time_pos_combo.blockSignals(True)
+        self.time_pos_combo.setCurrentIndex(tidx)
+        self.time_pos_combo.blockSignals(False)
         self._update_bar_custom_preview()
+        self._update_bar_line_preview()
+        self._update_bar_line_preview()
         self.save_config()
         self.update_preview()
+
+    def _bar_len(self):
+        """Songbar length after applying the size slider."""
+        return bar_length(self.cfg.get("media_bar_size", 100), SONGBAR_LEN)
+
+    def on_bar_size(self, val):
+        self.cfg["media_bar_size"] = int(val)
+        self.bar_size_lbl.setText(f"{val}%")
+        self._update_bar_custom_preview()
+        self._update_bar_line_preview()
+        self.save_config_later()
+        self.update_preview()
+
+    def on_time_pos(self, idx):
+        self.cfg["media_time_pos"] = (self.time_pos_combo.itemData(idx)
+                                      or TIME_POS_LINE)
+        self._update_bar_line_preview()
+        self.save_config()
+        self.update_preview()
+
+    def _update_bar_line_preview(self):
+        """Shows how bar + time will look together (one line)."""
+        try:
+            bar = make_songbar(0.4, self.cfg["media_bar_style"],
+                               self._bar_len(),
+                               self.cfg.get("media_bar_custom"))
+            line = compose_bar_line(bar, "0:27", "1:06",
+                                    self.cfg.get("media_time_pos",
+                                                 TIME_POS_LINE))
+            if self.cfg.get("media_time_pos", TIME_POS_LINE) == TIME_POS_LINE:
+                txt = (f"Bar line:  {line}   (time stays on the "
+                       "artist/title line)")
+            else:
+                txt = f"Bar line:  {line}   ({len(line)} chars)"
+        except Exception:
+            txt = ""
+        self.bar_line_preview.setText(txt)
 
     def on_bar_custom(self, key, text):
         custom = dict(DEFAULT_CUSTOM_BAR)
@@ -2177,12 +2282,13 @@ class MainWindow(QMainWindow):
         custom[key] = text
         self.cfg["media_bar_custom"] = custom
         self._update_bar_custom_preview()
+        self._update_bar_line_preview()
         self.save_config_later()
         self.update_preview()
 
     def _update_bar_custom_preview(self):
         try:
-            bar = make_songbar(0.4, CUSTOM_STYLE_INDEX, SONGBAR_LEN,
+            bar = make_songbar(0.4, CUSTOM_STYLE_INDEX, self._bar_len(),
                                self.cfg.get("media_bar_custom"))
         except Exception:
             bar = ""
@@ -2519,7 +2625,7 @@ class MainWindow(QMainWindow):
         if info["length"] > 0:
             frac = min(1.0, max(0.0, info["position"] / info["length"]))
             bar = make_songbar(frac, self.cfg["media_bar_style"],
-                               SONGBAR_LEN,
+                               self._bar_len(),
                                self.cfg.get("media_bar_custom"))
         # music timer WITHOUT seconds – hours and minutes only
         time_str = (f"{fmt_time_hm(info['position'])}/"
@@ -2532,6 +2638,10 @@ class MainWindow(QMainWindow):
             "position": fmt_time_hm(info["position"]),
             "length": (fmt_time_hm(info["length"])
                        if info["length"] > 0 else None),
+            # clearer aliases: where you are / when the song ends
+            "time_status": fmt_time_hm(info["position"]),
+            "time_end": (fmt_time_hm(info["length"])
+                         if info["length"] > 0 else None),
             "time": time_str if c["media_show_time"] else None,
             "bar": (bar or None) if c["media_show_bar"] else None,
             "player": info["player"],
@@ -2561,17 +2671,27 @@ class MainWindow(QMainWindow):
                 t = t[:TITLE_MAX_LEN - 1] + "…"
             parts.append(t)
         text = " : ".join(parts)
-        if self.cfg["media_show_time"] and info["length"] > 0:
+        tpos = self.cfg.get("media_time_pos", TIME_POS_LINE)
+        show_time = self.cfg["media_show_time"] and info["length"] > 0
+        show_bar = self.cfg["media_show_bar"] and info["length"] > 0
+        # time merged INTO the bar line? only possible if both are shown
+        merge = show_time and show_bar and tpos != TIME_POS_LINE
+        if show_time and not merge:
             time_str = (f"{fmt_time_hm(info['position'])}/"
                         f"{fmt_time_hm(info['length'])}")
             text = f"{text} | {time_str}" if text else time_str
         if text:
             lines.append(text)
-        if self.cfg["media_show_bar"] and info["length"] > 0:
+        if show_bar:
             frac = min(1.0, max(0.0, info["position"] / info["length"]))
-            lines.append(make_songbar(frac, self.cfg["media_bar_style"],
-                                      SONGBAR_LEN,
-                                      self.cfg.get("media_bar_custom")))
+            bar = make_songbar(frac, self.cfg["media_bar_style"],
+                               self._bar_len(),
+                               self.cfg.get("media_bar_custom"))
+            if merge:
+                bar = compose_bar_line(bar,
+                                       fmt_time_hm(info["position"]),
+                                       fmt_time_hm(info["length"]), tpos)
+            lines.append(bar)
         if lines and self.cfg["media_icon"]:
             lines[0] = f"\U0001F3B5 {lines[0]} \U0001F3B5"
         return lines

@@ -30,6 +30,8 @@ Everything you know from MagicChatbox/VRCOSC on Windows – status rotation, now
 - Shows the song you are listening to – **Spotify, YT Music, browsers, VLC, any player** (via MPRIS/D-Bus, no extra setup)
 - Toggle artist / title (max 24 chars) / time / progress songbar individually
 - Time is shown **without seconds** (hours:minutes, e.g. `0:03/0:04`)
+- **Songbar size slider (30–100 %)** and **time position** – put the time before, after or around the bar so everything fits on **one line**:
+  - `0:27/1:06 ▓▓▓▓░░░░` · `▓▓▓▓░░░░ 0:27/1:06` · `0:27▓▓▓▓░░░░1:06`
 - **7 songbar styles (6 presets + custom)**:
 
   | # | Style |
@@ -42,7 +44,7 @@ Everything you know from MagicChatbox/VRCOSC on Windows – status rotation, now
   | 6 | `▓▓▓▓▓▓▓▓░░░░░░░░░░░░` (classic) |
   | 7 | **Custom** – build your own (brackets, filled/empty chars, optional knob) with live preview |
 
-- Custom string with placeholders: `{artist} {title} {time} {bar} {icon_sound}`
+- Custom string with placeholders: `{artist} {title} {time} {time_status} {time_end} {bar} {icon_sound}`
 
 ### 🖥️ Hardware
 - Live **GPU / VRAM / CPU / RAM** stats (AMD via kernel sysfs, NVIDIA via nvidia-smi)
@@ -51,7 +53,7 @@ Everything you know from MagicChatbox/VRCOSC on Windows – status rotation, now
 
 ### 🧩 All in one (AIO)
 - Combine **everything into one master string** – up to 5 rotating layouts
-- All placeholders from every app work here, incl. `{text_1}…{text_20}`
+- All placeholders from every app work here, incl. `{text_1}…{text_20}`, `{time_status}`, `{time_end}`
 
 ### 💬 Textbox
 - Free chat field → sends straight to VRChat (apps pause briefly so nothing overwrites your message)

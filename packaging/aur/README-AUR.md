@@ -1,70 +1,34 @@
-> STATUS Juli 2026: Die AUR-Registrierung ist derzeit vom Arch-Team
-> deaktiviert (Malware-Welle Juni 2026, >1500 kompromittierte Pakete).
-> Regelmaessig https://aur.archlinux.org pruefen – sobald der Banner
-> 'Account registration is currently disabled' verschwindet, die
-> Schritte unten ausfuehren. Bis dahin koennen Nutzer das Paket direkt
-> aus dem GitHub-Repo bauen (siehe README, Abschnitt Arch Linux).
+# AUR-Wartung: osc-dreamchatbox
 
-# AUR-Veroeffentlichung: osc-dreamchatbox
+Veroeffentlicht: https://aur.archlinux.org/packages/osc-dreamchatbox
+Installation fuer Nutzer: `yay -S osc-dreamchatbox` (oder paru).
 
-## Einmalige Vorbereitung
-1. AUR-Account anlegen: https://aur.archlinux.org (Register)
-2. SSH-Key hinterlegen: `ssh-keygen -t ed25519 -f ~/.ssh/aur`,
-   den Inhalt von `~/.ssh/aur.pub` im AUR-Account unter
-   "My Account -> SSH Public Key" eintragen.
-3. In `~/.ssh/config`:
-   ```
-   Host aur.archlinux.org
-       User aur
-       IdentityFile ~/.ssh/aur
-   ```
+## Setup (einmalig, bereits erledigt)
+- AUR-Account + SSH-Key hinterlegt (Standard-Key ~/.ssh/id_ed25519 reicht).
+- AUR-Repo liegt lokal unter ~/osc-dreamchatbox (Branch: master).
 
-## Vor jedem Release beachten
-- GitHub-Release/Tag MUSS existieren (z.B. v1.0.5-alpha), sonst laeuft
-  die source=()-URL ins Leere.
-- pkgver darf KEINEN Bindestrich enthalten -> im PKGBUILD steht
-  `1.0.5_alpha`, der echte Tag wird via `_tag` daraus gebaut.
-- Maintainer-Zeile: echte E-Mail eintragen.
-- python-python-osc, python-speechrecognition und python-deepl kommen
-  selbst aus dem AUR -> voellig ok, AUR-Pakete duerfen von AUR-Paketen
-  abhaengen (Nutzer bauen mit yay/paru).
+## Wichtige Regeln
+- depends korrekt: `python-osc` (NICHT `python-python-osc` - existiert nicht!).
+  Alle Abhaengigkeiten liegen im offiziellen extra-Repo, KEINE AUR-Dependency.
+- pkgver ohne Bindestrich: `1.0.6_alpha`, der Tag `v1.0.6-alpha` wird via _tag gebaut.
+- GitHub-Tag muss ZUERST existieren, sonst 404 bei updpkgsums.
+- .SRCINFO ist Pflicht und muss bei JEDER Aenderung neu erzeugt werden.
+- pkgrel: bei neuer App-Version auf 1 zurueck; bei reiner Packaging-Aenderung um 1 erhoehen.
 
-## Ablauf (auf deinem Arch/CachyOS)
-```bash
-# 1) leeres AUR-Repo klonen (existiert nach dem ersten Push)
-git clone ssh://aur@aur.archlinux.org/osc-dreamchatbox.git aur-osc-dreamchatbox
-cd aur-osc-dreamchatbox
-cp /pfad/zum/projekt/packaging/aur/PKGBUILD .
+## Update-Ablauf (neue App-Version)
+1. Zuerst im Projekt-Repo: Version bumpen, committen, taggen, pushen
+2. cd ~/osc-dreamchatbox
+3. nano PKGBUILD  -> pkgver hoch, pkgrel=1
+4. updpkgsums
+5. makepkg -si    (testen: osc-dreamchatbox starten)
+6. makepkg --printsrcinfo > .SRCINFO
+7. git add PKGBUILD .SRCINFO && git commit -m "Update to vX" && git push origin master
 
-# 2) Checksumme eintragen (ersetzt das SKIP)
-updpkgsums                       # aus pacman-contrib: pacman -S pacman-contrib
-
-# 3) lokal bauen & testen
-makepkg -si                      # baut, installiert, prueft Abhaengigkeiten
-osc-dreamchatbox                 # Start testen (Menue-Eintrag + Icon pruefen)
-namcap PKGBUILD                  # optional: Lint (pacman -S namcap)
-namcap osc-dreamchatbox-*.pkg.tar.zst
-
-# 4) .SRCINFO erzeugen (PFLICHT fuer das AUR)
-makepkg --printsrcinfo > .SRCINFO
-
-# 5) veroeffentlichen
-git add PKGBUILD .SRCINFO
-git commit -m "Initial release v1.0.5-alpha"
-git push origin master           # AUR nutzt 'master'
-```
-
-## Bei jedem Update spaeter
-1. pkgver anpassen, pkgrel auf 1 zuruecksetzen
-2. `updpkgsums && makepkg -si` (testen!)
-3. `makepkg --printsrcinfo > .SRCINFO`
-4. committen + pushen
-
-## Haeufige Stolperfallen
-- `.SRCINFO` vergessen -> AUR lehnt den Push ab.
-- Build-Artefakte (src/, pkg/, *.pkg.tar.zst) NIE committen ->
-  `.gitignore` im AUR-Repo anlegen.
-- Nur PKGBUILD/.SRCINFO (+ evtl. .install/Patches) gehoeren ins
-  AUR-Repo, NICHT der Quellcode.
-- Erster Push legt das Paket automatisch an; der Name ist dann fuer
-  deinen Account reserviert.
+## Stolperfallen
+- .SRCINFO vergessen -> AUR lehnt Push ab.
+- Build-Artefakte (src/, pkg/, *.pkg.tar.zst) nie committen (.gitignore).
+- Ins AUR-Repo nur PKGBUILD + .SRCINFO (+ .gitignore), nie Quellcode.
+- AUR-Push NUR aus ~/osc-dreamchatbox; das PKGBUILD im Projekt ist nur die Kopie.
+- Branch: Projekt = main, AUR = master.
+- Nach dem Push dauert `yay -Ss` teils Stunden (Cache-Index);
+  `yay -S osc-dreamchatbox` funktioniert sofort.

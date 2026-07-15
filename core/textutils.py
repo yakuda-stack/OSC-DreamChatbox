@@ -35,6 +35,48 @@ SONGBAR_STYLES = [
 ]
 
 
+# ---------------------------------------------------------------------------
+# songbar size + time placement
+# ---------------------------------------------------------------------------
+# where the time is rendered relative to the songbar. Everything except
+# TIME_POS_LINE merges time AND bar into ONE line, so the chatbox stays
+# at two lines instead of three.
+TIME_POS_LINE = "line"       # time on the text line, bar on its own line
+TIME_POS_BEFORE = "before"   # 0:27/1:06 ▓▓▓▓░░░░
+TIME_POS_AFTER = "after"     # ▓▓▓▓░░░░ 0:27/1:06
+TIME_POS_SPLIT = "split"     # 0:27▓▓▓▓░░░░1:06
+
+TIME_POSITIONS = [
+    ("Own line \u2013 time with artist/title", TIME_POS_LINE),
+    ("Before bar \u2013 0:27/1:06 \u2593\u2593\u2591\u2591", TIME_POS_BEFORE),
+    ("After bar \u2013 \u2593\u2593\u2591\u2591 0:27/1:06", TIME_POS_AFTER),
+    ("Around bar \u2013 0:27\u2593\u2593\u2591\u25911:06", TIME_POS_SPLIT),
+]
+
+
+def bar_length(size_pct, base_len: int) -> int:
+    """Effective songbar length for a size percentage (30-100 %).
+    Shorter bars leave room for the time on the same line."""
+    pct = min(100, max(30, int(size_pct or 100)))
+    return max(4, round(base_len * pct / 100))
+
+
+def compose_bar_line(bar: str, pos_str: str, len_str: str,
+                     time_pos: str) -> str:
+    """Merges songbar and time into a SINGLE line according to the
+    chosen placement. With TIME_POS_LINE the bar is returned as is
+    (the time then lives on the artist/title line)."""
+    if not bar:
+        return ""
+    if time_pos == TIME_POS_BEFORE:
+        return f"{pos_str}/{len_str} {bar}"
+    if time_pos == TIME_POS_AFTER:
+        return f"{bar} {pos_str}/{len_str}"
+    if time_pos == TIME_POS_SPLIT:
+        return f"{pos_str}{bar}{len_str}"
+    return bar
+
+
 # index used for the user-defined custom style (= after the presets)
 CUSTOM_STYLE_INDEX = len(SONGBAR_STYLES)
 

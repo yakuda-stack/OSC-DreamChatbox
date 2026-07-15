@@ -2,6 +2,25 @@
 
 All notable changes to OSC-DreamChatbox are documented here.
 
+## [v1.0.6-alpha] – 2026-07-15
+
+### Added
+- **Songbar size slider (30–100 %)** in the MediaPlay card – a shorter
+  bar leaves room for the time on the same line (`media_bar_size`)
+- **Time position** dropdown (`media_time_pos`) – the time can now be
+  merged INTO the songbar line so the chatbox stays at two lines
+  instead of three:
+  - `Own line` (default, previous behaviour): time sits on the
+    artist/title line, bar gets its own line
+  - `Before bar`: `0:27/1:06 ▓▓▓▓░░░░`
+  - `After bar`: `▓▓▓▓░░░░ 0:27/1:06`
+  - `Around bar`: `0:27▓▓▓▓░░░░1:06`
+  A live preview under the dropdown shows the resulting line + its
+  character count
+- **New placeholders `{time_status}` (current position) and
+  `{time_end}` (when the song ends)** for the MediaPlay custom string
+  and All-in-one – clearer aliases of `{position}` / `{length}`
+
 ## [v1.0.5-alpha] – 2026-07-12
 
 ### Changed
