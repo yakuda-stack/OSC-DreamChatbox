@@ -1,6 +1,6 @@
 # Maintainer: yakuda <DEINE-EMAIL@example.com>
 pkgname=osc-dreamchatbox
-pkgver=1.0.6_alpha
+pkgver=1.0.7_alpha
 pkgrel=1
 pkgdesc="Native Linux alternative to MagicChatbox (VRCOSC) - VRChat OSC chatbox companion (status, now-playing, hardware, speech-to-text, OSCQuery)"
 arch=('any')

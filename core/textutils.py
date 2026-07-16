@@ -136,6 +136,7 @@ PLACEHOLDER_ALIASES = {
     "vram": "vram_usage", "ram": "ram_usage",
     "song": "title", "song_title": "title", "songtitle": "title",
     "songbar": "bar",
+    "lyric": "lyrics", "songtext": "lyrics", "liedtext": "lyrics",
     "tempicon": "temp_icon", "temp": "temp_icon",
 }
 

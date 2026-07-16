@@ -36,6 +36,7 @@ from core.textutils import (fmt_time, fmt_time_hm,
 from core import queryfix
 from core.oscquery import OSCQueryService, HAS_ZEROCONF
 from core.mediafetch import MediaFetcher
+from core.lyrics import LyricsFetcher
 from core.hardware import HardwareMonitor
 from core.speechtotext import (SpeechWorker, LANGUAGES,
                                OUTPUT_LANGUAGES, list_microphones)
@@ -69,6 +70,7 @@ class MainWindow(QMainWindow):
         self.status_index = 0
         self.media = MediaFetcher(self.log)
         self.media_info = None
+        self.lyrics = LyricsFetcher(self.log)
         self.manual_pause_until = 0.0
         self.last_manual_text = ""
         self.aio_index = 0
@@ -127,6 +129,8 @@ class MainWindow(QMainWindow):
             "media_show_artist": True,
             "media_show_title": True,
             "media_show_time": True,
+            "media_show_lyrics": False,  # synced lyrics via LRCLIB
+                                         # (off = zero network requests)
             "media_show_bar": True,
             "oscquery_enabled": True,   # natives OSCQuery (mDNS)
             "media_bar_style": 2,   # 0-5 presets, 6 = custom
@@ -587,10 +591,14 @@ class MainWindow(QMainWindow):
         self.chk_artist = QCheckBox("Artist")
         self.chk_title = QCheckBox(f"Song title (max {TITLE_MAX_LEN} characters)")
         self.chk_time = QCheckBox("Time  (current / total)")
+        self.chk_lyrics = QCheckBox(
+            "Lyrics  (synced line via LRCLIB \u2013 needs internet, "
+            "only fetched while checked)")
         self.chk_bar = QCheckBox("Songbar  (progress bar)")
         for chk, key in ((self.chk_artist, "media_show_artist"),
                          (self.chk_title, "media_show_title"),
                          (self.chk_time, "media_show_time"),
+                         (self.chk_lyrics, "media_show_lyrics"),
                          (self.chk_bar, "media_show_bar")):
             chk.toggled.connect(lambda on, k=key: self.on_media_option(k, on))
             mc.addWidget(chk)
@@ -722,8 +730,9 @@ class MainWindow(QMainWindow):
         mc.addLayout(m_custom_row)
         m_ph = QLabel("Placeholders: {artist} {title} {time} {time_status} "
                       "{time_end} {position} {length} "
-                      "{bar} {player} {icon_sound}  \u2013  use \\n for a line break. "
-                      "Values follow the checkboxes above.")
+                      "{bar} {lyrics} {player} {icon_sound}  \u2013  use \\n "
+                      "for a line break. Values follow the checkboxes above "
+                      "({lyrics} needs the Lyrics checkbox).")
         m_ph.setObjectName("dim")
         m_ph.setWordWrap(True)
         mc.addWidget(m_ph)
@@ -1007,7 +1016,7 @@ class MainWindow(QMainWindow):
                       "{cpu_name} {cpu_usage} {cpu_temp} {ram_usage} {ram_type} "
                       "{icon_flame}) and all MediaPlay placeholders ({artist} "
                       "{title} {time} {time_status} {time_end} {bar} "
-                      "{icon_sound} \u2026). Use \\n for a "
+                      "{lyrics} {icon_sound} \u2026). Use \\n for a "
                       "line break. The apps must be Active for their values to fill in.")
         a_ph.setObjectName("dim")
         a_ph.setWordWrap(True)
@@ -1997,6 +2006,7 @@ class MainWindow(QMainWindow):
         self.chk_artist.setChecked(self.cfg["media_show_artist"])
         self.chk_title.setChecked(self.cfg["media_show_title"])
         self.chk_time.setChecked(self.cfg["media_show_time"])
+        self.chk_lyrics.setChecked(self.cfg.get("media_show_lyrics", False))
         self.chk_bar.setChecked(self.cfg["media_show_bar"])
         self.bar_style_combo.blockSignals(True)
         idx = min(CUSTOM_STYLE_INDEX,
@@ -2610,6 +2620,11 @@ class MainWindow(QMainWindow):
             if changed:
                 self.log(f"MediaPlay: now playing \"{info['artist']} – {info['title']}\" "
                          f"({info['player']})")
+            # start the lyrics lookup as soon as a (new) song is seen –
+            # only when the Lyrics checkbox is on (performance)
+            if self.cfg.get("media_show_lyrics"):
+                self.lyrics.prefetch(info["artist"], info["title"],
+                                     info["length"])
         else:
             self.media_status_lbl.setText("No media player detected.")
         self.update_preview()
@@ -2643,6 +2658,12 @@ class MainWindow(QMainWindow):
             "time_end": (fmt_time_hm(info["length"])
                          if info["length"] > 0 else None),
             "time": time_str if c["media_show_time"] else None,
+            # {lyrics} only works while the checkbox is checked –
+            # unchecked means no LRCLIB requests at all (performance)
+            "lyrics": (self.lyrics.current_line(
+                           info["artist"], info["title"],
+                           info["length"], info["position"])
+                       if c.get("media_show_lyrics") else None),
             "bar": (bar or None) if c["media_show_bar"] else None,
             "player": info["player"],
             "icon_sound": "\U0001F3B5",
@@ -2682,6 +2703,12 @@ class MainWindow(QMainWindow):
             text = f"{text} | {time_str}" if text else time_str
         if text:
             lines.append(text)
+        # synced lyrics line (between title/time and the songbar)
+        if self.cfg.get("media_show_lyrics"):
+            lyr = self.lyrics.current_line(info["artist"], info["title"],
+                                           info["length"], info["position"])
+            if lyr:
+                lines.append(f"\u266a {lyr}")
         if show_bar:
             frac = min(1.0, max(0.0, info["position"] / info["length"]))
             bar = make_songbar(frac, self.cfg["media_bar_style"],

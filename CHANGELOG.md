@@ -2,6 +2,34 @@
 
 All notable changes to OSC-DreamChatbox are documented here.
 
+## [v1.0.7-alpha] – 2026-07-16
+
+### Added
+- **Lyrics in MediaPlay** 🎶 – shows the current line of the song you
+  are listening to, perfectly synced to the playback position:
+  - New **"Lyrics" checkbox** in the MediaPlay card (between Time and
+    Songbar). The line appears with a ♪ prefix between title/time and
+    the songbar
+  - Lyrics come from **[LRCLIB](https://lrclib.net)** – an open,
+    key-less database of `.lrc` files with exact timestamps. Works
+    with EVERY MPRIS player (Spotify, YT Music, browsers, VLC, …)
+  - New placeholder **`{lyrics}`** for the MediaPlay custom string
+    and All-in-one (aliases: `{lyric}`, `{songtext}`, `{liedtext}`).
+    `{lyrics}` only fills in while the checkbox is checked
+  - **Performance-first**: unchecked = ZERO network requests. Checked
+    = one lookup per song in a background thread, cached (including
+    negative results, so unknown songs are never re-queried)
+  - **Fuzzy matching** so platform title variations still hit:
+    noise like `(Official Video)`, `[4K Remastered]`, `feat. XY`,
+    `- Topic` is stripped, then a 4-step chain from exact lookup to
+    scored search runs. Search hits must match the title START
+    (prefix) and stay within ±10 s of the song duration – so
+    third-party uploads match, but wrong songs/remixes never do
+    (`core/lyrics.py`, no new dependencies)
+
+Huge thanks to **ewephoric (stupid lamb thing)** on Discord for the
+idea! 🐑💙
+
 ## [v1.0.6-alpha] – 2026-07-15
 
 ### Added
