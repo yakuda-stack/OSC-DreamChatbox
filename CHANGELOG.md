@@ -2,6 +2,17 @@
 
 All notable changes to OSC-DreamChatbox are documented here.
 
+## [v1.0.8-alpha] – 2026-07-16
+
+### Fixed
+- **Crash (SIGSEGV) with the debug console open**: background
+  threads (lyrics fetcher, OSCQuery/mDNS listeners) wrote their log
+  messages directly into the Qt debug console – GUI calls from a
+  non-GUI thread crash Qt. `log()` is now thread-safe: messages are
+  delivered to the console via a queued Qt signal, so they always
+  arrive in the GUI thread no matter which thread logs. Thanks for
+  the report!
+
 ## [v1.0.7-alpha] – 2026-07-16
 
 ### Added

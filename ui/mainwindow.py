@@ -15,7 +15,7 @@ import queue as _queue
 from collections import deque
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtCore import QUrl
 from PyQt6.QtWidgets import (
@@ -56,6 +56,12 @@ except ImportError:
 
 # ----------------------------------------------------------------------------
 class MainWindow(QMainWindow):
+    # emitted by log() – possibly from background threads (lyrics
+    # fetcher, OSCQuery/mDNS listeners). Qt delivers cross-thread
+    # signals as queued connection, so the debug console is only
+    # ever touched from the GUI thread (direct calls SIGSEGV).
+    _log_signal = pyqtSignal(str)
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle("OSC DreamChatbox")
@@ -66,6 +72,7 @@ class MainWindow(QMainWindow):
         self.cfg = self.load_config()
         self.osc_client = None
         self.debug_console = DebugConsole(APP_NAME)
+        self._log_signal.connect(self._log_gui)
         self.emoji_popup = EmojiPopup()
         self.status_index = 0
         self.media = MediaFetcher(self.log)
@@ -2921,9 +2928,15 @@ class MainWindow(QMainWindow):
             self.char_count_lbl.setStyleSheet("")
 
     def log(self, msg):
+        # safe to call from ANY thread: print is thread-safe and the
+        # signal emit is queued into the GUI thread when needed
+        print(msg)
+        self._log_signal.emit(str(msg))
+
+    def _log_gui(self, msg):
+        # runs in the GUI thread only (signal/slot)
         if self.debug_console is not None:
             self.debug_console.log(msg)
-        print(msg)
 
     def closeEvent(self, ev):
         self.stt.stop()
