@@ -2,6 +2,23 @@
 
 All notable changes to OSC-DreamChatbox are documented here.
 
+## [v1.0.9-alpha] – 2026-07-17
+
+### Added
+- **Time with seconds** – new sub-toggle under Time in the MediaPlay
+  card (`media_time_seconds`, default ON): the music timer now shows
+  real seconds (`3:27/4:12`, long songs as `h:mm:ss`). Turn it off to
+  get the previous hours:minutes style (`0:03/0:04`) back. The toggle
+  applies everywhere the time appears: the time line, the time merged
+  into the songbar line AND the placeholders `{time}` `{time_status}`
+  `{time_end}` `{position}` `{length}`
+
+### Fixed
+- **Chatbox is cleared when SendToVRChat is switched OFF**: one empty
+  OSC message is sent so the last text disappears from VRChat
+  immediately instead of hanging there for minutes. The same clear
+  also runs when the app is closed
+
 ## [v1.0.8-alpha] – 2026-07-16
 
 ### Fixed

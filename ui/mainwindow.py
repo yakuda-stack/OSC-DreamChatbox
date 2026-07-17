@@ -136,6 +136,8 @@ class MainWindow(QMainWindow):
             "media_show_artist": True,
             "media_show_title": True,
             "media_show_time": True,
+            "media_time_seconds": True,  # time incl. seconds (3:27);
+                                         # off = old h:mm style (0:03)
             "media_show_lyrics": False,  # synced lyrics via LRCLIB
                                          # (off = zero network requests)
             "media_show_bar": True,
@@ -598,6 +600,8 @@ class MainWindow(QMainWindow):
         self.chk_artist = QCheckBox("Artist")
         self.chk_title = QCheckBox(f"Song title (max {TITLE_MAX_LEN} characters)")
         self.chk_time = QCheckBox("Time  (current / total)")
+        self.chk_time_seconds = QCheckBox(
+            "Time with seconds  (3:27 instead of 0:03)")
         self.chk_lyrics = QCheckBox(
             "Lyrics  (synced line via LRCLIB \u2013 needs internet, "
             "only fetched while checked)")
@@ -605,10 +609,13 @@ class MainWindow(QMainWindow):
         for chk, key in ((self.chk_artist, "media_show_artist"),
                          (self.chk_title, "media_show_title"),
                          (self.chk_time, "media_show_time"),
+                         (self.chk_time_seconds, "media_time_seconds"),
                          (self.chk_lyrics, "media_show_lyrics"),
                          (self.chk_bar, "media_show_bar")):
             chk.toggled.connect(lambda on, k=key: self.on_media_option(k, on))
             mc.addWidget(chk)
+        # visually a sub-option of Time -> indent it
+        self.chk_time_seconds.setStyleSheet("margin-left: 24px;")
 
         # songbar style picker (the 5 selectable bar designs)
         style_row = QHBoxLayout()
@@ -2013,6 +2020,8 @@ class MainWindow(QMainWindow):
         self.chk_artist.setChecked(self.cfg["media_show_artist"])
         self.chk_title.setChecked(self.cfg["media_show_title"])
         self.chk_time.setChecked(self.cfg["media_show_time"])
+        self.chk_time_seconds.setChecked(
+            self.cfg.get("media_time_seconds", True))
         self.chk_lyrics.setChecked(self.cfg.get("media_show_lyrics", False))
         self.chk_bar.setChecked(self.cfg["media_show_bar"])
         self.bar_style_combo.blockSignals(True)
@@ -2442,6 +2451,21 @@ class MainWindow(QMainWindow):
         self.update_timers()
         if on:
             self.send_now()  # send once immediately
+        else:
+            # clear the chatbox in VRChat right away – otherwise the
+            # last text keeps hanging there for minutes
+            self.clear_chatbox()
+
+    def clear_chatbox(self):
+        """Sends one empty chatbox message so VRChat removes the
+        currently shown text immediately."""
+        if self.osc_client is None:
+            return
+        try:
+            self.osc_client.send_message(CHATBOX_INPUT, ["", True, False])
+            self.log(f"-> OSC {CHATBOX_INPUT} cleared (empty message)")
+        except Exception as e:
+            self.log(f"ERROR while clearing chatbox: {e}")
 
     def on_debug_toggled(self, on):
         self.cfg["debug"] = on
@@ -2649,20 +2673,22 @@ class MainWindow(QMainWindow):
             bar = make_songbar(frac, self.cfg["media_bar_style"],
                                self._bar_len(),
                                self.cfg.get("media_bar_custom"))
-        # music timer WITHOUT seconds – hours and minutes only
-        time_str = (f"{fmt_time_hm(info['position'])}/"
-                    f"{fmt_time_hm(info['length'])}"
+        # music timer – with seconds (3:27) or h:mm only (0:03),
+        # depending on the "Time with seconds" toggle
+        ft = self._fmt_media_time
+        time_str = (f"{ft(info['position'])}/"
+                    f"{ft(info['length'])}"
                     if info["length"] > 0
-                    else fmt_time_hm(info["position"]))
+                    else ft(info["position"]))
         return {
             "artist": info["artist"] if c["media_show_artist"] else None,
             "title": t if c["media_show_title"] else None,
-            "position": fmt_time_hm(info["position"]),
-            "length": (fmt_time_hm(info["length"])
+            "position": ft(info["position"]),
+            "length": (ft(info["length"])
                        if info["length"] > 0 else None),
             # clearer aliases: where you are / when the song ends
-            "time_status": fmt_time_hm(info["position"]),
-            "time_end": (fmt_time_hm(info["length"])
+            "time_status": ft(info["position"]),
+            "time_end": (ft(info["length"])
                          if info["length"] > 0 else None),
             "time": time_str if c["media_show_time"] else None,
             # {lyrics} only works while the checkbox is checked –
@@ -2705,8 +2731,8 @@ class MainWindow(QMainWindow):
         # time merged INTO the bar line? only possible if both are shown
         merge = show_time and show_bar and tpos != TIME_POS_LINE
         if show_time and not merge:
-            time_str = (f"{fmt_time_hm(info['position'])}/"
-                        f"{fmt_time_hm(info['length'])}")
+            time_str = (f"{self._fmt_media_time(info['position'])}/"
+                        f"{self._fmt_media_time(info['length'])}")
             text = f"{text} | {time_str}" if text else time_str
         if text:
             lines.append(text)
@@ -2723,8 +2749,9 @@ class MainWindow(QMainWindow):
                                self.cfg.get("media_bar_custom"))
             if merge:
                 bar = compose_bar_line(bar,
-                                       fmt_time_hm(info["position"]),
-                                       fmt_time_hm(info["length"]), tpos)
+                                       self._fmt_media_time(info["position"]),
+                                       self._fmt_media_time(info["length"]),
+                                       tpos)
             lines.append(bar)
         if lines and self.cfg["media_icon"]:
             lines[0] = f"\U0001F3B5 {lines[0]} \U0001F3B5"
@@ -2927,6 +2954,15 @@ class MainWindow(QMainWindow):
             self.char_count_lbl.setText(f"{n}/{CHATBOX_LIMIT}")
             self.char_count_lbl.setStyleSheet("")
 
+    def _fmt_media_time(self, seconds):
+        """Media time formatting following the "Time with seconds"
+        toggle: ON -> m:ss / h:mm:ss (3:27), OFF -> h:mm (0:03,
+        the old behaviour). Used by the time line AND the {time}
+        {time_status} {time_end} {position} {length} placeholders."""
+        if self.cfg.get("media_time_seconds", True):
+            return fmt_time(seconds)
+        return fmt_time_hm(seconds)
+
     def log(self, msg):
         # safe to call from ANY thread: print is thread-safe and the
         # signal emit is queued into the GUI thread when needed
@@ -2939,6 +2975,7 @@ class MainWindow(QMainWindow):
             self.debug_console.log(msg)
 
     def closeEvent(self, ev):
+        self.clear_chatbox()   # don't leave stale text hanging in VRChat
         self.stt.stop()
         self.libre_server.stop_sync()   # no orphaned server on exit
         self.oscq.stop()
