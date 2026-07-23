@@ -27,7 +27,8 @@ from PyQt6.QtWidgets import (
 from core.constants import (APP_NAME, VERSION, GITHUB_REPO, DISCORD_URL,
                             DONATE_URL, CONFIG_DIR, CONFIG_FILE,
                             OLD_CONFIG_FILE, SLIM_SUFFIX, CHATBOX_INPUT,
-                            CHATBOX_LIMIT, TITLE_MAX_LEN, SONGBAR_LEN)
+                            CHATBOX_LIMIT, TITLE_MAX_LEN, SONGBAR_LEN,
+                            LYRICS_DIR)
 from core.textutils import (fmt_time, fmt_time_hm,
                             apply_template, make_songbar,
                             SONGBAR_STYLES, CUSTOM_STYLE_INDEX,
@@ -37,6 +38,7 @@ from core import queryfix
 from core.oscquery import OSCQueryService, HAS_ZEROCONF
 from core.mediafetch import MediaFetcher
 from core.lyrics import LyricsFetcher
+from core.vrchatlog import VRChatLogWatcher
 from core.hardware import HardwareMonitor
 from core.speechtotext import (SpeechWorker, LANGUAGES,
                                OUTPUT_LANGUAGES, list_microphones)
@@ -89,6 +91,8 @@ class MainWindow(QMainWindow):
         self._block_updating = False
         self.hw = HardwareMonitor(self.log)
         self.hw_info = None
+        # live VRChat world/player info (from the Proton output_log)
+        self.vrclog = VRChatLogWatcher(self.log)
 
         # --- timers ---
         self._save_timer = QTimer(self)
@@ -106,6 +110,10 @@ class MainWindow(QMainWindow):
         self.stt_timer.timeout.connect(self.poll_stt)
         self.hw_timer = QTimer(self)
         self.hw_timer.timeout.connect(self.poll_hw)
+        # refreshes the preview so live world/player/clock info stays
+        # current (the watcher itself runs in its own thread)
+        self.vrclog_timer = QTimer(self)
+        self.vrclog_timer.timeout.connect(self.update_preview)
 
         self.build_ui()
         self.apply_config_to_ui()
@@ -132,14 +140,23 @@ class MainWindow(QMainWindow):
             ],
             "status_template_active": 0,
             "status_active": True,
+            # live info in status texts ({player_in_world} {group_world}
+            # {realtime}) – each gated by its own checkbox
+            "status_player_in_world": False,
+            "status_group_world": False,
+            "status_realtime": False,
+            "vrchat_log_dir": "",   # manual override, "" = auto-detect
             "media_active": False,
             "media_show_artist": True,
             "media_show_title": True,
+            "media_title_max": TITLE_MAX_LEN,  # song title cutoff (3-64)
             "media_show_time": True,
             "media_time_seconds": True,  # time incl. seconds (3:27);
                                          # off = old h:mm style (0:03)
             "media_show_lyrics": False,  # synced lyrics via LRCLIB
                                          # (off = zero network requests)
+            "media_lyrics_local": False,  # use your own local .lrc files
+            "media_lyrics_dir": str(LYRICS_DIR),  # folder with .lrc files
             "media_show_bar": True,
             "oscquery_enabled": True,   # natives OSCQuery (mDNS)
             "media_bar_style": 2,   # 0-5 presets, 6 = custom
@@ -510,6 +527,55 @@ class MainWindow(QMainWindow):
         cnt_row.addStretch()
         sc.addLayout(cnt_row)
 
+        # ---- live info: usable as {player_in_world} {group_world}
+        #      {realtime} inside any status text and in All in one ----
+        sc.addWidget(QLabel("Live info (usable in your texts):"))
+        self.chk_player_in_world = QCheckBox(
+            "Player in world  \u2013  {player_in_world}")
+        self.chk_group_world = QCheckBox(
+            "Group world  \u2013  {group_world}")
+        self.chk_realtime = QCheckBox(
+            "Realtime (your PC clock)  \u2013  {realtime}")
+        for chk, key in ((self.chk_player_in_world, "status_player_in_world"),
+                         (self.chk_group_world, "status_group_world"),
+                         (self.chk_realtime, "status_realtime")):
+            chk.setStyleSheet("margin-left: 4px;")
+            chk.toggled.connect(
+                lambda on, k=key: self.on_status_live(k, on))
+            sc.addWidget(chk)
+
+        live_hint = QLabel(
+            "{player_in_world} = players in your current VRChat instance, "
+            "{group_world} = current world name, {realtime} = PC time "
+            "(HH:MM). World/player info is read from VRChat's Proton log.")
+        live_hint.setObjectName("dim")
+        live_hint.setWordWrap(True)
+        live_hint.setStyleSheet("margin-left: 4px;")
+        sc.addWidget(live_hint)
+
+        # VRChat log folder override (only shown when world/player is on)
+        self.vrclog_dir_row = QWidget()
+        vlog_row = QHBoxLayout(self.vrclog_dir_row)
+        vlog_row.setContentsMargins(4, 0, 0, 0)
+        vlog_row.setSpacing(6)
+        vlog_row.addWidget(QLabel("VRChat log:"))
+        self.vrclog_dir_lbl = QLabel("")
+        self.vrclog_dir_lbl.setObjectName("dim")
+        self.vrclog_dir_lbl.setWordWrap(True)
+        vlog_row.addWidget(self.vrclog_dir_lbl, 1)
+        vlog_btn = QPushButton("Set \u2026")
+        vlog_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        vlog_btn.setToolTip("Override the VRChat output_log folder "
+                            "(leave unset for auto-detection)")
+        vlog_btn.clicked.connect(self.on_choose_vrclog_dir)
+        vlog_row.addWidget(vlog_btn)
+        vlog_auto = QPushButton("Auto")
+        vlog_auto.setCursor(Qt.CursorShape.PointingHandCursor)
+        vlog_auto.setToolTip("Clear the override and auto-detect again")
+        vlog_auto.clicked.connect(self.on_vrclog_dir_auto)
+        vlog_row.addWidget(vlog_auto)
+        sc.addWidget(self.vrclog_dir_row)
+
         # texts fold in/out so the card stays compact
         self.texts_expander = QPushButton("\u25B8  Texts")
         self.texts_expander.setObjectName("expander")
@@ -598,24 +664,79 @@ class MainWindow(QMainWindow):
 
         mc.addWidget(QLabel("Show:"))
         self.chk_artist = QCheckBox("Artist")
-        self.chk_title = QCheckBox(f"Song title (max {TITLE_MAX_LEN} characters)")
+        self.chk_title = QCheckBox("Song title")
         self.chk_time = QCheckBox("Time  (current / total)")
         self.chk_time_seconds = QCheckBox(
             "Time with seconds  (3:27 instead of 0:03)")
         self.chk_lyrics = QCheckBox(
             "Lyrics  (synced line via LRCLIB \u2013 needs internet, "
             "only fetched while checked)")
+        self.chk_lyrics_local = QCheckBox(
+            "Use my own .lrc files  (local, offline \u2013 matched by "
+            "artist/title, takes priority over LRCLIB)")
         self.chk_bar = QCheckBox("Songbar  (progress bar)")
         for chk, key in ((self.chk_artist, "media_show_artist"),
                          (self.chk_title, "media_show_title"),
                          (self.chk_time, "media_show_time"),
                          (self.chk_time_seconds, "media_time_seconds"),
                          (self.chk_lyrics, "media_show_lyrics"),
+                         (self.chk_lyrics_local, "media_lyrics_local"),
                          (self.chk_bar, "media_show_bar")):
             chk.toggled.connect(lambda on, k=key: self.on_media_option(k, on))
-            mc.addWidget(chk)
-        # visually a sub-option of Time -> indent it
+        # visually sub-options -> indent them
         self.chk_time_seconds.setStyleSheet("margin-left: 24px;")
+        self.chk_lyrics_local.setStyleSheet("margin-left: 24px;")
+
+        # title length slider (sub-option of Song title, 3-64 chars)
+        self.title_max_row = QWidget()
+        tmax = QHBoxLayout(self.title_max_row)
+        tmax.setContentsMargins(24, 0, 0, 0)
+        tmax.setSpacing(6)
+        tmax.addWidget(QLabel("Max length:"))
+        self.title_max_slider = QSlider(Qt.Orientation.Horizontal)
+        self.title_max_slider.setRange(3, 64)
+        self.title_max_slider.setSingleStep(1)
+        self.title_max_slider.setPageStep(4)
+        self.title_max_slider.setFixedWidth(160)
+        self.title_max_slider.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.title_max_slider.valueChanged.connect(self.on_title_max)
+        tmax.addWidget(self.title_max_slider)
+        self.title_max_lbl = QLabel("24 characters")
+        self.title_max_lbl.setObjectName("dim")
+        self.title_max_lbl.setFixedWidth(96)
+        tmax.addWidget(self.title_max_lbl)
+        tmax.addStretch()
+
+        # folder row for the local .lrc files (shown only in local mode)
+        self.lrc_dir_row = QWidget()
+        lrc_row = QHBoxLayout(self.lrc_dir_row)
+        lrc_row.setContentsMargins(48, 0, 0, 0)
+        lrc_row.setSpacing(6)
+        lrc_row.addWidget(QLabel("Folder:"))
+        self.lrc_dir_lbl = QLabel("")
+        self.lrc_dir_lbl.setObjectName("dim")
+        self.lrc_dir_lbl.setWordWrap(True)
+        lrc_row.addWidget(self.lrc_dir_lbl, 1)
+        lrc_btn = QPushButton("Choose \u2026")
+        lrc_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        lrc_btn.clicked.connect(self.on_choose_lyrics_dir)
+        lrc_row.addWidget(lrc_btn)
+        open_btn = QPushButton("Open")
+        open_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        open_btn.clicked.connect(self.on_open_lyrics_dir)
+        lrc_row.addWidget(open_btn)
+
+        # add everything in the RIGHT order: each sub-option sits directly
+        # under the checkbox it belongs to
+        mc.addWidget(self.chk_artist)
+        mc.addWidget(self.chk_title)
+        mc.addWidget(self.title_max_row)
+        mc.addWidget(self.chk_time)
+        mc.addWidget(self.chk_time_seconds)
+        mc.addWidget(self.chk_lyrics)
+        mc.addWidget(self.chk_lyrics_local)
+        mc.addWidget(self.lrc_dir_row)
+        mc.addWidget(self.chk_bar)
 
         # songbar style picker (the 5 selectable bar designs)
         style_row = QHBoxLayout()
@@ -1030,7 +1151,9 @@ class MainWindow(QMainWindow):
                       "{cpu_name} {cpu_usage} {cpu_temp} {ram_usage} {ram_type} "
                       "{icon_flame}) and all MediaPlay placeholders ({artist} "
                       "{title} {time} {time_status} {time_end} {bar} "
-                      "{lyrics} {icon_sound} \u2026). Use \\n for a "
+                      "{lyrics} {icon_sound} \u2026), plus the live info "
+                      "{player_in_world} {group_world} {realtime} "
+                      "{instance_type}. Use \\n for a "
                       "line break. The apps must be Active for their values to fill in.")
         a_ph.setObjectName("dim")
         a_ph.setWordWrap(True)
@@ -1950,7 +2073,9 @@ class MainWindow(QMainWindow):
         self.update_lbl.setWordWrap(True)
         self.update_lbl.setOpenExternalLinks(True)
         uc.addWidget(self.update_lbl)
-        layout.addWidget(ucard)
+        # Community & Updates goes to the TOP of the page (index 0 is the
+        # "Options" title, so this card lands right underneath it)
+        layout.insertWidget(1, ucard)
 
         layout.addStretch()
         return page
@@ -2019,11 +2144,30 @@ class MainWindow(QMainWindow):
         self.toggle_media.setChecked(self.cfg["media_active"])
         self.chk_artist.setChecked(self.cfg["media_show_artist"])
         self.chk_title.setChecked(self.cfg["media_show_title"])
+        tmax = self._title_max()
+        self.cfg["media_title_max"] = tmax
+        self.title_max_slider.blockSignals(True)
+        self.title_max_slider.setValue(tmax)
+        self.title_max_slider.blockSignals(False)
+        self.title_max_lbl.setText(f"{tmax} characters")
         self.chk_time.setChecked(self.cfg["media_show_time"])
         self.chk_time_seconds.setChecked(
             self.cfg.get("media_time_seconds", True))
         self.chk_lyrics.setChecked(self.cfg.get("media_show_lyrics", False))
+        self.chk_lyrics_local.setChecked(
+            self.cfg.get("media_lyrics_local", False))
         self.chk_bar.setChecked(self.cfg["media_show_bar"])
+        # local lyrics folder row + fetcher state
+        self._sync_lyrics_local()
+        # status live info
+        self.chk_player_in_world.setChecked(
+            self.cfg.get("status_player_in_world", False))
+        self.chk_group_world.setChecked(
+            self.cfg.get("status_group_world", False))
+        self.chk_realtime.setChecked(self.cfg.get("status_realtime", False))
+        self.vrclog_dir_lbl.setText(
+            self.cfg.get("vrchat_log_dir") or "(auto-detect)")
+        self._update_vrclog_watcher()
         self.bar_style_combo.blockSignals(True)
         idx = min(CUSTOM_STYLE_INDEX,
                   max(0, int(self.cfg.get("media_bar_style", 2))))
@@ -2195,6 +2339,85 @@ class MainWindow(QMainWindow):
         self.save_config()
         self.update_timers()
 
+    # ------------------------------------------------- status live info
+    def on_status_live(self, key, on):
+        self.cfg[key] = bool(on)
+        self.save_config()
+        self._update_vrclog_watcher()
+        self.update_preview()
+
+    def _needs_vrclog(self):
+        return bool(self.cfg.get("status_player_in_world")
+                    or self.cfg.get("status_group_world"))
+
+    def _update_vrclog_watcher(self):
+        """Starts/stops the log watcher and its preview refresh timer,
+        and shows the log-folder row only when world/player info is on."""
+        need = self._needs_vrclog()
+        if hasattr(self, "vrclog_dir_row"):
+            self.vrclog_dir_row.setVisible(need)
+        if need:
+            self.vrclog.set_override(self.cfg.get("vrchat_log_dir", ""))
+            self.vrclog.start()
+        else:
+            self.vrclog.stop()
+        # the refresh timer also drives {realtime}, so run it whenever any
+        # live info is active
+        if need or self.cfg.get("status_realtime"):
+            if not self.vrclog_timer.isActive():
+                self.vrclog_timer.start(2000)
+        else:
+            self.vrclog_timer.stop()
+
+    def on_choose_vrclog_dir(self):
+        start = self.cfg.get("vrchat_log_dir") or str(Path.home())
+        folder = QFileDialog.getExistingDirectory(
+            self, "Choose the VRChat output_log folder", start)
+        if not folder:
+            return
+        self.cfg["vrchat_log_dir"] = folder
+        self.save_config()
+        self.vrclog.set_override(folder)
+        self.vrclog_dir_lbl.setText(folder)
+        self.log(f"VRChat log: folder set to {folder}")
+        self.update_preview()
+
+    def on_vrclog_dir_auto(self):
+        self.cfg["vrchat_log_dir"] = ""
+        self.save_config()
+        self.vrclog.set_override("")
+        self.vrclog_dir_lbl.setText("(auto-detect)")
+        self.log("VRChat log: folder set to auto-detect")
+        self.update_preview()
+
+    def _status_values(self):
+        """Values for the {player_in_world} {group_world} {realtime}
+        placeholders. Each follows its checkbox (unchecked -> empty, so
+        apply_template drops it cleanly)."""
+        vals = {"player_in_world": None, "group_world": None,
+                "realtime": None, "instance_type": None}
+        if self.cfg.get("status_player_in_world") \
+                or self.cfg.get("status_group_world"):
+            snap = self.vrclog.snapshot()
+            if snap["in_world"]:
+                if self.cfg.get("status_player_in_world") \
+                        and snap["player_count"] > 0:
+                    vals["player_in_world"] = str(snap["player_count"])
+                if self.cfg.get("status_group_world"):
+                    vals["group_world"] = snap["world"] or None
+                    vals["instance_type"] = snap["instance_type"] or None
+        if self.cfg.get("status_realtime"):
+            vals["realtime"] = time.strftime("%H:%M")
+        return vals
+
+    def _render_status(self, text):
+        """Renders a status text: only runs the template engine when the
+        text actually contains a {placeholder} – so plain texts (incl.
+        ones starting with ':3' etc.) are never altered."""
+        if text and "{" in text:
+            return apply_template(text, self._status_values())
+        return text
+
     def advance_status(self):
         """Switches to a RANDOM other status text (never the same one
         twice in a row) instead of cycling sequentially."""
@@ -2323,7 +2546,55 @@ class MainWindow(QMainWindow):
     def on_media_option(self, key, on):
         self.cfg[key] = on
         self.save_config()
+        if key == "media_lyrics_local":
+            self._sync_lyrics_local()
         self.update_preview()
+
+    def _title_max(self):
+        return min(64, max(3, int(self.cfg.get("media_title_max",
+                                               TITLE_MAX_LEN))))
+
+    def on_title_max(self, val):
+        val = min(64, max(3, int(val)))
+        self.cfg["media_title_max"] = val
+        self.title_max_lbl.setText(f"{val} characters")
+        self.save_config_later()
+        self.update_preview()
+
+    def _sync_lyrics_local(self):
+        """Pushes the local-.lrc setting into the fetcher and toggles
+        the folder row. Creating the default folder is best-effort."""
+        on = bool(self.cfg.get("media_lyrics_local"))
+        folder = self.cfg.get("media_lyrics_dir") or str(LYRICS_DIR)
+        if on:
+            try:
+                Path(folder).expanduser().mkdir(parents=True, exist_ok=True)
+            except Exception:
+                pass
+        self.lyrics.set_local(on, folder)
+        if hasattr(self, "lrc_dir_row"):
+            self.lrc_dir_row.setVisible(on)
+            self.lrc_dir_lbl.setText(folder)
+
+    def on_choose_lyrics_dir(self):
+        start = self.cfg.get("media_lyrics_dir") or str(LYRICS_DIR)
+        folder = QFileDialog.getExistingDirectory(
+            self, "Choose the folder with your .lrc files", start)
+        if not folder:
+            return
+        self.cfg["media_lyrics_dir"] = folder
+        self.save_config()
+        self._sync_lyrics_local()
+        self.log(f"Lyrics: local .lrc folder set to {folder}")
+        self.update_preview()
+
+    def on_open_lyrics_dir(self):
+        folder = self.cfg.get("media_lyrics_dir") or str(LYRICS_DIR)
+        try:
+            Path(folder).expanduser().mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
+        QDesktopServices.openUrl(QUrl.fromLocalFile(folder))
 
     def on_poll_changed(self, val):
         self.cfg["media_poll_sec"] = val
@@ -2415,12 +2686,17 @@ class MainWindow(QMainWindow):
             return []
         tpl = tpls[self.aio_index % len(tpls)]
         vals = {}
+        # live info ({player_in_world} {group_world} {realtime}) – gated
+        # by their own checkboxes, independent of the Active toggle
+        vals.update(self._status_values())
         # Personal Status texts
         if self.cfg["status_active"]:
-            vals["text"] = self.current_status_text() or None
+            vals["text"] = self._render_status(
+                self.current_status_text()) or None
             for i in range(20):
-                vals[f"text_{i + 1}"] = (self.cfg["status_texts"][i].strip()
-                                         or None)
+                vals[f"text_{i + 1}"] = (
+                    self._render_status(self.cfg["status_texts"][i].strip())
+                    or None)
         else:
             vals["text"] = None
             for i in range(20):
@@ -2665,8 +2941,10 @@ class MainWindow(QMainWindow):
         follow the checkboxes above (unchecked -> empty)."""
         c = self.cfg
         t = info["title"]
-        if len(t) > TITLE_MAX_LEN:
-            t = t[:TITLE_MAX_LEN - 1] + "\u2026"
+        tmax = self._title_max()
+        if len(t) > tmax:
+            # hard cut – no "…" so no chatbox characters are wasted
+            t = t[:tmax].rstrip()
         bar = ""
         if info["length"] > 0:
             frac = min(1.0, max(0.0, info["position"] / info["length"]))
@@ -2721,8 +2999,10 @@ class MainWindow(QMainWindow):
             parts.append(info["artist"])
         if self.cfg["media_show_title"] and info["title"]:
             t = info["title"]
-            if len(t) > TITLE_MAX_LEN:
-                t = t[:TITLE_MAX_LEN - 1] + "…"
+            tmax = self._title_max()
+            if len(t) > tmax:
+                # hard cut – no "…" so no chatbox characters are wasted
+                t = t[:tmax].rstrip()
             parts.append(t)
         text = " : ".join(parts)
         tpos = self.cfg.get("media_time_pos", TIME_POS_LINE)
@@ -2903,7 +3183,7 @@ class MainWindow(QMainWindow):
         lines = []
         for key in self.cfg["app_order"]:
             if key == "status" and self.cfg["status_active"]:
-                cur = self.current_status_text()
+                cur = self._render_status(self.current_status_text())
                 if cur:
                     lines.append(cur)
             elif key == "media" and self.cfg["media_active"]:
@@ -2979,6 +3259,7 @@ class MainWindow(QMainWindow):
         self.stt.stop()
         self.libre_server.stop_sync()   # no orphaned server on exit
         self.oscq.stop()
+        self.vrclog.stop()
         self._save_timer.stop()
         self._write_config()
         self.debug_console.close()

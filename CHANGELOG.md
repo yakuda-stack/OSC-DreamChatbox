@@ -2,6 +2,48 @@
 
 All notable changes to OSC-DreamChatbox are documented here.
 
+## [v1.1.0-alpha] – 2026-07-23
+
+### Added
+- **Song title length** – new slider under *Song title* in the MediaPlay
+  card (`media_title_max`, default 24): set how many characters of the
+  title are shown, anywhere from 3 to 64. Applies to the normal media
+  line and the `{title}` placeholder
+
+- **Local .lrc files** – new sub-toggle under *Lyrics* in the MediaPlay
+  card (`media_lyrics_local`, default OFF): drop your own `.lrc` files
+  into a folder and they are used offline, matched by artist/title on
+  the filename (`Artist - Title.lrc`, `Title.lrc`, …). A local hit takes
+  priority over LRCLIB; LRCLIB stays as the online fallback. Default
+  folder is `~/.config/OSC-DreamChatbox/lyrics/`, changeable via a
+  *Choose…* / *Open* row that only appears while the toggle is on
+- **Personal Status live info** – three new checkboxes, each usable as a
+  placeholder inside any status text (e.g. Text 1) AND in All in one:
+  - **Player in world** → `{player_in_world}` – number of players in your
+    current VRChat instance (incl. yourself)
+  - **Group world** → `{group_world}` – the current world name (bonus:
+    `{instance_type}` = Public / Friends / Group / Group+ / Invite …)
+  - **Realtime** → `{realtime}` – your PC clock (HH:MM)
+
+  World name, instance type and player count are read live from VRChat's
+  Proton `output_log` – no VRChat login, no API calls, no rate limits.
+  The log folder is auto-detected across the usual Steam locations
+  (native, extra library folders, Flatpak) and can be overridden
+  manually. The watcher only runs while *Player in world* or *Group
+  world* is enabled. Placeholder aliases: `{playerin_word}` `{players}`
+  `{player_count}` → `{player_in_world}`; `{world}` `{world_name}` →
+  `{group_world}`; `{clock}` `{time_now}` → `{realtime}`. Status texts
+  are only run through the template engine when they actually contain a
+  `{…}`, so plain texts (e.g. `:3`) are never altered
+
+### Changed
+- **Long song titles are cut without a trailing `…`** – the ellipsis
+  wasted one of the precious 144 chatbox characters on every long title,
+  so the title is now hard-cut at the chosen length (a trailing space is
+  trimmed too)
+- **Options page order** – *Community & Updates* moved to the top, above
+  OSCQuery and the OSC settings
+
 ## [v1.0.9-alpha] – 2026-07-17
 
 ### Added

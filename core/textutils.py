@@ -138,6 +138,14 @@ PLACEHOLDER_ALIASES = {
     "songbar": "bar",
     "lyric": "lyrics", "songtext": "lyrics", "liedtext": "lyrics",
     "tempicon": "temp_icon", "temp": "temp_icon",
+    # live world / clock placeholders (Personal Status)
+    "playerin_word": "player_in_world", "playerinworld": "player_in_world",
+    "player_count": "player_in_world", "players": "player_in_world",
+    "playercount": "player_in_world",
+    "world": "group_world", "world_name": "group_world",
+    "groupworld": "group_world", "worldname": "group_world",
+    "clock": "realtime", "time_now": "realtime", "pctime": "realtime",
+    "instancetype": "instance_type", "instance": "instance_type",
 }
 
 

@@ -35,11 +35,13 @@ No extra dependencies – urllib only.
 """
 
 import json
+import os
 import re
 import threading
 import unicodedata
 import urllib.parse
 import urllib.request
+from pathlib import Path
 
 API_GET = "https://lrclib.net/api/get"
 API_SEARCH = "https://lrclib.net/api/search"
@@ -182,6 +184,67 @@ class LyricsFetcher:
         self._lock = threading.Lock()
         self._cache = {}      # key -> [(sec, line), ...]  ([] = none found)
         self._pending = set()
+        # local .lrc files (your own lyrics, offline, take priority)
+        self._local_enabled = False
+        self._local_dir = None
+
+    # ---------------------------------------------------------- local .lrc
+    def set_local(self, enabled: bool, folder: str | None):
+        """Enable/point the local .lrc lookup. Clears the cache so songs
+        are re-resolved with the new setting on the next poll."""
+        d = None
+        if folder:
+            p = Path(folder).expanduser()
+            d = p if p.is_dir() else None
+        changed = (bool(enabled) != self._local_enabled
+                   or d != self._local_dir)
+        self._local_enabled = bool(enabled)
+        self._local_dir = d
+        if changed:
+            with self._lock:
+                self._cache.clear()
+                self._pending.clear()
+
+    def _read_local(self, artist, title):
+        """Returns raw .lrc text of the best local file match, or None.
+        Filenames may be 'Artist - Title.lrc', 'Title.lrc',
+        'Artist_Title.lrc' … – matched on the normalized form."""
+        folder = self._local_dir
+        if not folder:
+            return None
+        t_title = _norm(clean_title(title))
+        t_artist = _norm(clean_artist(artist))
+        if len(t_title) < MIN_PREFIX_LEN:
+            return None
+        best_path, best_score = None, 0
+        try:
+            names = os.listdir(folder)
+        except Exception:
+            return None
+        for name in names:
+            if not name.lower().endswith(".lrc"):
+                continue
+            stem = _norm(name[:-4])
+            if not stem:
+                continue
+            score = 0
+            if stem == f"{t_artist} {t_title}".strip() \
+                    or stem == f"{t_title} {t_artist}".strip():
+                score = 4
+            elif stem == t_title:
+                score = 3
+            elif t_title in stem and (not t_artist or t_artist in stem):
+                score = 2
+            elif t_title in stem and not t_artist:
+                score = 1
+            if score > best_score:
+                best_score, best_path = score, folder / name
+        if not best_path:
+            return None
+        try:
+            return best_path.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            return None
 
     @staticmethod
     def _key(artist, title, length):
@@ -251,6 +314,19 @@ class LyricsFetcher:
         lines = []
         c_artist, c_title = clean_artist(artist), clean_title(title)
         try:
+            # 0) local .lrc file – your own lyrics, offline, take priority
+            if self._local_enabled:
+                local = self._read_local(artist, title)
+                if local:
+                    lines = _parse_lrc(local)
+                    if lines:
+                        self.log(f"Lyrics: {len(lines)} synced lines for "
+                                 f"\"{artist} \u2013 {title}\" "
+                                 "(local .lrc file)")
+                        with self._lock:
+                            self._cache[key] = lines
+                            self._pending.discard(key)
+                        return
             # 1) exact – raw metadata
             data = self._try_get(artist, title, length)
             # 2) exact – cleaned metadata (skip if identical)

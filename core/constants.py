@@ -5,7 +5,7 @@ core/constants.py – shared constants & paths for OSC-DreamChatbox
 from pathlib import Path
 
 APP_NAME = "OSC-DreamChatbox"
-VERSION = "v1.0.9-alpha"
+VERSION = "v1.1.0-alpha"
 GITHUB_REPO = "yakuda-stack/OSC-DreamChatbox"
 DISCORD_URL = "https://discord.gg/X5TaN4A47h"
 DONATE_URL = "https://paypal.me/riesensika"
@@ -17,6 +17,9 @@ PROJECT_DIR = Path(__file__).resolve().parent.parent
 CONFIG_DIR = Path.home() / ".config" / "OSC-DreamChatbox"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 OLD_CONFIG_FILE = Path.home() / ".config" / "osc-dreamchatbox" / "settings.json"
+
+# default folder for the user's own .lrc files (local lyrics)
+LYRICS_DIR = CONFIG_DIR / "lyrics"
 
 # ------------------------------------------------------------- chatbox
 # The "magic" suffix: turns the VRChat chatbox into a slim bar.
