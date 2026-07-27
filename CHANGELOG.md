@@ -2,6 +2,38 @@
 
 All notable changes to OSC-DreamChatbox are documented here.
 
+## [v1.1.3-alpha] – 2026-07-27
+
+### Added
+- **VRChat Group button** in *Community & Updates*, next to Donate \u2013 opens
+  the OSC-DreamChatbox VRChat group page.
+- **Update check knows how you installed.** *Check for updates* still just
+  reports the newest release (it never downloads or overwrites files); now the
+  message is tailored: AppImage users get a link to grab the new AppImage from
+  the release page, AUR users are told to update via whichever helper they
+  actually have installed (auto-detects `yay` or `paru`), and script/source
+  users get the `git pull` / `install.sh` hint.
+- **Distro-aware system libraries in the installer.** Non-Arch users (e.g.
+  Linux Mint) previously had to add libraries by hand. The install script now
+  reads `/etc/os-release`, picks the right package manager (apt / dnf /
+  zypper / pacman) and offers to install the libraries the app needs —
+  PortAudio for the microphone and the Qt `xcb-cursor` library (without which
+  Qt6 fails with "Could not load the Qt platform plugin xcb" on X11/non-KDE).
+  Interactive runs ask first; piped `curl | bash` runs print the exact
+  command instead (so `sudo` never blocks on a password).
+
+### Fixed
+- **Installer now pulls the full dependency set.** The one-line `install.sh`
+  was missing `zeroconf`, `deepl` and `setproctitle`, which could leave
+  OSCQuery, a translation backend and the process name broken. It now
+  installs the same packages as the build script.
+- **App Tray Fix – smarter replace.** If an old osc-dreamchatbox entry from a
+  previous fix is found (a real .desktop file, a symlink pointing elsewhere,
+  an absolute Icon= path, or a missing themed icon), the fix deletes it and
+  writes a fresh one. An AUR entry (which ships its own icon) is left
+  untouched. When running as an AppImage the entry now uses the stable
+  `$APPIMAGE` path for `Exec=` instead of the ephemeral mount path.
+
 ## [v1.1.2-alpha] – 2026-07-27
 
 ### Added
@@ -64,6 +96,7 @@ All notable changes to OSC-DreamChatbox are documented here.
   files* only with *Lyrics* (folder row only when both are on), and the whole
   Songbar block (style, size, time position, custom editor) only when
   *Songbar* is enabled.
+
 
 ## [v1.1.0-alpha] – 2026-07-23
 

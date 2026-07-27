@@ -19,6 +19,58 @@ if ! command -v python3 >/dev/null 2>&1; then
     exit 1
 fi
 
+# --- 1b) system libraries (distro-aware) ---
+# PortAudio (microphone) + Qt xcb-cursor (otherwise Qt6 fails with
+# "Could not load the Qt platform plugin xcb" on X11/non-KDE).
+install_system_deps() {
+    if [ ! -r /etc/os-release ]; then
+        echo "-> Could not detect the distribution (no /etc/os-release)."
+        return 0
+    fi
+    # shellcheck disable=SC1091
+    . /etc/os-release
+    local id="${ID:-}" like="${ID_LIKE:-}" installcmd="" pkgs="" mgr=""
+    case " $id $like " in
+        *debian*|*ubuntu*|*linuxmint*|*" pop "*|*" mint "*)
+            mgr="apt"; installcmd="sudo apt-get install -y"
+            pkgs="python3-venv python3-pip python3-dev portaudio19-dev libportaudio2 libxcb-cursor0 libxcb-xinerama0" ;;
+        *fedora*|*rhel*|*" centos "*)
+            mgr="dnf"; installcmd="sudo dnf install -y"
+            pkgs="python3-devel portaudio-devel xcb-util-cursor" ;;
+        *suse*|*opensuse*)
+            mgr="zypper"; installcmd="sudo zypper install -y"
+            pkgs="python3-devel portaudio-devel libportaudio2 libxcb-cursor0" ;;
+        *arch*|*manjaro*|*cachyos*|*endeavouros*)
+            mgr="pacman"; installcmd="sudo pacman -S --needed --noconfirm"
+            pkgs="portaudio xcb-util-cursor" ;;
+        *)
+            echo "-> Unknown distribution '${PRETTY_NAME:-$id}'."
+            echo "   If the app won't start or the microphone doesn't work,"
+            echo "   install PortAudio and the Qt xcb-cursor library via your"
+            echo "   package manager."
+            return 0 ;;
+    esac
+    echo "-> Detected distribution: ${PRETTY_NAME:-$id} (package manager: $mgr)"
+    echo "-> Recommended system libraries: $pkgs"
+    if [ -t 0 ] && command -v sudo >/dev/null 2>&1; then
+        printf "   Install them now via %s? [Y/n] " "$mgr"
+        read -r answer
+        case "$answer" in
+            [Nn]*)
+                echo "   Skipped. Install later with:"
+                echo "     $installcmd $pkgs" ;;
+            *)
+                $installcmd $pkgs || \
+                    echo "   (Some packages may already be present or need manual attention.)" ;;
+        esac
+    else
+        echo "-> Running non-interactively, so not installed automatically."
+        echo "   Run this once to be sure GUI + microphone work:"
+        echo "     $installcmd $pkgs"
+    fi
+}
+install_system_deps
+
 # --- 2) get the source ---
 mkdir -p "$APP_DIR"
 if command -v git >/dev/null 2>&1; then

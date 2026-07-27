@@ -5,10 +5,12 @@ core/constants.py – shared constants & paths for OSC-DreamChatbox
 from pathlib import Path
 
 APP_NAME = "OSC-DreamChatbox"
-VERSION = "v1.1.2-alpha"
+VERSION = "v1.1.3-alpha"
 GITHUB_REPO = "yakuda-stack/OSC-DreamChatbox"
 DISCORD_URL = "https://discord.gg/X5TaN4A47h"
 DONATE_URL = "https://paypal.me/riesensika"
+VRCHAT_GROUP_URL = ("https://vrchat.com/home/group/"
+                    "grp_829b7777-430d-48b2-8bf3-4e348d0dac9b")
 
 # ---------------------------------------------------------------- paths
 # project root = folder that contains osc_dreamchatbox.py / core / ui

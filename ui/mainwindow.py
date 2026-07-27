@@ -4,6 +4,7 @@ ui/mainwindow.py – main window of OSC-DreamChatbox
 """
 
 import os
+import shutil
 import random
 import re
 import sys
@@ -29,7 +30,7 @@ from core import desktop_integration
 from core import vrc_pictures
 
 from core.constants import (APP_NAME, VERSION, GITHUB_REPO, DISCORD_URL,
-                            DONATE_URL, CONFIG_DIR, CONFIG_FILE,
+                            DONATE_URL, VRCHAT_GROUP_URL, CONFIG_DIR, CONFIG_FILE,
                             OLD_CONFIG_FILE, SLIM_SUFFIX, CHATBOX_INPUT,
                             CHATBOX_LIMIT, TITLE_MAX_LEN, SONGBAR_LEN,
                             LYRICS_DIR)
@@ -2237,6 +2238,16 @@ class MainWindow(QMainWindow):
         don_btn.clicked.connect(
             lambda: QDesktopServices.openUrl(QUrl(DONATE_URL)))
         btn_row.addWidget(don_btn)
+
+        vrc_btn = QPushButton("\U0001F465  VRChat Group")
+        vrc_btn.setObjectName("linkbtn")
+        vrc_btn.setFixedHeight(34)
+        vrc_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        vrc_btn.setToolTip("Join the OSC-DreamChatbox VRChat group")
+        vrc_btn.clicked.connect(
+            lambda: QDesktopServices.openUrl(QUrl(VRCHAT_GROUP_URL)))
+        btn_row.addWidget(vrc_btn)
+
         btn_row.addStretch()
         uc.addLayout(btn_row)
 
@@ -2281,6 +2292,28 @@ class MainWindow(QMainWindow):
         return page
 
     # -------------------------------------------------------- update check
+    def _aur_helper(self):
+        """The installed AUR helper ('yay' or 'paru', yay preferred), or
+        None if neither is on PATH."""
+        for helper in ("yay", "paru"):
+            if shutil.which(helper):
+                return helper
+        return None
+
+    def _install_kind(self):
+        """How this instance was installed – decides the update guidance.
+        'appimage' | 'aur' (system package) | 'source' (script/git)."""
+        if os.environ.get("APPIMAGE"):
+            return "appimage"
+        try:
+            if desktop_integration.system_entry_present():
+                return "aur"
+        except Exception:
+            pass
+        if os.path.exists("/usr/bin/osc-dreamchatbox"):
+            return "aur"
+        return "source"
+
     def check_for_updates(self):
         self.update_lbl.setText("Checking for updates \u2026")
         self._update_result = None
@@ -2314,10 +2347,26 @@ class MainWindow(QMainWindow):
                     f"Update check failed (no releases yet or offline). "
                     f"Current version: {VERSION}")
             elif tag and tag != VERSION:
+                kind = self._install_kind()
+                if kind == "appimage":
+                    how = (f" \u2013 <a href=\"{info}\">download the new "
+                           "AppImage from the release page</a>")
+                elif kind == "aur":
+                    helper = self._aur_helper()
+                    if helper:
+                        how = (f" \u2013 update via {helper}: "
+                               f"{helper} -S osc-dreamchatbox "
+                               f"(or <a href=\"{info}\">release page</a>)")
+                    else:
+                        how = (" \u2013 update with your AUR helper "
+                               "(yay or paru), e.g. yay -S osc-dreamchatbox "
+                               f"(or <a href=\"{info}\">release page</a>)")
+                else:
+                    how = (f" \u2013 <a href=\"{info}\">open download page</a>, "
+                           "or update with git pull / re-run install.sh")
                 self.update_lbl.setText(
                     f"\U0001F389 New version available: <b>{tag}</b> "
-                    f"(you have {VERSION}) \u2013 "
-                    f"<a href=\"{info}\">open download page</a>")
+                    f"(you have {VERSION}){how}")
             else:
                 self.update_lbl.setText(
                     f"\u2705 You are up to date ({VERSION}).")
@@ -2326,7 +2375,10 @@ class MainWindow(QMainWindow):
 
     # ---------------------------------------------------------- app tray fix
     def run_app_tray_fix(self):
-        """Create the .desktop entry (+ symlink) only if none exists yet."""
+        """Leaves a correct entry alone (AUR entry, or an already-current
+        user entry with the themed icon). Only when the existing entry is
+        old/incomplete – e.g. a previous fix without the icon fix – does it
+        delete it and create a fresh one."""
         if desktop_integration.is_installed():
             QMessageBox.information(
                 self, "App Tray Fix",

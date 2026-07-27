@@ -73,8 +73,13 @@ def detect_desktop_environment() -> str:
 
 
 def _resolve_exec() -> str:
-    """Command for Exec=. Prefer the launcher install.sh creates, then any
-    osc-dreamchatbox on PATH, else re-run this interpreter on the entry point."""
+    """Command for Exec=. When running as an AppImage use the stable
+    $APPIMAGE path (the mount dir is ephemeral); otherwise prefer the
+    launcher install.sh creates, then any osc-dreamchatbox on PATH, else
+    re-run this interpreter on the entry point."""
+    appimage = os.environ.get("APPIMAGE")
+    if appimage and Path(appimage).exists():
+        return appimage
     if _BIN_LAUNCHER.exists():
         return str(_BIN_LAUNCHER)
     on_path = shutil.which("osc-dreamchatbox")
@@ -177,15 +182,18 @@ def is_installed() -> bool:
 def install_desktop_entry() -> tuple[bool, str]:
     """Delete any old user-local osc-dreamchatbox entry and create a fresh
     one: copy the icon into the hicolor theme, write the canonical .desktop
-    referencing it by name, and symlink it into applications/. Safe to run
-    repeatedly.
+    referencing it by name, and symlink it into applications/.
+
+    An AUR / system package already ships a correct entry with its own icon,
+    so in that case everything is left untouched.
 
     Returns (changed, message)."""
     if system_entry_present():
         return False, ("A system package (AUR) already provides the desktop "
-                       "entry \u2013 nothing to do.")
+                       "entry (with its own icon) \u2013 nothing to do.")
 
-    # find and remove any old entry (symlink or real file) before adding new
+    # find and remove any old user-local entry (symlink or real file) first,
+    # e.g. a previous fix that had no themed icon yet
     removed_old = _remove_old_entry()
 
     icon_ok = _install_icon()
@@ -206,12 +214,13 @@ def install_desktop_entry() -> tuple[bool, str]:
 
     de = detect_desktop_environment()
     head = ("Replaced the old desktop entry with a fresh one"
-            if removed_old else "Desktop entry installed")
+            if removed_old else "Desktop entry created")
     icon_note = ("" if icon_ok else
                  "\n\nNote: bundled icon.png was not found, so the taskbar "
                  "may still show a generic icon.")
     return True, (f"{head} for '{de}':\n"
                   f"{store}\n\u2192 {link}\n"
+                  f"Exec: {exec_cmd}\n"
                   f"Icon: {_icon_file()}\n\n"
                   "Fully restart the app (and on KDE/Wayland log out and back "
                   "in once) for the taskbar icon to refresh." + icon_note)
