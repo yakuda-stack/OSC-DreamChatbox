@@ -209,7 +209,8 @@ class SpeechWorker:
                                     self.messages.put(
                                         ("status", "Translation failed \u2013 "
                                                    "sending original"))
-                            self.messages.put(("text", out))
+                            # emit (source, final) so the UI can show both
+                            self.messages.put(("text", (text, out)))
                         self.messages.put(("status", "Listening \u2026"))
                     except sr.UnknownValueError:
                         self.messages.put(("status",

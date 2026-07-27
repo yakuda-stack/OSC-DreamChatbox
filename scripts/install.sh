@@ -71,14 +71,21 @@ if [ -f "/usr/share/applications/osc-dreamchatbox.desktop" ] \
     echo "-> System desktop entry already present (AUR) - skipping."
 else
     echo "-> Detected desktop environment: ${XDG_CURRENT_DESKTOP:-unknown}"
-    ICON_LINE=""
+
+    # Install icon into the hicolor theme and reference by NAME (KDE/Wayland
+    # taskbars often ignore absolute Icon= paths).
+    ICON_THEME_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/256x256/apps"
     if [ -f "$APP_DIR/assets/icon.png" ]; then
-        ICON_LINE="Icon=$APP_DIR/assets/icon.png"
+        mkdir -p "$ICON_THEME_DIR"
+        cp -f "$APP_DIR/assets/icon.png" "$ICON_THEME_DIR/osc-dreamchatbox.png"
     elif [ -f "$APP_DIR/icon.png" ]; then
-        ICON_LINE="Icon=$APP_DIR/icon.png"
+        mkdir -p "$ICON_THEME_DIR"
+        cp -f "$APP_DIR/icon.png" "$ICON_THEME_DIR/osc-dreamchatbox.png"
     fi
 
     mkdir -p "$DESKTOP_STORE_DIR" "$DESKTOP_DIR"
+    # delete any old entry (symlink or real file) before adding the new one
+    rm -f "$LINK_FILE" "$STORE_FILE" 2>/dev/null || true
     cat > "$STORE_FILE" <<DESK
 [Desktop Entry]
 Type=Application
@@ -86,7 +93,7 @@ Name=OSC DreamChatbox
 GenericName=VRChat OSC Chatbox Companion
 Comment=VRChat OSC chatbox companion for Linux
 Exec=$BIN_DIR/osc-dreamchatbox
-$ICON_LINE
+Icon=osc-dreamchatbox
 Terminal=false
 Categories=Utility;Network;Chat;
 Keywords=VRChat;OSC;Chatbox;VR;
@@ -96,6 +103,8 @@ DESK
     chmod 755 "$STORE_FILE"
     ln -sf "$STORE_FILE" "$LINK_FILE"
     update-desktop-database "$DESKTOP_DIR" 2>/dev/null || true
+    gtk-update-icon-cache -f -t \
+        "${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor" 2>/dev/null || true
     echo "-> Desktop entry: $LINK_FILE -> $STORE_FILE"
 fi
 

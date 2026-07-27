@@ -49,7 +49,8 @@ from core.speechtotext import (SpeechWorker, LANGUAGES,
 from core.translators import (METHODS as TR_METHODS, METHOD_LINGVA,
                               METHOD_GOOGLE, METHOD_LIBRE, METHOD_DEEPL,
                               DEFAULT_LIBRE_URL, libretranslate_installed,
-                              LibreTranslateServer, get_translator)
+                              LibreTranslateServer, get_translator,
+                              translate_with_fallback)
 from ui.ui_main import (STYLE, ToggleSwitch, ToggleLabel, DebugConsole,
                         DragHandle, EmojiPopup)
 
@@ -186,6 +187,8 @@ class MainWindow(QMainWindow):
             "stt_deepl_key": "",
             "stt_libre_url": "",
             "stt_block_saved": [],
+            "stt_mode": "stt",       # "stt" (speech->text) | "ttt" (text->text)
+            "stt_show_both": False,  # send "source -> translation" in chat
             "aio_active": False,
             "aio_count": 1,
             "aio_rotate": False,
@@ -1283,7 +1286,7 @@ class MainWindow(QMainWindow):
         st_head = QHBoxLayout()
         st_head.addWidget(DragHandle(lambda pos: self.tb_card_drag("stt", pos),
                                      lambda: self.tb_card_drag_end("stt")))
-        st = QLabel("Speech to Text")
+        st = QLabel("To Text")
         st.setObjectName("cardtitle")
         st_head.addWidget(st)
         st_head.addStretch()
@@ -1292,22 +1295,42 @@ class MainWindow(QMainWindow):
         st_head.addWidget(self.toggle_stt_block)
         st_head.addWidget(ToggleLabel("Block apps", self.toggle_stt_block))
         sc.addLayout(st_head)
+
+        # ---- main mode switch: Speech to Text vs Text to Text ----
+        mode_row = QHBoxLayout()
+        mode_row.addWidget(QLabel("Speech or Text:"))
+        self.toggle_stt_mode = ToggleSwitch()
+        self.toggle_stt_mode.toggled.connect(self.on_stt_mode)
+        mode_row.addWidget(self.toggle_stt_mode)
+        self.stt_mode_lbl = QLabel("")
+        self.stt_mode_lbl.setStyleSheet("font-weight: 600;")
+        mode_row.addWidget(self.stt_mode_lbl)
+        mode_row.addStretch()
+        sc.addLayout(mode_row)
+        mode_hint = QLabel("OFF = Speech to Text (microphone) \u00b7 "
+                           "ON = Text to Text (type & translate). Both share "
+                           "the same languages, translation service and OSC "
+                           "output.")
+        mode_hint.setObjectName("dim")
+        mode_hint.setWordWrap(True)
+        sc.addWidget(mode_hint)
         blk = QLabel("Block apps: while ON, NO app sends anything via OSC "
                      "(Personal Status, MediaPlay, Hardware, AIO) \u2013 "
                      "everything stays blocked until you turn it OFF again.")
         blk.setObjectName("dim")
         blk.setWordWrap(True)
         sc.addWidget(blk)
-        sd = QLabel("Speak into your microphone \u2013 your voice is transcribed "
-                    "in realtime and sent to the VRChat chatbox. While recording, "
-                    "all apps (Personal Status, MediaPlay, Hardware, AIO) are "
-                    "blocked so nothing overwrites your speech.")
-        sd.setObjectName("dim")
-        sd.setWordWrap(True)
-        sc.addWidget(sd)
+        self.stt_speech_desc = QLabel(
+            "Speak into your microphone \u2013 your voice is transcribed "
+            "in realtime and sent to the VRChat chatbox. While recording, "
+            "all apps (Personal Status, MediaPlay, Hardware, AIO) are "
+            "blocked so nothing overwrites your speech.")
+        self.stt_speech_desc.setObjectName("dim")
+        self.stt_speech_desc.setWordWrap(True)
+        sc.addWidget(self.stt_speech_desc)
 
         lang_row = QHBoxLayout()
-        lang_row.addWidget(QLabel("Language you speak:"))
+        lang_row.addWidget(QLabel("Input language:"))
         self.stt_lang_combo = QComboBox()
         for name, code in LANGUAGES:
             self.stt_lang_combo.addItem(name, code)
@@ -1325,15 +1348,32 @@ class MainWindow(QMainWindow):
         out_row.addWidget(self.stt_out_combo)
         out_row.addStretch()
         sc.addLayout(out_row)
-        tr_hint = QLabel("Example: speak German, pick English as output \u2013 "
-                         "your speech gets translated live before it is sent "
+        tr_hint = QLabel("Example: input German, pick English as output \u2013 "
+                         "your message gets translated before it is sent "
                          "to VRChat.")
         tr_hint.setObjectName("dim")
         tr_hint.setWordWrap(True)
         sc.addWidget(tr_hint)
 
-        # ---- microphone selection ----
-        mic_row = QHBoxLayout()
+        # show original + translation together in the chatbox
+        both_row = QHBoxLayout()
+        self.toggle_stt_both = ToggleSwitch()
+        self.toggle_stt_both.toggled.connect(self.on_stt_show_both)
+        both_row.addWidget(self.toggle_stt_both)
+        both_row.addWidget(ToggleLabel("Show original + translation",
+                                       self.toggle_stt_both))
+        both_row.addStretch()
+        sc.addLayout(both_row)
+        both_hint = QLabel("When ON and a translation happens, the chatbox "
+                           "shows both languages as \"source \u2192 translation\".")
+        both_hint.setObjectName("dim")
+        both_hint.setWordWrap(True)
+        sc.addWidget(both_hint)
+
+        # ---- microphone selection (speech mode only) ----
+        self.mic_row_w = QWidget()
+        mic_row = QHBoxLayout(self.mic_row_w)
+        mic_row.setContentsMargins(0, 0, 0, 0)
         mic_row.addWidget(QLabel("Microphone:"))
         self.mic_combo = QComboBox()
         self._fill_mic_combo()
@@ -1346,7 +1386,7 @@ class MainWindow(QMainWindow):
         mic_refresh.setCursor(Qt.CursorShape.PointingHandCursor)
         mic_refresh.clicked.connect(self._fill_mic_combo)
         mic_row.addWidget(mic_refresh)
-        sc.addLayout(mic_row)
+        sc.addWidget(self.mic_row_w)
 
         # ---- translation method (four-tier system) ----
         method_row = QHBoxLayout()
@@ -1406,7 +1446,10 @@ class MainWindow(QMainWindow):
         self.tr_method_hint.setWordWrap(True)
         sc.addWidget(self.tr_method_hint)
 
-        rec_row = QHBoxLayout()
+        # ---- record button (speech mode only) ----
+        self.rec_row_w = QWidget()
+        rec_row = QHBoxLayout(self.rec_row_w)
+        rec_row.setContentsMargins(0, 0, 0, 0)
         self.stt_button = QPushButton("\U0001F3A4  Start recording")
         self.stt_button.setObjectName("recbtn")
         self.stt_button.setCheckable(True)
@@ -1415,7 +1458,40 @@ class MainWindow(QMainWindow):
         self.stt_button.toggled.connect(self.on_stt_toggled)
         rec_row.addWidget(self.stt_button)
         rec_row.addStretch()
-        sc.addLayout(rec_row)
+        sc.addWidget(self.rec_row_w)
+
+        # ---- text input (text mode only) ----
+        self.stt_text_box = QWidget()
+        tb = QVBoxLayout(self.stt_text_box)
+        tb.setContentsMargins(0, 0, 0, 0)
+        tb.setSpacing(6)
+        ttt_desc = QLabel("Type a message and hit Enter (or Send) \u2013 it goes "
+                          "through the same translation and OSC output as speech, "
+                          "without using the microphone.")
+        ttt_desc.setObjectName("dim")
+        ttt_desc.setWordWrap(True)
+        tb.addWidget(ttt_desc)
+        ttt_row = QHBoxLayout()
+        self.ttt_input = QLineEdit()
+        self.ttt_input.setPlaceholderText("Type your message \u2026")
+        self.ttt_input.setMaxLength(CHATBOX_LIMIT - len(SLIM_SUFFIX))
+        self.ttt_input.returnPressed.connect(self.send_ttt)
+        ttt_row.addWidget(self.ttt_input, 1)
+        ttt_emoji = QPushButton("\U0001F600")
+        ttt_emoji.setObjectName("iconbtn")
+        ttt_emoji.setFixedSize(30, 30)
+        ttt_emoji.setCursor(Qt.CursorShape.PointingHandCursor)
+        ttt_emoji.clicked.connect(
+            lambda _, b=ttt_emoji: self.emoji_popup.open_for(self.ttt_input, b))
+        ttt_row.addWidget(ttt_emoji)
+        self.ttt_send_btn = QPushButton("Send")
+        self.ttt_send_btn.setObjectName("sendbtn")
+        self.ttt_send_btn.setFixedSize(64, 30)
+        self.ttt_send_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.ttt_send_btn.clicked.connect(self.send_ttt)
+        ttt_row.addWidget(self.ttt_send_btn)
+        tb.addLayout(ttt_row)
+        sc.addWidget(self.stt_text_box)
 
         self.stt_status_lbl = QLabel("")
         self.stt_status_lbl.setObjectName("dim")
@@ -1806,9 +1882,14 @@ class MainWindow(QMainWindow):
         while not self.stt.messages.empty():
             kind, payload = self.stt.messages.get_nowait()
             if kind == "text":
-                self.log(f"Speech to Text heard: \"{payload}\"")
-                self.send_manual_text(payload)
-                self.stt_status_lbl.setText(f"Sent: {payload}")
+                # payload is (source_text, final_text); older single-string
+                # payloads stay supported for safety
+                if isinstance(payload, (tuple, list)) and len(payload) == 2:
+                    source_text, final_text = payload
+                else:
+                    source_text = final_text = payload
+                self.log(f"Speech to Text heard: \"{source_text}\"")
+                self._deliver_translation(source_text, final_text, "Speech")
             elif kind == "status":
                 self.stt_status_lbl.setText(payload)
             elif kind == "error":
@@ -1818,6 +1899,85 @@ class MainWindow(QMainWindow):
             elif kind == "stopped":
                 if self.stt_button.isChecked():
                     self.stt_button.setChecked(False)
+
+    # ---------------------------------------------------------- mode / TTT
+    def on_stt_mode(self, on):
+        """Main mode switch: OFF = Speech to Text, ON = Text to Text."""
+        self.cfg["stt_mode"] = "ttt" if on else "stt"
+        # leaving speech mode while recording -> stop cleanly
+        if on and self.stt_button.isChecked():
+            self.stt_button.setChecked(False)
+        self.save_config()
+        self._sync_mode_ui()
+
+    def _sync_mode_ui(self):
+        """Shows mic/record widgets in speech mode and the text field in
+        text mode. Shared settings (languages, service) stay visible."""
+        ttt = self.cfg.get("stt_mode", "stt") == "ttt"
+        self.stt_mode_lbl.setText("Text to Text" if ttt else "Speech to Text")
+        for w in (self.stt_speech_desc, self.mic_row_w, self.rec_row_w):
+            w.setVisible(not ttt)
+        self.stt_text_box.setVisible(ttt)
+
+    def on_stt_show_both(self, on):
+        self.cfg["stt_show_both"] = on
+        self.save_config()
+
+    def send_ttt(self):
+        """Text-to-Text: run typed text through the same translation
+        pipeline + OSC output as speech, without the microphone."""
+        text = self.ttt_input.text().strip()
+        if not text or self.osc_client is None:
+            return
+        self.ttt_input.clear()
+        src = self.cfg.get("stt_language", "de-DE")
+        tgt = self.cfg.get("stt_output", "")
+        need = bool(tgt) and not src.lower().startswith(
+            tgt.lower().split("-")[0])
+        if not need:
+            self._deliver_translation(text, text, "Text")
+            return
+        self.stt_status_lbl.setText("Translating \u2026")
+        if not hasattr(self, "_ttt_queue"):
+            self._ttt_queue = _queue.Queue()
+
+        def worker():
+            tr = translate_with_fallback(
+                self.cfg["stt_method"], text, src, tgt,
+                deepl_key=self.cfg["stt_deepl_key"],
+                libre_url=self.cfg["stt_libre_url"])
+            self._ttt_queue.put((text, tr))
+        threading.Thread(target=worker, daemon=True).start()
+        if not hasattr(self, "_ttt_timer"):
+            self._ttt_timer = QTimer(self)
+            self._ttt_timer.timeout.connect(self._poll_ttt)
+        self._ttt_timer.start(200)
+
+    def _poll_ttt(self):
+        try:
+            source_text, tr = self._ttt_queue.get_nowait()
+        except _queue.Empty:
+            return
+        self._ttt_timer.stop()
+        if tr:
+            self._deliver_translation(source_text, tr, "Text")
+        else:
+            self.stt_status_lbl.setText(
+                "Translation failed \u2013 sending original")
+            self._deliver_translation(source_text, source_text, "Text")
+
+    def _deliver_translation(self, source_text, final_text, origin):
+        """Sends the message to VRChat. With 'Show original + translation'
+        on and an actual translation, both languages go into the chatbox."""
+        if (self.cfg.get("stt_show_both")
+                and final_text and final_text != source_text):
+            out = f"{source_text} \u2192 {final_text}"
+        else:
+            out = final_text or source_text
+        self.log(f"{origin} to Text: sending \"{out}\"")
+        self.stt_status_lbl.setText(f"Sent: {out}")
+        self.send_manual_text(out)
+
 
     def on_pause_changed(self, val):
         self.cfg["textbox_pause_sec"] = val
@@ -2283,6 +2443,12 @@ class MainWindow(QMainWindow):
             row.setVisible(i < self.cfg["textbox_preset_count"])
         self.pause_spin.setValue(self.cfg["textbox_pause_sec"])
         self.toggle_stt_block.setChecked(self.cfg["stt_block"])
+        self.toggle_stt_mode.blockSignals(True)
+        self.toggle_stt_mode.setChecked(
+            self.cfg.get("stt_mode", "stt") == "ttt")
+        self.toggle_stt_mode.blockSignals(False)
+        self.toggle_stt_both.setChecked(self.cfg.get("stt_show_both", False))
+        self._sync_mode_ui()
         idx = self.stt_lang_combo.findData(self.cfg["stt_language"])
         if idx >= 0:
             self.stt_lang_combo.setCurrentIndex(idx)

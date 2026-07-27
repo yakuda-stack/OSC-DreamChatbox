@@ -2,6 +2,35 @@
 
 All notable changes to OSC-DreamChatbox are documented here.
 
+## [v1.1.2-alpha] – 2026-07-27
+
+### Added
+- **Text to Text translation** (community request). The *Speech to Text* card
+  is now **To Text** with a main **Speech or Text** mode switch at the top:
+  - **Speech to Text** (OFF) – microphone + record button, as before.
+  - **Text to Text** (ON) – a text field with Enter/Send instead of the mic.
+    Typed messages run through the exact same translation pipeline and OSC
+    output as speech, so no duplicated code and no microphone use.
+  - thanks on @Algia- on my discord
+  The UI adapts to the mode: mic/record widgets show in speech mode, the text
+  field in text mode; languages and translation service are shared by both.
+- **Show original + translation** toggle: when on and a translation happens,
+  the chatbox shows both languages as `source → translation`. Works in both
+  Speech-to-Text and Text-to-Text modes.
+
+### Fixed
+- **App Tray Fix now actually shows the icon.** The generated `.desktop`
+  referenced the icon by absolute path, which KDE/Wayland taskbars usually
+  ignore. It now installs the icon into the hicolor theme
+  (`~/.local/share/icons/hicolor/256x256/apps/osc-dreamchatbox.png`) and
+  references it by name (`Icon=osc-dreamchatbox`), exactly like the AUR
+  package. Both install scripts do the same. If an old osc-dreamchatbox
+  entry is found (a real .desktop file, a symlink pointing elsewhere, an
+  absolute Icon= path, or a missing themed icon), the fix now deletes it and
+  writes a fresh one. A full app restart (and one KDE/Wayland re-login) is
+  still needed for the taskbar to refresh.
+  Thanks on @royalrex25 on my discord
+
 ## [v1.1.1-alpha] – 2026-07-27
 
 ### Added
@@ -17,7 +46,7 @@ All notable changes to OSC-DreamChatbox are documented here.
     exists (symlink **or** real file, in the user applications dir **or** a
     system dir) and does nothing if so; otherwise it creates the same
     canonical entry + symlink on demand.
-  - Thanks royalrex25 from my discord server
+  - Thanks on @royalrex25 in my discord server
 - **VRC Picture Folder Fix** – button next to *App Tray Fix* in the
   *Community & Updates* card. Under Proton, VRChat saves camera photos deep
   inside the Steam prefix
