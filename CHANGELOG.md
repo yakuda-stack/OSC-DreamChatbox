@@ -2,6 +2,40 @@
 
 All notable changes to OSC-DreamChatbox are documented here.
 
+## [v1.1.1-alpha] – 2026-07-27
+
+### Added
+- **Desktop integration / App Tray Fix** – install-script users (curl | bash)
+  previously got the generic Wayland icon and no application-menu entry
+  because they don't receive the AUR `.desktop` file. Fixed two ways:
+  - The **install script** now detects the desktop environment and writes a
+    canonical `.desktop` into `~/.config/OSC-DreamChatbox/desktop/`, symlinked
+    into `~/.local/share/applications/`. Skipped automatically when a system
+    package (AUR) already provides the entry.
+  - New **App Tray Fix** button on its own row under *Check for updates* in
+    the *Community & Updates* card. It first checks whether an entry already
+    exists (symlink **or** real file, in the user applications dir **or** a
+    system dir) and does nothing if so; otherwise it creates the same
+    canonical entry + symlink on demand.
+  - Thanks royalrex25 from my discord server
+- **VRC Picture Folder Fix** – button next to *App Tray Fix* in the
+  *Community & Updates* card. Under Proton, VRChat saves camera photos deep
+  inside the Steam prefix
+  (`…/compatdata/438100/pfx/…/steamuser/Pictures/VRChat`); this replaces that
+  folder with a symlink to the real Linux Pictures directory
+  (`~/Pictures/VRChat`, honouring `XDG_PICTURES_DIR`), so new photos land
+  there directly. Existing photos in the prefix are migrated first. Detects
+  Steam via native, Flatpak and `libraryfolders.vdf` locations, repoints a
+  wrong symlink, and is a no-op once set up.
+
+### Changed
+- **MediaPlay – tidier sub-options.** Sub-options now appear only when their
+  parent is enabled, instead of always being visible: *Max length* shows only
+  with *Song title*, *Time with seconds* only with *Time*, *Use my own .lrc
+  files* only with *Lyrics* (folder row only when both are on), and the whole
+  Songbar block (style, size, time position, custom editor) only when
+  *Songbar* is enabled.
+
 ## [v1.1.0-alpha] – 2026-07-23
 
 ### Added

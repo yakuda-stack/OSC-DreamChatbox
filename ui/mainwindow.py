@@ -21,8 +21,12 @@ from PyQt6.QtCore import QUrl
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QLabel, QLineEdit, QPushButton,
     QVBoxLayout, QHBoxLayout, QFrame, QCheckBox, QSpinBox, QStackedWidget,
-    QScrollArea, QComboBox, QFileDialog, QListWidget, QSlider
+    QScrollArea, QComboBox, QFileDialog, QListWidget, QSlider,
+    QMessageBox
 )
+
+from core import desktop_integration
+from core import vrc_pictures
 
 from core.constants import (APP_NAME, VERSION, GITHUB_REPO, DISCORD_URL,
                             DONATE_URL, CONFIG_DIR, CONFIG_FILE,
@@ -738,6 +742,13 @@ class MainWindow(QMainWindow):
         mc.addWidget(self.lrc_dir_row)
         mc.addWidget(self.chk_bar)
 
+        # all songbar options live in one container so they can be shown
+        # or hidden together depending on the Songbar checkbox
+        self.songbar_box = QWidget()
+        sb = QVBoxLayout(self.songbar_box)
+        sb.setContentsMargins(0, 0, 0, 0)
+        sb.setSpacing(8)
+
         # songbar style picker (the 5 selectable bar designs)
         style_row = QHBoxLayout()
         style_row.setContentsMargins(24, 0, 0, 0)
@@ -749,7 +760,7 @@ class MainWindow(QMainWindow):
         self.bar_style_combo.currentIndexChanged.connect(self.on_bar_style)
         style_row.addWidget(self.bar_style_combo)
         style_row.addStretch()
-        mc.addLayout(style_row)
+        sb.addLayout(style_row)
 
         # songbar size: shorter bar = room for the time on the same line
         size_row = QHBoxLayout()
@@ -768,7 +779,7 @@ class MainWindow(QMainWindow):
         self.bar_size_lbl.setFixedWidth(42)
         size_row.addWidget(self.bar_size_lbl)
         size_row.addStretch()
-        mc.addLayout(size_row)
+        sb.addLayout(size_row)
 
         # where the time goes: merging it with the bar keeps the
         # chatbox at two lines instead of three
@@ -781,11 +792,12 @@ class MainWindow(QMainWindow):
         self.time_pos_combo.currentIndexChanged.connect(self.on_time_pos)
         tpos_row.addWidget(self.time_pos_combo)
         tpos_row.addStretch()
-        mc.addLayout(tpos_row)
+        sb.addLayout(tpos_row)
         self.bar_line_preview = QLabel("")
         self.bar_line_preview.setObjectName("dim")
         self.bar_line_preview.setContentsMargins(24, 0, 0, 0)
-        mc.addWidget(self.bar_line_preview)
+        sb.addWidget(self.bar_line_preview)
+        mc.addWidget(self.songbar_box)
 
         # custom style editor (only visible when "Custom" is selected)
         self.bar_custom_box = QWidget()
@@ -2068,6 +2080,34 @@ class MainWindow(QMainWindow):
         btn_row.addStretch()
         uc.addLayout(btn_row)
 
+        # App Tray Fix sits on its own row directly under "Check for updates"
+        fix_row = QHBoxLayout()
+        self.tray_fix_btn = QPushButton("\U0001F527  App Tray Fix")
+        self.tray_fix_btn.setObjectName("linkbtn")
+        self.tray_fix_btn.setFixedHeight(34)
+        self.tray_fix_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.tray_fix_btn.setToolTip(
+            "Registers a desktop entry so the correct taskbar/tray icon shows "
+            "and the app appears in your application menu. For install-script "
+            "users – does nothing if an entry already exists.")
+        self.tray_fix_btn.clicked.connect(self.run_app_tray_fix)
+        fix_row.addWidget(self.tray_fix_btn)
+
+        self.vrc_pic_btn = QPushButton("\U0001F5BC\uFE0F  VRC Picture Folder Fix")
+        self.vrc_pic_btn.setObjectName("linkbtn")
+        self.vrc_pic_btn.setFixedHeight(34)
+        self.vrc_pic_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.vrc_pic_btn.setToolTip(
+            "Creates a symlink so VRChat's camera photos – normally saved "
+            "inside the Proton prefix – land directly in your Linux Pictures "
+            "folder (~/Pictures/VRChat). Existing photos in the prefix are "
+            "moved over. Does nothing if it's already set up.")
+        self.vrc_pic_btn.clicked.connect(self.run_vrc_picture_fix)
+        fix_row.addWidget(self.vrc_pic_btn)
+
+        fix_row.addStretch()
+        uc.addLayout(fix_row)
+
         self.update_lbl = QLabel(f"Current version: {VERSION}")
         self.update_lbl.setObjectName("dim")
         self.update_lbl.setWordWrap(True)
@@ -2123,6 +2163,43 @@ class MainWindow(QMainWindow):
                     f"\u2705 You are up to date ({VERSION}).")
         self._update_poll.timeout.connect(poll)
         self._update_poll.start()
+
+    # ---------------------------------------------------------- app tray fix
+    def run_app_tray_fix(self):
+        """Create the .desktop entry (+ symlink) only if none exists yet."""
+        if desktop_integration.is_installed():
+            QMessageBox.information(
+                self, "App Tray Fix",
+                "A desktop entry already exists \u2013 nothing to do.")
+            return
+        try:
+            changed, msg = desktop_integration.install_desktop_entry()
+        except OSError as e:
+            QMessageBox.critical(
+                self, "App Tray Fix", f"Could not create desktop entry:\n{e}")
+            return
+        box = QMessageBox.information if changed else QMessageBox.warning
+        box(self, "App Tray Fix", msg)
+
+    # ------------------------------------------------------ vrc picture fix
+    def run_vrc_picture_fix(self):
+        """Symlink the in-prefix VRChat picture folder to the Linux Pictures
+        folder – only if it isn't already set up."""
+        if vrc_pictures.is_fixed():
+            QMessageBox.information(
+                self, "VRC Picture Folder Fix",
+                "Already set up \u2013 VRChat photos already land in your "
+                "Linux Pictures folder.")
+            return
+        try:
+            changed, msg = vrc_pictures.install_picture_fix()
+        except OSError as e:
+            QMessageBox.critical(
+                self, "VRC Picture Folder Fix",
+                f"Could not apply the fix:\n{e}")
+            return
+        box = QMessageBox.information if changed else QMessageBox.warning
+        box(self, "VRC Picture Folder Fix", msg)
 
     # ------------------------------------------------------------- ui events
     def switch_page(self, idx):
@@ -2180,7 +2257,6 @@ class MainWindow(QMainWindow):
             edit.blockSignals(True)
             edit.setText(custom.get(key, ""))
             edit.blockSignals(False)
-        self.bar_custom_box.setVisible(idx == CUSTOM_STYLE_INDEX)
         size = min(100, max(30, int(self.cfg.get("media_bar_size", 100))))
         self.cfg["media_bar_size"] = size
         self.bar_size_slider.blockSignals(True)
@@ -2195,6 +2271,7 @@ class MainWindow(QMainWindow):
         self.time_pos_combo.blockSignals(False)
         self._update_bar_custom_preview()
         self._update_bar_line_preview()
+        self._sync_media_dependents()
         self.poll_spin.setValue(self.cfg["media_poll_sec"])
         self.chk_media_icon.setChecked(self.cfg["media_icon"])
         self.chk_media_custom.setChecked(self.cfg["media_custom"])
@@ -2469,7 +2546,7 @@ class MainWindow(QMainWindow):
 
     def on_bar_style(self, idx):
         self.cfg["media_bar_style"] = int(idx)
-        self.bar_custom_box.setVisible(idx == CUSTOM_STYLE_INDEX)
+        self._sync_media_dependents()
         size = min(100, max(30, int(self.cfg.get("media_bar_size", 100))))
         self.cfg["media_bar_size"] = size
         self.bar_size_slider.blockSignals(True)
@@ -2543,11 +2620,33 @@ class MainWindow(QMainWindow):
             bar = ""
         self.bar_custom_preview.setText(f"Preview:  {bar}")
 
+    def _sync_media_dependents(self):
+        """Shows each sub-option only when its parent checkbox is on:
+        - Max length  -> only with Song title
+        - Time with seconds -> only with Time
+        - Use my own .lrc files -> only with Lyrics
+        - all Songbar options -> only with Songbar
+        The custom songbar editor additionally needs the Custom style."""
+        title_on = self.chk_title.isChecked()
+        time_on = self.chk_time.isChecked()
+        lyrics_on = self.chk_lyrics.isChecked()
+        bar_on = self.chk_bar.isChecked()
+
+        self.title_max_row.setVisible(title_on)
+        self.chk_time_seconds.setVisible(time_on)
+        self.chk_lyrics_local.setVisible(lyrics_on)
+        self.songbar_box.setVisible(bar_on)
+        is_custom = self.bar_style_combo.currentIndex() == CUSTOM_STYLE_INDEX
+        self.bar_custom_box.setVisible(bar_on and is_custom)
+        # folder row: only when Lyrics AND "use my own .lrc" are both on
+        self._sync_lyrics_local()
+
     def on_media_option(self, key, on):
         self.cfg[key] = on
         self.save_config()
         if key == "media_lyrics_local":
             self._sync_lyrics_local()
+        self._sync_media_dependents()
         self.update_preview()
 
     def _title_max(self):
@@ -2573,7 +2672,7 @@ class MainWindow(QMainWindow):
                 pass
         self.lyrics.set_local(on, folder)
         if hasattr(self, "lrc_dir_row"):
-            self.lrc_dir_row.setVisible(on)
+            self.lrc_dir_row.setVisible(on and self.chk_lyrics.isChecked())
             self.lrc_dir_lbl.setText(folder)
 
     def on_choose_lyrics_dir(self):

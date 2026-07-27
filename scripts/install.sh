@@ -60,20 +60,44 @@ LAUNCH
 chmod +x "$BIN_DIR/osc-dreamchatbox"
 
 # --- 5) desktop entry ---
-mkdir -p "$DESKTOP_DIR"
-ICON_LINE=""
-[ -f "$APP_DIR/icon.png" ] && ICON_LINE="Icon=$APP_DIR/icon.png"
-cat > "$DESKTOP_DIR/osc-dreamchatbox.desktop" <<DESK
+# Canonical .desktop in ~/.config/OSC-DreamChatbox/desktop/, symlinked into
+# the applications dir. Skipped if a system package (AUR) already provides it.
+DESKTOP_STORE_DIR="$HOME/.config/OSC-DreamChatbox/desktop"
+STORE_FILE="$DESKTOP_STORE_DIR/osc-dreamchatbox.desktop"
+LINK_FILE="$DESKTOP_DIR/osc-dreamchatbox.desktop"
+
+if [ -f "/usr/share/applications/osc-dreamchatbox.desktop" ] \
+   || [ -f "/usr/local/share/applications/osc-dreamchatbox.desktop" ]; then
+    echo "-> System desktop entry already present (AUR) - skipping."
+else
+    echo "-> Detected desktop environment: ${XDG_CURRENT_DESKTOP:-unknown}"
+    ICON_LINE=""
+    if [ -f "$APP_DIR/assets/icon.png" ]; then
+        ICON_LINE="Icon=$APP_DIR/assets/icon.png"
+    elif [ -f "$APP_DIR/icon.png" ]; then
+        ICON_LINE="Icon=$APP_DIR/icon.png"
+    fi
+
+    mkdir -p "$DESKTOP_STORE_DIR" "$DESKTOP_DIR"
+    cat > "$STORE_FILE" <<DESK
 [Desktop Entry]
 Type=Application
 Name=OSC DreamChatbox
-Comment=VRChat OSC chatbox companion
+GenericName=VRChat OSC Chatbox Companion
+Comment=VRChat OSC chatbox companion for Linux
 Exec=$BIN_DIR/osc-dreamchatbox
 $ICON_LINE
 Terminal=false
-Categories=Utility;Network;
+Categories=Utility;Network;Chat;
+Keywords=VRChat;OSC;Chatbox;VR;
+StartupNotify=true
+StartupWMClass=osc-dreamchatbox
 DESK
-update-desktop-database "$DESKTOP_DIR" 2>/dev/null || true
+    chmod 755 "$STORE_FILE"
+    ln -sf "$STORE_FILE" "$LINK_FILE"
+    update-desktop-database "$DESKTOP_DIR" 2>/dev/null || true
+    echo "-> Desktop entry: $LINK_FILE -> $STORE_FILE"
+fi
 
 echo ""
 echo "==============================================="
