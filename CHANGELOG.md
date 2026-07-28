@@ -2,6 +2,35 @@
 
 All notable changes to OSC-DreamChatbox are documented here.
 
+## [v1.1.4-alpha] – 2026-07-28
+
+### Changed
+- **Smoother UI: media and hardware polling moved off the GUI thread.**
+  Reading the media player (via D-Bus/MPRIS) and the hardware stats now runs
+  in the background. On NVIDIA systems the periodic `nvidia-smi` call, and –
+  with several media players open – the D-Bus round-trips, previously ran on
+  the interface thread and could make the window stutter every 1–2 seconds.
+  They no longer do. A guard skips a new poll while the previous one is still
+  in flight, so slow queries can't pile up.
+- **Leaner internals (foundation for a plugin system).** The main window
+  (~3,600 lines) was split into focused modules – config handling and one
+  module per page (Apps, Textbox, Options) – composed via mixins. This is a
+  pure restructure with no change in behaviour; it makes the code far easier
+  to navigate and prepares a clean place for future per-feature plugins.
+- **Less duplicated code.** The repeated background-worker/queue/timer plumbing
+  (translation test, text-to-text, update check) now lives in one shared
+  helper, and its short-lived timers are disposed of after use instead of
+  accumulating on the window.
+
+### Fixed
+- **A broken config no longer wipes your settings silently.** If
+  `config.json` can't be read (corrupt/invalid JSON), the file is now copied
+  to `config.json.bak` and a clear warning is logged *before* the app falls
+  back to defaults, so your old settings can be recovered.
+- Removed several unused imports and a leftover dead variable.
+- The version number shown at startup and in *About* is now consistent with
+  the actual release version.
+
 ## [v1.1.3-alpha] – 2026-07-27
 
 ### Added

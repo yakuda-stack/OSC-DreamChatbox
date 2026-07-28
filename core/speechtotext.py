@@ -16,7 +16,6 @@ Requires:
 """
 
 import os
-import json
 import queue
 import threading
 from contextlib import contextmanager

@@ -32,10 +32,8 @@ poll are parsed, so it stays light even during long sessions.
 No extra dependencies – stdlib only.
 """
 
-import os
 import re
 import threading
-import time
 from pathlib import Path
 
 VRCHAT_APPID = "438100"
