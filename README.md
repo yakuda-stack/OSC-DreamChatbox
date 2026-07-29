@@ -9,6 +9,7 @@
 [![Platform](https://img.shields.io/badge/Platform-Linux-green.svg)]()
 [![Python](https://img.shields.io/badge/Python-3.10%2B-yellow.svg)]()
 [![Discord](https://img.shields.io/badge/Discord-Join-5865F2.svg)](https://discord.gg/X5TaN4A47h)
+[![Ko-fi](https://img.shields.io/badge/Ko--fi-Support-FF5E5B.svg)](https://ko-fi.com/yakuda_)
 
 </div>
 
@@ -161,7 +162,7 @@ OSC-DreamChatbox/
 │   ├── textutils.py      #   time format, songbar styles, templates
 │   ├── queryfix.py       #   OSCQuery fixer (supported programs list)
 │   ├── oscquery.py       #   native OSCQuery (mDNS + dynamic ports)
-│   ├── translators.py    #   translation backends (Lingva/Libre/DeepL)
+│   ├── translators.py    #   translation backends (Lingva/Google/Libre/DeepL)
 │   ├── mediafetch.py     #   MPRIS/D-Bus media fetcher
 │   ├── hardware.py       #   CPU/RAM/GPU monitoring
 │   └── speechtotext.py   #   speech recognition + translation
@@ -176,7 +177,9 @@ OSC-DreamChatbox/
 │   ├── build-appimage.sh   (PyInstaller one-file build)
 │   └── build_appimage.sh   (bundled-source build)
 ├── start.sh              # run from a local venv
-└── requirements.txt
+├── requirements.txt
+├── LICENSE               # GPL-3.0
+└── THIRD_PARTY_NOTICES.md   # dependency & service attribution
 ```
 
 ---
@@ -192,10 +195,30 @@ Default target is `127.0.0.1:9000`. VRChat chatbox limit is 144 characters (the 
 ## ❤️ Support
 
 - 💬 [Discord](https://discord.gg/X5TaN4A47h)
-- ☕ [Donate via PayPal](https://paypal.me/riesensika)
+- ☕ [Support me on Ko-fi](https://ko-fi.com/yakuda_)
+
+
+## Legal & Credits
+
+* **Independence:** OSC Dream Chatbox is an independent open-source implementation and is not affiliated with, endorsed by, or using code from MagicChatbox.
+* **Trademarks:** VRChat is a registered trademark of VRChat Inc. This project is an independent third-party tool and is not affiliated with or endorsed by VRChat Inc.
+* **Lyrics:** Song lyrics displayed by the app are provided via LRCLIB and remain the intellectual property of their respective copyright holders.
+* **Translation Endpoints:** Lingva is the default and needs no key. If you pick *Google Translate* you can enter your **own API key**, which routes the request through the official Google Cloud Translation API (your project, your quota). Without a key the app falls back to the unofficial, undocumented Google endpoint – shared by everyone and throttled or blocked by Google at any time, so **use at your own risk**. For heavy or reliable use, enter an API key or run LibreTranslate locally.
+* **Third-party licenses:** A full list of every dependency, external service and system tool – with licenses, attribution and the GPL/LGPL source offer for the AppImage – is in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
 
 ## 📄 License
 
 GPL-3.0-or-later – see [LICENSE](LICENSE).
-Copyright (C) 2026 yakuda. Derivative works must remain open source
-under the same license.
+Copyright (C) 2026 yakuda.
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free Software
+Foundation, either version 3 of the License, or (at your option) any later
+version. It is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE.
+
+Third-party dependencies and services are documented in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+

@@ -2,13 +2,16 @@
 core/constants.py – shared constants & paths for OSC-DreamChatbox
 """
 
+# Copyright (C) 2026 yakuda
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 from pathlib import Path
 
 APP_NAME = "OSC-DreamChatbox"
-VERSION = "v1.1.4-alpha"
+VERSION = "v1.1.5-alpha"
 GITHUB_REPO = "yakuda-stack/OSC-DreamChatbox"
 DISCORD_URL = "https://discord.gg/X5TaN4A47h"
-DONATE_URL = "https://paypal.me/riesensika"
+DONATE_URL = "https://ko-fi.com/yakuda_"
 VRCHAT_GROUP_URL = ("https://vrchat.com/home/group/"
                     "grp_829b7777-430d-48b2-8bf3-4e348d0dac9b")
 

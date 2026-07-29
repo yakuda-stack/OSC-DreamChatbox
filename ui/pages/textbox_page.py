@@ -215,7 +215,29 @@ class TextboxPageMixin:
         method_row.addWidget(self.tr_test_btn)
         sc.addLayout(method_row)
 
-        # method 3: DeepL API key (only visible when DeepL is selected)
+        # method 2: Google API key (only visible when Google is selected).
+        # Empty = the keyless, unofficial gtx endpoint is used.
+        self.google_row = QWidget()
+        gr = QVBoxLayout(self.google_row)
+        gr.setContentsMargins(0, 0, 0, 0)
+        gr.setSpacing(4)
+        gkey_row = QHBoxLayout()
+        gkey_row.setContentsMargins(0, 0, 0, 0)
+        gkey_row.addWidget(QLabel("Google API key:"))
+        self.google_key_input = QLineEdit()
+        self.google_key_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self.google_key_input.setPlaceholderText(
+            "optional \u2013 leave empty to use the keyless endpoint")
+        self.google_key_input.textChanged.connect(self.on_google_key)
+        gkey_row.addWidget(self.google_key_input, 1)
+        gr.addLayout(gkey_row)
+        self.google_warn_lbl = QLabel("")
+        self.google_warn_lbl.setObjectName("dim")
+        self.google_warn_lbl.setWordWrap(True)
+        gr.addWidget(self.google_warn_lbl)
+        sc.addWidget(self.google_row)
+
+        # method 4: DeepL API key (only visible when DeepL is selected)
         self.deepl_row = QWidget()
         key_row = QHBoxLayout(self.deepl_row)
         key_row.setContentsMargins(0, 0, 0, 0)
@@ -469,7 +491,10 @@ class TextboxPageMixin:
         appears while LibreTranslate is selected and not installed."""
         method = self.cfg.get("stt_method", METHOD_LINGVA)
         self.deepl_row.setVisible(method == METHOD_DEEPL)
+        self.google_row.setVisible(method == METHOD_GOOGLE)
         self.libre_row.setVisible(method == METHOD_LIBRE)
+        if method == METHOD_GOOGLE:
+            self._update_google_warning()
         if method == METHOD_LIBRE:
             btn = self.libre_install_btn
             if self.libre_server.running:
@@ -490,9 +515,11 @@ class TextboxPageMixin:
                 btn.setVisible(False)
         hints = {
             METHOD_GOOGLE: (
-                "Direct Google Translate web endpoint \u2013 fastest "
-                "(no proxy hop), no API key. Note: requests go straight "
-                "to Google, so tracking is possible."),
+                "Direct Google Translate \u2013 fastest (no proxy hop). "
+                "With your own API key the official Cloud Translation "
+                "API is used; without a key the unofficial endpoint is "
+                "used. Either way the request goes straight to Google, "
+                "so tracking is possible."),
             METHOD_LINGVA: (
                 "Anonymous Lingva-Translate proxy (lingva.adminforge.de) "
                 "\u2013 no API key, no direct Google tracking."),
@@ -556,7 +583,8 @@ class TextboxPageMixin:
         def work():
             tr = get_translator(method,
                                 deepl_key=self.cfg["stt_deepl_key"],
-                                libre_url=self.cfg["stt_libre_url"])
+                                libre_url=self.cfg["stt_libre_url"],
+                                google_key=self.cfg.get("stt_google_key", ""))
             out = tr.translate("wie geht es dir", "de", "en")
             return (tr.name, out, tr.last_error)
         self.run_async(work, self._poll_tr_test, interval=300)
@@ -644,6 +672,34 @@ class TextboxPageMixin:
         self.save_config_later()
         self.stt.libre_url = text.strip()  # applies live
 
+    def on_google_key(self, text):
+        self.cfg["stt_google_key"] = text.strip()
+        self.save_config()
+        self.stt.google_key = text.strip()  # applies live
+        self._update_google_warning()
+
+    def _update_google_warning(self):
+        """Own key = official API. No key = shared unofficial endpoint,
+        which Google may throttle or block at any time."""
+        if self.cfg.get("stt_google_key", "").strip():
+            self.google_warn_lbl.setText(
+                "\u2705 Own API key \u2013 the official Google Cloud "
+                "Translation API is used. Quota and billing are yours; "
+                "get a key at console.cloud.google.com (enable the "
+                "'Cloud Translation API' for your project).")
+            self.google_warn_lbl.setStyleSheet("color:#8bd17c;")
+        else:
+            self.google_warn_lbl.setText(
+                "\u26A0\uFE0F No key \u2013 USE AT YOUR OWN RISK. Without a "
+                "key the app falls back to the unofficial endpoint that "
+                "the Google Translate website uses. It is not a "
+                "documented API and everybody shares it, so Google can "
+                "rate-limit or block the requests at any time (HTTP "
+                "429), and heavy use may get your IP temporarily "
+                "blocked. For reliable use enter your own API key, or "
+                "pick Lingva / LibreTranslate.")
+            self.google_warn_lbl.setStyleSheet("color:#e0a33e;")
+
     def on_deepl_key(self, text):
         self.cfg["stt_deepl_key"] = text
         self.save_config_later()
@@ -663,7 +719,8 @@ class TextboxPageMixin:
                            self.cfg["stt_method"],
                            self.cfg["stt_deepl_key"],
                            self.cfg["stt_libre_url"],
-                           self._mic_index())
+                           self._mic_index(),
+                           google_key=self.cfg.get("stt_google_key", ""))
             self.stt_timer.start(200)
         else:
             self.stt.stop()
@@ -737,7 +794,8 @@ class TextboxPageMixin:
             tr = translate_with_fallback(
                 self.cfg["stt_method"], text, src, tgt,
                 deepl_key=self.cfg["stt_deepl_key"],
-                libre_url=self.cfg["stt_libre_url"])
+                libre_url=self.cfg["stt_libre_url"],
+                google_key=self.cfg.get("stt_google_key", ""))
             return (text, tr)
         self.run_async(work, self._poll_ttt, interval=200)
 

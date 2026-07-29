@@ -368,6 +368,7 @@ class MainWindow(ConfigMixin, AppsPageMixin, TextboxPageMixin,
         self.tr_method_combo.setCurrentIndex(midx)
         self.tr_method_combo.blockSignals(False)
         self.deepl_key_input.setText(self.cfg["stt_deepl_key"])
+        self.google_key_input.setText(self.cfg.get("stt_google_key", ""))
         self.libre_url_input.setText(self.cfg.get("stt_libre_url", ""))
         pos = self.mic_combo.findData(self.cfg.get("stt_mic", ""))
         self.mic_combo.blockSignals(True)

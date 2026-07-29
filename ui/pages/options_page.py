@@ -230,10 +230,11 @@ class OptionsPageMixin:
         dc_btn.clicked.connect(
             lambda: QDesktopServices.openUrl(QUrl(DISCORD_URL)))
         btn_row.addWidget(dc_btn)
-        don_btn = QPushButton("\u2764\uFE0F  Donate (PayPal)")
+        don_btn = QPushButton("\u2615  Support on Ko-fi")
         don_btn.setObjectName("linkbtn")
         don_btn.setFixedHeight(34)
         don_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        don_btn.setToolTip("Support development on Ko-fi")
         don_btn.clicked.connect(
             lambda: QDesktopServices.openUrl(QUrl(DONATE_URL)))
         btn_row.addWidget(don_btn)

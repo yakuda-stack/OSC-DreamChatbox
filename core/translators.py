@@ -27,6 +27,7 @@ or the local LibreTranslate instance is down. Every backend swallows
 its exceptions and returns None instead of crashing the app.
 """
 
+import html
 import importlib.util
 import json
 import shutil
@@ -51,7 +52,7 @@ METHOD_DEEPL = "deepl"
 
 METHODS = [
     ("Lingva Translate (anonymous proxy, no key)", METHOD_LINGVA),
-    ("Google Translate (direct / fastest, no key)", METHOD_GOOGLE),
+    ("Google Translate (direct / fastest, key optional)", METHOD_GOOGLE),
     ("LibreTranslate (local instance, offline)", METHOD_LIBRE),
     ("DeepL API (best quality, own API key)", METHOD_DEEPL),
 ]
@@ -121,25 +122,74 @@ class LingvaTranslator(Translator):
 # 2) Google Translate – direct web endpoint (fastest, un-anonymised)
 # ----------------------------------------------------------------------------
 class GoogleTranslator(Translator):
-    """The classic free gtx endpoint, hit DIRECTLY (no proxy) for
-    minimal latency. No API key. Note: the request goes straight to
-    Google, so this is the non-private option – the user chooses.
+    """Google Translate, hit DIRECTLY (no proxy) for minimal latency.
+
+    Two modes:
+
+    1. WITH an own API key (recommended) – the official Google Cloud
+       Translation API v2. Quota and billing belong to the user, the
+       request is covered by Google's terms of service.
+    2. WITHOUT a key – the undocumented `gtx` web endpoint that the
+       Google Translate website itself uses. It is free and needs no
+       setup, but it is not an official API: everybody shares the same
+       anonymous endpoint, so Google may rate-limit or block the
+       request at any time (usually HTTP 429). USE AT YOUR OWN RISK.
+
     endpoint is only overridden in tests."""
 
     name = "Google"
     DEFAULT_ENDPOINT = ("https://translate.googleapis.com"
                         "/translate_a/single")
+    OFFICIAL_ENDPOINT = ("https://translation.googleapis.com"
+                         "/language/translate/v2")
 
-    def __init__(self, endpoint: str = ""):
+    def __init__(self, endpoint: str = "", api_key: str = ""):
         self.endpoint = (endpoint or self.DEFAULT_ENDPOINT).rstrip("/")
+        self.api_key = (api_key or "").strip()
 
     def translate(self, text, source_lang, target_lang):
         self.last_error = ""
+        tgt = _lang_base(target_lang)
+        if not tgt:
+            return None
+        src = _lang_base(source_lang) or "auto"
+        if self.api_key:
+            return self._translate_official(text, src, tgt)
+        return self._translate_free(text, src, tgt)
+
+    # -- 1) official Cloud Translation API v2 (own key, own quota) ----
+    def _translate_official(self, text, src, tgt):
         try:
-            tgt = _lang_base(target_lang)
-            if not tgt:
-                return None
-            src = _lang_base(source_lang) or "auto"
+            params = {"key": self.api_key, "q": text,
+                      "target": tgt, "format": "text"}
+            if src and src != "auto":
+                params["source"] = src
+            req = urllib.request.Request(
+                self.OFFICIAL_ENDPOINT,
+                data=urllib.parse.urlencode(params).encode("utf-8"),
+                headers={"User-Agent": "OSC-DreamChatbox"})
+            with urllib.request.urlopen(req, timeout=_TIMEOUT) as r:
+                data = json.loads(r.read().decode("utf-8"))
+            out = data["data"]["translations"][0]["translatedText"]
+            # the API returns HTML entities even with format=text
+            out = html.unescape(out).strip()
+            return out or None
+        except urllib.error.HTTPError as e:
+            if e.code in (400, 401, 403):
+                self.last_error = (
+                    f"Google API: key rejected (HTTP {e.code}) – check "
+                    "the key and make sure the Cloud Translation API "
+                    "is enabled for the project.")
+            else:
+                self.last_error = f"Google API: HTTP {e.code}"
+            return None
+        except Exception as e:
+            self.last_error = f"Google API: {e}"
+            return None
+
+    # -- 2) unofficial gtx endpoint (no key, shared, may be blocked) --
+    def _translate_free(self, text, src, tgt):
+        try:
             url = (f"{self.endpoint}?client=gtx&dt=t"
                    f"&sl={urllib.parse.quote(src)}"
                    f"&tl={urllib.parse.quote(tgt)}"
@@ -151,8 +201,18 @@ class GoogleTranslator(Translator):
             out = "".join(seg[0] for seg in data[0] if seg and seg[0])
             out = out.strip()
             return out or None
+        except urllib.error.HTTPError as e:
+            if e.code in (429, 403):
+                self.last_error = (
+                    f"Google (keyless): blocked/rate-limited "
+                    f"(HTTP {e.code}). The unofficial endpoint is "
+                    "shared by everyone – enter your own API key or "
+                    "use Lingva.")
+            else:
+                self.last_error = f"Google (keyless): HTTP {e.code}"
+            return None
         except Exception as e:
-            self.last_error = f"Google: {e}"
+            self.last_error = f"Google (keyless): {e}"
             return None
 
 
@@ -336,31 +396,33 @@ class DeepLTranslator(Translator):
 def get_translator(method: str, deepl_key: str = "",
                    libre_url: str = "",
                    lingva_url: str = "",
-                   google_endpoint: str = "") -> Translator:
+                   google_endpoint: str = "",
+                   google_key: str = "") -> Translator:
     """Builds the translator for the configured method."""
     if method == METHOD_DEEPL:
         return DeepLTranslator(deepl_key)
     if method == METHOD_LIBRE:
         return LibreTranslator(libre_url or DEFAULT_LIBRE_URL)
     if method == METHOD_GOOGLE:
-        return GoogleTranslator(google_endpoint)
+        return GoogleTranslator(google_endpoint, google_key)
     return LingvaTranslator(lingva_url or DEFAULT_LINGVA_URL)
 
 
 def translate_with_fallback(method, text, source_lang, target_lang,
                             deepl_key="", libre_url="", lingva_url="",
-                            google_endpoint="", log=lambda s: None):
+                            google_endpoint="", google_key="",
+                            log=lambda s: None):
     """Translates with the chosen method; on ANY failure the chain
     automatically continues with Lingva (primary fallback) and then
     with direct Google (secondary fallback). Each backend runs at
     most once. Returns the translated text or None if everything
     failed – never raises."""
     chain = [get_translator(method, deepl_key, libre_url, lingva_url,
-                            google_endpoint)]
+                            google_endpoint, google_key)]
     if method != METHOD_LINGVA:
         chain.append(LingvaTranslator(lingva_url or DEFAULT_LINGVA_URL))
     if method != METHOD_GOOGLE:
-        chain.append(GoogleTranslator(google_endpoint))
+        chain.append(GoogleTranslator(google_endpoint, google_key))
     for i, tr in enumerate(chain):
         out = tr.translate(text, source_lang, target_lang)
         if out is not None:

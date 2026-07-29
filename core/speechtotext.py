@@ -116,6 +116,7 @@ class SpeechWorker:
         self.method = METHOD_LINGVA   # "lingva" | "libre" | "deepl"
         self.deepl_key = ""
         self.libre_url = ""
+        self.google_key = ""  # optional Google Cloud Translation key
         self.mic_index = -1   # -1 = system default microphone
 
     @staticmethod
@@ -127,7 +128,8 @@ class SpeechWorker:
         return self._thread is not None and self._thread.is_alive()
 
     def start(self, language, translate_to="", method=METHOD_LINGVA,
-              deepl_key="", libre_url="", mic_index=-1):
+              deepl_key="", libre_url="", mic_index=-1,
+              google_key=""):
         # make sure a previous recording thread is fully stopped first
         # (otherwise restarting after a language change silently fails)
         if self.running:
@@ -144,6 +146,7 @@ class SpeechWorker:
         self.method = method or METHOD_LINGVA
         self.deepl_key = deepl_key or ""
         self.libre_url = libre_url or ""
+        self.google_key = google_key or ""
         self.mic_index = mic_index if mic_index is not None else -1
         self._stop.clear()
         self._thread = threading.Thread(target=self._run, daemon=True)
@@ -198,6 +201,7 @@ class SpeechWorker:
                                     self.language, tgt,
                                     deepl_key=self.deepl_key,
                                     libre_url=self.libre_url,
+                                    google_key=self.google_key,
                                     log=lambda m: self.messages.put(
                                         ("status", m)))
                                 if tr:

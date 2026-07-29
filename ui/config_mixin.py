@@ -67,6 +67,7 @@ class ConfigMixin:
             "stt_method": METHOD_LINGVA,  # lingva | google | libre | deepl
             "stt_mic": "",   # microphone name, "" = system default
             "stt_deepl_key": "",
+            "stt_google_key": "",   # optional Google Cloud Translation key
             "stt_libre_url": "",
             "stt_block_saved": [],
             "stt_mode": "stt",       # "stt" (speech->text) | "ttt" (text->text)

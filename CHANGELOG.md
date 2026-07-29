@@ -2,6 +2,63 @@
 
 All notable changes to OSC-DreamChatbox are documented here.
 
+## [v1.1.5-alpha] – 2026-07-29
+
+### Added
+- **Own Google API key for translation.** Selecting *Google Translate* now
+  shows an optional **Google API key** field. With a key the app uses the
+  official **Google Cloud Translation API v2** – your own project, your own
+  quota, covered by Google's Terms of Service. Get one at
+  console.cloud.google.com and enable the *Cloud Translation API* for the
+  project. The key is stored as `stt_google_key`, masked in the UI, and applies
+  live to the translation test, Speech-to-Text and the manual Textbox
+  translation.
+- **Clear "use at your own risk" warning for the key-less mode.** Leaving the
+  field empty keeps the previous behaviour, but the UI now says plainly what
+  that means: the request goes to the **unofficial, undocumented** endpoint that
+  the Google Translate website uses. It is not an API agreement, everybody
+  shares the same anonymous endpoint, and Google can throttle or block it at any
+  time – heavy use can get your IP temporarily blocked. The warning switches to
+  a green confirmation as soon as a key is entered.
+- **`THIRD_PARTY_NOTICES.md`** – full attribution for every dependency, external
+  service and system tool, including their licences, the GPL/LGPL source offer
+  for the AppImage, and the trademark and independence statements. Linked from
+  the README.
+
+### Changed
+- **Better error messages for Google translation.** HTTP 429/403 from the
+  key-less endpoint is now reported as "blocked/rate-limited – the unofficial
+  endpoint is shared by everyone", and a rejected key as "key rejected – check
+  the key and make sure the Cloud Translation API is enabled", instead of a raw
+  exception. The failing backend still falls back to Lingva as before.
+- The Google entry in the translation-service dropdown now reads
+  *"Google Translate (direct / fastest, key optional)"*.
+- An entered API key is also used when Google is reached as a **fallback**, not
+  only when it is the selected service.
+- **README:** new *Third-party licenses* pointer in the Legal & Credits section,
+  and `THIRD_PARTY_NOTICES.md` added to the project structure listing.
+- **Donations now go through Ko-fi.** The in-app *Support on Ko-fi* button on
+  the Options page, plus the README support link and badge, all point to
+  [ko-fi.com/yakuda_](https://ko-fi.com/yakuda_) instead of PayPal.
+
+### Fixed
+- Responses from the official Google API are now HTML-unescaped, so translations
+  containing apostrophes or quotes no longer show up as `&#39;` / `&quot;`.
+
+### Notes
+- Lingva Translate remains the **default** translation backend – anonymous,
+  key-less and without direct Google tracking. Nothing changes for existing
+  configs.
+- Housekeeping outside the code: the leftover third-party program logos in
+  `assets/icons/` and the dead `scripts/dreammanager.py` (it imported a
+  `core.addons` module that no longer exists) were removed, `LICENSE` was
+  replaced with the verbatim GPL-3.0 text from gnu.org, and the duplicated
+  `install.sh` / `build_appimage.sh` copies in the repository root were dropped
+  in favour of the ones in `scripts/`. The `scripts/DreamManager` launcher (a
+  wrapper around the already-deleted `dreammanager.py`) and the two empty
+  `.SRCINFO` placeholders were removed as well – `.SRCINFO` is generated in the
+  AUR clone with `makepkg --printsrcinfo`, not kept here.
+
 ## [v1.1.4-alpha] – 2026-07-28
 
 ### Changed
@@ -34,7 +91,7 @@ All notable changes to OSC-DreamChatbox are documented here.
 ## [v1.1.3-alpha] – 2026-07-27
 
 ### Added
-- **VRChat Group button** in *Community & Updates*, next to Donate \u2013 opens
+- **VRChat Group button** in *Community & Updates*, next to Donate – opens
   the OSC-DreamChatbox VRChat group page.
 - **Update check knows how you installed.** *Check for updates* still just
   reports the newest release (it never downloads or overwrites files); now the

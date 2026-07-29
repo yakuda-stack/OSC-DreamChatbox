@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-OSC-DreamChatbox v1.1.4-alpha
+OSC-DreamChatbox v1.1.5-alpha
 A simple, clean VRChat OSC chatbox sender for Linux.
 
 Entry point only – the actual code lives in:
@@ -13,6 +13,9 @@ Requires: PyQt6, python-osc
 IMPORTANT: OSC must be enabled in VRChat!
 (Action Menu -> Options -> OSC -> Enabled)
 """
+
+# Copyright (C) 2026 yakuda
+# SPDX-License-Identifier: GPL-3.0-or-later
 
 import sys
 from pathlib import Path
