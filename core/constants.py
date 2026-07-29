@@ -8,12 +8,14 @@ core/constants.py – shared constants & paths for OSC-DreamChatbox
 from pathlib import Path
 
 APP_NAME = "OSC-DreamChatbox"
-VERSION = "v1.1.5-alpha"
+VERSION = "v1.2.0"
 GITHUB_REPO = "yakuda-stack/OSC-DreamChatbox"
 DISCORD_URL = "https://discord.gg/X5TaN4A47h"
 DONATE_URL = "https://ko-fi.com/yakuda_"
 VRCHAT_GROUP_URL = ("https://vrchat.com/home/group/"
                     "grp_829b7777-430d-48b2-8bf3-4e348d0dac9b")
+# ready-made plugins + the template to start your own (see core/plugins.py)
+PLUGINS_REPO_URL = "https://github.com/yakuda-stack/Dream-Chatbox-Plugins"
 
 # ---------------------------------------------------------------- paths
 # project root = folder that contains osc_dreamchatbox.py / core / ui
@@ -25,6 +27,12 @@ OLD_CONFIG_FILE = Path.home() / ".config" / "osc-dreamchatbox" / "settings.json"
 
 # default folder for the user's own .lrc files (local lyrics)
 LYRICS_DIR = CONFIG_DIR / "lyrics"
+
+# ------------------------------------------------------------- plugins
+# one subfolder per plugin (plugin.json + main.py), see core/plugins.py.
+# Its state lives with it in plugins/<id>/configs/config.json, which also
+# doubles as the plugin's own writable folder (api.data_dir).
+PLUGINS_DIR = CONFIG_DIR / "plugins"
 
 # ------------------------------------------------------------- chatbox
 # The "magic" suffix: turns the VRChat chatbox into a slim bar.

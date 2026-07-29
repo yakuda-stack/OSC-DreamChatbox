@@ -2,6 +2,92 @@
 
 All notable changes to OSC-DreamChatbox are documented here.
 
+## [v1.2.0] – 2026-07-29
+
+First non-alpha release. The big change is a **plugin system**: features that
+only some people need no longer have to live in the app itself.
+
+### Added
+- **Plugin system.** A new **Plugins** page in the sidebar. Plugins live in
+  `~/.config/OSC-DreamChatbox/plugins/<id>/` as a folder with a `plugin.json`
+  and a python file, are loaded dynamically via `importlib`, and can be
+  installed from a `.zip`, switched on/off and deleted from the UI. Every call
+  into plugin code is wrapped, so a broken plugin logs a traceback to the debug
+  console and is skipped – it can never take the chatbox down.
+- **Every plugin is a placeholder.** An active plugin is addressable as
+  `{plugin_id}` in Personal Status texts, in the MediaPlay/Hardware custom
+  strings and in All in one; anything it exports additionally shows up as
+  `{plugin_id_key}`. A plugin may also claim unprefixed names via
+  `global_placeholders` – a value the app itself produced always wins, so a
+  plugin can never hijack a built-in placeholder.
+- **Per-plugin Settings block.** Same expander as the Apps cards, with an
+  *Own line in the chatbox* toggle (off = the plugin only feeds placeholders
+  and stops printing itself), a *Custom string* with reset and emoji buttons,
+  and the plugin's own options. Those options are declared in `plugin.json`
+  (`text`, `bool`, `int`) and rendered automatically, so a plugin author gets a
+  settings UI without writing a single line of Qt.
+- **World Stats plugin.** Ships the live VRChat info that used to sit in the
+  Personal Status card: `{player_in_world}`, `{group_world}`, `{instance_type}`
+  and `{realtime}`, plus a combined `{world_stats}` line. Player icon, clock
+  format, maximum world-name length and the log folder are configurable, and
+  each of the three values can be switched off on its own.
+- **Hello World example plugin** demonstrating settings, `get_text()`,
+  `get_values()` and the `on_settings()` hook.
+- **"Plugins & template" button** on the Plugins page, linking to
+  [Dream-Chatbox-Plugins](https://github.com/yakuda-stack/Dream-Chatbox-Plugins)
+  – ready-made plugins to download plus the template to start your own.
+- **10 switchable All in one templates**, exactly like the Personal Status
+  templates: each button keeps its own set of up to 5 strings and its own
+  count, so you can flip between a gaming, a music and a minimal layout with
+  one click. Existing configs are migrated – your current string lands in
+  template 1.
+
+### Changed
+- **Plugin settings are stored with the plugin**, in
+  `plugins/<id>/configs/config.json` – one file per plugin holding its on/off
+  state, custom string and option values. Copy the folder and the settings come
+  along; delete it and nothing is left behind. The `configs/` folder is
+  preserved when a plugin is re-installed from a newer `.zip`, so an update
+  never resets what you configured.
+- The app no longer reads VRChat's `output_log` itself. `core/vrchatlog.py` is
+  down to the Steam/Proton path discovery that the VRC Picture Folder Fix
+  needs; the log watcher and its background thread now ship inside the World
+  Stats plugin. Without that plugin installed, the chatbox tails no log file at
+  all.
+- The preview refresh timer is now driven by active plugins instead of the log
+  watcher, so live values like clocks stay current between sends.
+
+### Removed
+- **Live info from the Personal Status card.** The *Player in world*, *Group
+  world* and *Realtime* checkboxes and the VRChat log folder picker are gone –
+  install the **World Stats** plugin instead. The placeholder names are
+  unchanged, so existing status texts and All in one strings keep working once
+  the plugin is enabled.
+- The config keys `status_player_in_world`, `status_group_world`,
+  `status_realtime` and `vrchat_log_dir` are no longer used.
+
+### Fixed
+- **AppImage now runs on Linux Mint / Ubuntu 22.04+ (FUSE 2 *and* FUSE 3).**
+  The build used the AppImageKit runtime, which loads `libfuse.so.2` via
+  `dlopen()`. Distributions that ship only fuse3 – Mint 21+ among them –
+  failed with `dlopen(): error loading libfuse.so.2` before a single line of
+  Python ran. The build script now embeds the statically linked
+  [type2-runtime](https://github.com/AppImage/type2-runtime), which carries its
+  own FUSE and picks whatever `fusermount*` the system provides, and verifies
+  after the build that no `libfuse.so.2` reference is left.
+- **Readable errors instead of Qt tracebacks.** `AppRun` checks for the Qt6
+  system libraries that Mint/Ubuntu do not install by default (notably
+  `libxcb-cursor0`) and names the package to install.
+- **Python version mismatch is caught up front.** The bundled C extensions
+  (`PyQt6.sip`, `zeroconf`) are built for the Python minor version of the build
+  machine. The AppImage now records that version, looks for a matching
+  `pythonX.Y` on the target system, and otherwise says plainly what is wrong
+  instead of dying with an `ImportError`.
+
+### Notes
+- Dropping `-alpha` reflects that the feature set is settled, not that every
+  edge case is proven. Please keep reporting what breaks.
+
 ## [v1.1.5-alpha] – 2026-07-29
 
 ### Added
@@ -44,6 +130,24 @@ All notable changes to OSC-DreamChatbox are documented here.
 ### Fixed
 - Responses from the official Google API are now HTML-unescaped, so translations
   containing apostrophes or quotes no longer show up as `&#39;` / `&quot;`.
+
+### Fixed
+- **AppImage now runs on Linux Mint / Ubuntu 22.04+ (FUSE 2 *and* FUSE 3).**
+  The build used the AppImageKit runtime, which loads `libfuse.so.2` via
+  `dlopen()`. Distributions that ship only fuse3 – Mint 21+ among them –
+  failed with `dlopen(): error loading libfuse.so.2` before a single line of
+  Python ran. The build script now embeds the statically linked
+  [type2-runtime](https://github.com/AppImage/type2-runtime), which carries its
+  own FUSE and picks whatever `fusermount*` the system provides, and verifies
+  after the build that no `libfuse.so.2` reference is left.
+- **Readable errors instead of Qt tracebacks.** `AppRun` checks for the Qt6
+  system libraries that Mint/Ubuntu do not install by default (notably
+  `libxcb-cursor0`) and names the package to install.
+- **Python version mismatch is caught up front.** The bundled C extensions
+  (`PyQt6.sip`, `zeroconf`) are built for the Python minor version of the build
+  machine. The AppImage now records that version, looks for a matching
+  `pythonX.Y` on the target system, and otherwise says plainly what is wrong
+  instead of dying with an `ImportError`.
 
 ### Notes
 - Lingva Translate remains the **default** translation backend – anonymous,

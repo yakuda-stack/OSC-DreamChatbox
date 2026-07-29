@@ -7,11 +7,10 @@ window class stays small. All `self.*` refer to the MainWindow instance.
 
 import random
 import re
-import time
 from PyQt6.QtCore import QUrl, Qt
 from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (
-    QCheckBox, QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QSlider, QSpinBox, QVBoxLayout, QWidget)
+    QButtonGroup, QCheckBox, QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QSlider, QSpinBox, QVBoxLayout, QWidget)
 from core.constants import (
     CHATBOX_LIMIT, LYRICS_DIR, SLIM_SUFFIX, SONGBAR_LEN, TITLE_MAX_LEN)
 from core.textutils import (
@@ -66,7 +65,6 @@ class AppsPageMixin:
         tpl_row = QHBoxLayout()
         tpl_row.setSpacing(4)
         tpl_row.addWidget(QLabel("Template:"))
-        from PyQt6.QtWidgets import QButtonGroup
         self.tpl_group = QButtonGroup(self)
         self.tpl_group.setExclusive(True)
         self.tpl_buttons = []
@@ -112,54 +110,9 @@ class AppsPageMixin:
         cnt_row.addStretch()
         sc.addLayout(cnt_row)
 
-        # ---- live info: usable as {player_in_world} {group_world}
-        #      {realtime} inside any status text and in All in one ----
-        sc.addWidget(QLabel("Live info (usable in your texts):"))
-        self.chk_player_in_world = QCheckBox(
-            "Player in world  \u2013  {player_in_world}")
-        self.chk_group_world = QCheckBox(
-            "Group world  \u2013  {group_world}")
-        self.chk_realtime = QCheckBox(
-            "Realtime (your PC clock)  \u2013  {realtime}")
-        for chk, key in ((self.chk_player_in_world, "status_player_in_world"),
-                         (self.chk_group_world, "status_group_world"),
-                         (self.chk_realtime, "status_realtime")):
-            chk.setStyleSheet("margin-left: 4px;")
-            chk.toggled.connect(
-                lambda on, k=key: self.on_status_live(k, on))
-            sc.addWidget(chk)
-
-        live_hint = QLabel(
-            "{player_in_world} = players in your current VRChat instance, "
-            "{group_world} = current world name, {realtime} = PC time "
-            "(HH:MM). World/player info is read from VRChat's Proton log.")
-        live_hint.setObjectName("dim")
-        live_hint.setWordWrap(True)
-        live_hint.setStyleSheet("margin-left: 4px;")
-        sc.addWidget(live_hint)
-
-        # VRChat log folder override (only shown when world/player is on)
-        self.vrclog_dir_row = QWidget()
-        vlog_row = QHBoxLayout(self.vrclog_dir_row)
-        vlog_row.setContentsMargins(4, 0, 0, 0)
-        vlog_row.setSpacing(6)
-        vlog_row.addWidget(QLabel("VRChat log:"))
-        self.vrclog_dir_lbl = QLabel("")
-        self.vrclog_dir_lbl.setObjectName("dim")
-        self.vrclog_dir_lbl.setWordWrap(True)
-        vlog_row.addWidget(self.vrclog_dir_lbl, 1)
-        vlog_btn = QPushButton("Set \u2026")
-        vlog_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        vlog_btn.setToolTip("Override the VRChat output_log folder "
-                            "(leave unset for auto-detection)")
-        vlog_btn.clicked.connect(self.on_choose_vrclog_dir)
-        vlog_row.addWidget(vlog_btn)
-        vlog_auto = QPushButton("Auto")
-        vlog_auto.setCursor(Qt.CursorShape.PointingHandCursor)
-        vlog_auto.setToolTip("Clear the override and auto-detect again")
-        vlog_auto.clicked.connect(self.on_vrclog_dir_auto)
-        vlog_row.addWidget(vlog_auto)
-        sc.addWidget(self.vrclog_dir_row)
+        # Live info ({player_in_world} {group_world} {realtime}) moved
+        # into the "World Stats" plugin in v1.2.0 – the app no longer reads
+        # VRChat's log itself. See the Plugins page.
 
         # texts fold in/out so the card stays compact
         self.texts_expander = QPushButton("\u25B8  Texts")
@@ -688,6 +641,35 @@ class AppsPageMixin:
         ac.setContentsMargins(0, 0, 0, 0)
         ac.setSpacing(8)
 
+        # ---- AIO template sets 1-10 (exclusive, like Personal Status):
+        #      each set keeps its own 5 strings + count, so you can flip
+        #      between a gaming, a music and a minimal layout instantly ----
+        aset_row = QHBoxLayout()
+        aset_row.setSpacing(4)
+        aset_row.addWidget(QLabel("Template:"))
+        self.aio_set_group = QButtonGroup(self)
+        self.aio_set_group.setExclusive(True)
+        self.aio_set_buttons = []
+        for i in range(10):
+            b = QPushButton(str(i + 1))
+            b.setCheckable(True)
+            b.setFixedSize(30, 26)
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.setToolTip(f"AIO template {i + 1} \u2013 own set of up to "
+                         "5 strings")
+            b.setStyleSheet(
+                "QPushButton { background: #232833; border: 1px solid"
+                " #333947; border-radius: 6px; color: #aeb4bf; }"
+                "QPushButton:hover { border-color: #5b8dc9; }"
+                "QPushButton:checked { background: #5b8dc9;"
+                " border-color: #5b8dc9; color: #ffffff; }")
+            self.aio_set_group.addButton(b, i)
+            aset_row.addWidget(b)
+            self.aio_set_buttons.append(b)
+        aset_row.addStretch()
+        ac.addLayout(aset_row)
+        self.aio_set_group.idClicked.connect(self.on_aio_set)
+
         acnt_row = QHBoxLayout()
         acnt_row.addWidget(QLabel("Number of strings"))
         self.aio_count_spin = QSpinBox()
@@ -738,6 +720,14 @@ class AppsPageMixin:
             self.aio_rows.append(row_w)
             self.aio_edits.append(edit)
 
+        a_hint = QLabel("Template 1-10: each button keeps its own set of "
+                        "strings \u2013 switch layouts (gaming, music, "
+                        "minimal \u2026) with one click, same as the "
+                        "Personal Status templates.")
+        a_hint.setObjectName("dim")
+        a_hint.setWordWrap(True)
+        ac.addWidget(a_hint)
+
         a_ph = QLabel("Placeholders: {text} (current rotating status text), "
                       "{text_1} \u2026 {text_20}, all Hardware placeholders "
                       "({gpu_name} {gpu_usage} {gpu_temp} {temp_icon} {vram_usage} "
@@ -746,7 +736,8 @@ class AppsPageMixin:
                       "{title} {time} {time_status} {time_end} {bar} "
                       "{lyrics} {icon_sound} \u2026), plus the live info "
                       "{player_in_world} {group_world} {realtime} "
-                      "{instance_type}. Use \\n for a "
+                      "{instance_type}, plus every active plugin as "
+                      "{plugin_id} (see the Plugins page). Use \\n for a "
                       "line break. The apps must be Active for their values to fill in.")
         a_ph.setObjectName("dim")
         a_ph.setWordWrap(True)
@@ -857,82 +848,24 @@ class AppsPageMixin:
         self.save_config()
         self.update_timers()
 
-    def on_status_live(self, key, on):
-        self.cfg[key] = bool(on)
-        self.save_config()
-        self._update_vrclog_watcher()
-        self.update_preview()
-
-    def _needs_vrclog(self):
-        return bool(self.cfg.get("status_player_in_world")
-                    or self.cfg.get("status_group_world"))
-
-    def _update_vrclog_watcher(self):
-        """Starts/stops the log watcher and its preview refresh timer,
-        and shows the log-folder row only when world/player info is on."""
-        need = self._needs_vrclog()
-        if hasattr(self, "vrclog_dir_row"):
-            self.vrclog_dir_row.setVisible(need)
-        if need:
-            self.vrclog.set_override(self.cfg.get("vrchat_log_dir", ""))
-            self.vrclog.start()
+    def _update_plugin_timer(self):
+        """Keeps the preview refreshing while any plugin is active, so
+        live values (clocks, world info) don't sit there stale between
+        sends. Used to drive the VRChat log watcher too, before that moved
+        into the World Stats plugin."""
+        if self.plugins.any_active():
+            if not self.plugin_timer.isActive():
+                self.plugin_timer.start(2000)
         else:
-            self.vrclog.stop()
-        # the refresh timer also drives {realtime}, so run it whenever any
-        # live info is active
-        if need or self.cfg.get("status_realtime"):
-            if not self.vrclog_timer.isActive():
-                self.vrclog_timer.start(2000)
-        else:
-            self.vrclog_timer.stop()
-
-    def on_choose_vrclog_dir(self):
-        start = self.cfg.get("vrchat_log_dir") or str(Path.home())
-        folder = QFileDialog.getExistingDirectory(
-            self, "Choose the VRChat output_log folder", start)
-        if not folder:
-            return
-        self.cfg["vrchat_log_dir"] = folder
-        self.save_config()
-        self.vrclog.set_override(folder)
-        self.vrclog_dir_lbl.setText(folder)
-        self.log(f"VRChat log: folder set to {folder}")
-        self.update_preview()
-
-    def on_vrclog_dir_auto(self):
-        self.cfg["vrchat_log_dir"] = ""
-        self.save_config()
-        self.vrclog.set_override("")
-        self.vrclog_dir_lbl.setText("(auto-detect)")
-        self.log("VRChat log: folder set to auto-detect")
-        self.update_preview()
-
-    def _status_values(self):
-        """Values for the {player_in_world} {group_world} {realtime}
-        placeholders. Each follows its checkbox (unchecked -> empty, so
-        apply_template drops it cleanly)."""
-        vals = {"player_in_world": None, "group_world": None,
-                "realtime": None, "instance_type": None}
-        if self.cfg.get("status_player_in_world") \
-                or self.cfg.get("status_group_world"):
-            snap = self.vrclog.snapshot()
-            if snap["in_world"]:
-                if self.cfg.get("status_player_in_world") \
-                        and snap["player_count"] > 0:
-                    vals["player_in_world"] = str(snap["player_count"])
-                if self.cfg.get("status_group_world"):
-                    vals["group_world"] = snap["world"] or None
-                    vals["instance_type"] = snap["instance_type"] or None
-        if self.cfg.get("status_realtime"):
-            vals["realtime"] = time.strftime("%H:%M")
-        return vals
+            self.plugin_timer.stop()
 
     def _render_status(self, text):
         """Renders a status text: only runs the template engine when the
         text actually contains a {placeholder} – so plain texts (incl.
-        ones starting with ':3' etc.) are never altered."""
+        ones starting with ':3' etc.) are never altered. The values come
+        from the active plugins ({world_stats}, {realtime}, ...)."""
         if text and "{" in text:
-            return apply_template(text, self._status_values())
+            return apply_template(text, self.plugins.values())
         return text
 
     def advance_status(self):
@@ -1183,7 +1116,10 @@ class AppsPageMixin:
         self.update_preview()
 
     def on_aio_count(self, val):
+        if getattr(self, "_block_updating", False):
+            return
         self.cfg["aio_count"] = val
+        self._sync_active_aio_set()
         self.save_config()
         for i, row in enumerate(self.aio_rows):
             row.setVisible(i < val)
@@ -1204,9 +1140,41 @@ class AppsPageMixin:
         self.update_timers()
 
     def on_aio_text(self, idx, text):
+        if getattr(self, "_block_updating", False):
+            return
         self.cfg["aio_templates"][idx] = text
+        self._sync_active_aio_set()
         self.save_config_later()
         self.update_preview()
+
+    def _sync_active_aio_set(self):
+        """Writes the current strings/count back into the active AIO
+        template so every set keeps its own layout."""
+        sets = self.cfg["aio_sets"]
+        idx = min(len(sets) - 1, max(0, self.cfg["aio_set_active"]))
+        sets[idx]["templates"] = list(self.cfg["aio_templates"])
+        sets[idx]["count"] = self.cfg["aio_count"]
+
+    def on_aio_set(self, idx):
+        """Exclusive AIO template toggle: activates set idx and loads its
+        own strings/count (all others switch off)."""
+        idx = min(9, max(0, int(idx)))
+        self.cfg["aio_set_active"] = idx
+        tpl = self.cfg["aio_sets"][idx]
+        self.cfg["aio_templates"] = list(tpl["templates"])
+        self.cfg["aio_count"] = tpl["count"]
+        self._block_updating = True
+        for i, edit in enumerate(self.aio_edits):
+            edit.setText(self.cfg["aio_templates"][i])
+        self.aio_count_spin.setValue(self.cfg["aio_count"])
+        self._block_updating = False
+        for i, row in enumerate(self.aio_rows):
+            row.setVisible(i < self.cfg["aio_count"])
+        self.aio_index = 0
+        self.save_config()
+        self.update_timers()
+        self.update_preview()
+        self.log(f"All in one: template {idx + 1} active")
 
     def advance_aio(self):
         self.aio_index += 1
@@ -1225,9 +1193,6 @@ class AppsPageMixin:
             return []
         tpl = tpls[self.aio_index % len(tpls)]
         vals = {}
-        # live info ({player_in_world} {group_world} {realtime}) – gated
-        # by their own checkboxes, independent of the Active toggle
-        vals.update(self._status_values())
         # Personal Status texts
         if self.cfg["status_active"]:
             vals["text"] = self._render_status(
@@ -1256,6 +1221,10 @@ class AppsPageMixin:
             vals.update(hw)
         vals["temp_icon"] = "\U0001F525" if self.cfg["hw_flame"] else "\u00b0C"
         vals.setdefault("icon_flame", "\U0001F525")
+        # {<plugin_id>} and {<plugin_id>_<key>} of every active plugin,
+        # plus any unprefixed name a plugin claimed (never overwriting
+        # a value one of the apps above already produced)
+        self.plugins.merge_into(vals)
         text = apply_template(tpl, vals)
         return text.split("\n") if text else []
 

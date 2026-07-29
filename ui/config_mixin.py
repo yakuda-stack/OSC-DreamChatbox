@@ -27,12 +27,6 @@ class ConfigMixin:
             ],
             "status_template_active": 0,
             "status_active": True,
-            # live info in status texts ({player_in_world} {group_world}
-            # {realtime}) – each gated by its own checkbox
-            "status_player_in_world": False,
-            "status_group_world": False,
-            "status_realtime": False,
-            "vrchat_log_dir": "",   # manual override, "" = auto-detect
             "media_active": False,
             "media_show_artist": True,
             "media_show_title": True,
@@ -74,6 +68,12 @@ class ConfigMixin:
             "stt_show_both": False,  # send "source -> translation" in chat
             "aio_active": False,
             "aio_count": 1,
+            # 10 switchable AIO layouts, each with its own 1-5 strings
+            "aio_sets": [
+                {"name": f"Template {i + 1}", "templates": [""] * 5,
+                 "count": 1} for i in range(10)
+            ],
+            "aio_set_active": 0,
             "aio_rotate": False,
             "aio_rotate_sec": 10,
             "aio_templates": ["{text} \\n {artist} : {title} | {time} \\n {bar}",
@@ -188,6 +188,28 @@ class ConfigMixin:
         aio = [str(t) for t in aio][:5]
         defaults["aio_templates"] = aio + [""] * (5 - len(aio))
         defaults["aio_count"] = min(5, max(1, int(defaults.get("aio_count", 1))))
+        # AIO template sets: normalise / migrate old single-list configs
+        sets = defaults.get("aio_sets")
+        if not isinstance(sets, list) or len(sets) != 10:
+            sets = [{"name": f"Template {i + 1}", "templates": [""] * 5,
+                     "count": 1} for i in range(10)]
+        for t in sets:
+            t.setdefault("name", "Template")
+            t["templates"] = ([str(x) for x in t.get("templates", [])]
+                              + [""] * 5)[:5]
+            t["count"] = min(5, max(1, int(t.get("count", 1))))
+        defaults["aio_sets"] = sets
+        aidx = min(9, max(0, int(defaults.get("aio_set_active", 0))))
+        defaults["aio_set_active"] = aidx
+        # an older config only had the flat aio_templates list – seed the
+        # active set from it so nobody's existing string disappears
+        if any(x.strip() for x in defaults["aio_templates"]) and \
+                not any(x.strip() for x in sets[aidx]["templates"]):
+            sets[aidx]["templates"] = list(defaults["aio_templates"])
+            sets[aidx]["count"] = defaults["aio_count"]
+        else:
+            defaults["aio_templates"] = list(sets[aidx]["templates"])
+            defaults["aio_count"] = sets[aidx]["count"]
         return defaults
 
     def _backup_corrupt_config(self, err):

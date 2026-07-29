@@ -20,21 +20,22 @@ from core.hardware import HardwareMonitor
 from core.lyrics import LyricsFetcher
 from core.mediafetch import MediaFetcher
 from core.oscquery import HAS_ZEROCONF, OSCQueryService
+from core.plugins import PluginManager
 from core.speechtotext import SpeechWorker
 from core.textutils import (
     CUSTOM_STYLE_INDEX, DEFAULT_CUSTOM_BAR, TIME_POS_LINE, fmt_time, fmt_time_hm)
 from core.translators import LibreTranslateServer, METHOD_DEEPL, METHOD_LINGVA
-from core.vrchatlog import VRChatLogWatcher
 from ui.ui_main import (
     DebugConsole, EmojiPopup, STYLE, ToggleLabel, ToggleSwitch)
 from ui.config_mixin import ConfigMixin
 from ui.pages.apps_page import AppsPageMixin
 from ui.pages.textbox_page import TextboxPageMixin
 from ui.pages.options_page import OptionsPageMixin
+from ui.pages.plugins_page import PluginsPageMixin
 
 
 class MainWindow(ConfigMixin, AppsPageMixin, TextboxPageMixin,
-                 OptionsPageMixin, QMainWindow):
+                 OptionsPageMixin, PluginsPageMixin, QMainWindow):
     # emitted by log() – possibly from background threads (lyrics
     # fetcher, OSCQuery/mDNS listeners). Qt delivers cross-thread
     # signals as queued connection, so the debug console is only
@@ -75,8 +76,11 @@ class MainWindow(ConfigMixin, AppsPageMixin, TextboxPageMixin,
         self._block_updating = False
         self.hw = HardwareMonitor(self.log)
         self.hw_info = None
-        # live VRChat world/player info (from the Proton output_log)
-        self.vrclog = VRChatLogWatcher(self.log)
+        # user plugins (core/plugins.py) – discovered before build_ui()
+        # so the Plugins page can render the list right away. Their
+        # settings live in plugins/<id>/configs/config.json, not in cfg.
+        self.plugins = PluginManager(self.log, host=self)
+        self.plugins.discover()
 
         # --- timers ---
         self._save_timer = QTimer(self)
@@ -94,13 +98,18 @@ class MainWindow(ConfigMixin, AppsPageMixin, TextboxPageMixin,
         self.stt_timer.timeout.connect(self.poll_stt)
         self.hw_timer = QTimer(self)
         self.hw_timer.timeout.connect(self.poll_hw)
-        # refreshes the preview so live world/player/clock info stays
-        # current (the watcher itself runs in its own thread)
-        self.vrclog_timer = QTimer(self)
-        self.vrclog_timer.timeout.connect(self.update_preview)
+        # refreshes the preview so live plugin values (clocks, world info)
+        # stay current between sends
+        self.plugin_timer = QTimer(self)
+        self.plugin_timer.timeout.connect(self.update_preview)
 
         self.build_ui()
         self.apply_config_to_ui()
+        # import enabled plugins once the window is fully built, so a
+        # plugin's setup(api) can already touch api.host safely
+        self.plugins.load_enabled()
+        self.refresh_plugin_list()
+        self._update_plugin_timer()
         # natives OSCQuery: dynamische Ports + VRChat-Discovery
         self.oscq_timer = QTimer(self)
         self.oscq_timer.timeout.connect(self.poll_oscquery)
@@ -165,8 +174,9 @@ class MainWindow(ConfigMixin, AppsPageMixin, TextboxPageMixin,
         self.btn_apps = QPushButton("Apps")
         self.btn_textbox = QPushButton("Textbox")
         self.btn_options = QPushButton("Options")
+        self.btn_plugins = QPushButton("Plugins")
         self.nav_buttons = (self.btn_apps, self.btn_textbox,
-                            self.btn_options)
+                            self.btn_options, self.btn_plugins)
         for i, b in enumerate(self.nav_buttons):
             b.setObjectName("navbtn")
             b.setCheckable(True)
@@ -181,6 +191,7 @@ class MainWindow(ConfigMixin, AppsPageMixin, TextboxPageMixin,
         self.pages.addWidget(self._wrap_scroll(self.build_apps_page()))
         self.pages.addWidget(self._wrap_scroll(self.build_textbox_page()))
         self.pages.addWidget(self._wrap_scroll(self.build_options_page()))
+        self.pages.addWidget(self._wrap_scroll(self.build_plugins_page()))
 
         # ===================== right column =====================
         right = QFrame()
@@ -298,15 +309,6 @@ class MainWindow(ConfigMixin, AppsPageMixin, TextboxPageMixin,
         self.chk_bar.setChecked(self.cfg["media_show_bar"])
         # local lyrics folder row + fetcher state
         self._sync_lyrics_local()
-        # status live info
-        self.chk_player_in_world.setChecked(
-            self.cfg.get("status_player_in_world", False))
-        self.chk_group_world.setChecked(
-            self.cfg.get("status_group_world", False))
-        self.chk_realtime.setChecked(self.cfg.get("status_realtime", False))
-        self.vrclog_dir_lbl.setText(
-            self.cfg.get("vrchat_log_dir") or "(auto-detect)")
-        self._update_vrclog_watcher()
         self.bar_style_combo.blockSignals(True)
         idx = min(CUSTOM_STYLE_INDEX,
                   max(0, int(self.cfg.get("media_bar_style", 2))))
@@ -376,6 +378,7 @@ class MainWindow(ConfigMixin, AppsPageMixin, TextboxPageMixin,
         self.mic_combo.blockSignals(False)
         self._update_tr_method_ui()
         self.toggle_aio.setChecked(self.cfg["aio_active"])
+        self.aio_set_buttons[self.cfg["aio_set_active"]].setChecked(True)
         self.aio_count_spin.setValue(self.cfg["aio_count"])
         self.chk_aio_rotate.setChecked(self.cfg["aio_rotate"])
         self.aio_rotate_spin.setValue(self.cfg["aio_rotate_sec"])
@@ -459,8 +462,11 @@ class MainWindow(ConfigMixin, AppsPageMixin, TextboxPageMixin,
     def build_payload(self):
         """Combines all active apps in the order of the cards (drag to change).
         If All in one is active, only the AIO string is sent instead."""
+        # one snapshot per frame: every plugin hook runs exactly once, no
+        # matter how many templates ask for its values below
+        self.plugins.invalidate()
         if self.cfg["aio_active"]:
-            return "\n".join(self.build_aio_lines())
+            return self.plugins.filter_text("\n".join(self.build_aio_lines()))
         lines = []
         for key in self.cfg["app_order"]:
             if key == "status" and self.cfg["status_active"]:
@@ -471,7 +477,10 @@ class MainWindow(ConfigMixin, AppsPageMixin, TextboxPageMixin,
                 lines.extend(self.build_media_lines())
             elif key == "hardware" and self.cfg["hw_active"]:
                 lines.extend(self.build_hw_lines())
-        return "\n".join(lines)
+        # plugins may append their own lines and/or rewrite the result;
+        # both calls are crash-safe (see core/plugins.py)
+        lines.extend(self.plugins.render_lines())
+        return self.plugins.filter_text("\n".join(lines))
 
     def send_now(self):
         if self.stt_recording:
@@ -537,10 +546,10 @@ class MainWindow(ConfigMixin, AppsPageMixin, TextboxPageMixin,
 
     def closeEvent(self, ev):
         self.clear_chatbox()   # don't leave stale text hanging in VRChat
+        self.plugins.shutdown()   # teardown() every loaded plugin
         self.stt.stop()
         self.libre_server.stop_sync()   # no orphaned server on exit
         self.oscq.stop()
-        self.vrclog.stop()
         self._save_timer.stop()
         self._write_config()
         self.debug_console.close()
