@@ -329,6 +329,9 @@ class OptionsPageMixin:
             except Exception as e:
                 return ("__error__", str(e))
         self.run_async(work, self._on_update_result, interval=250)
+        # plugins live in their own repos, so they get their own check -
+        # both run in parallel, neither blocks the window
+        self.check_plugin_updates()
 
     def _on_update_result(self, result):
         tag, info = result

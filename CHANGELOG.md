@@ -2,6 +2,103 @@
 
 All notable changes to OSC-DreamChatbox are documented here.
 
+## [v1.2.1] – 2026-07-30
+
+Plugin store, one-click plugin updates, and the fixes for the v1.2.0 AppImage and installer.
+
+### Added
+- **Plugin store.** The Plugins page now has two tabs: **Installed** and
+  **Store**. The store shows a 4-per-row grid of tiles with the plugin's
+  preview image, name, version and author; clicking a tile opens a detail view
+  with the full description, an *Open on GitHub* link and one Install button.
+  Plugins that are already installed are marked as such, and a newer version
+  upstream shows as *Update →*.
+- **`config/plugins.json` as the catalogue.** Adding a plugin to the store
+  means pasting one GitHub link into `config/plugins.json` next to the app. Name, version,
+  author, description and the preview image are read from the plugin's own
+  `plugin.json`, so nothing has to be kept in sync by hand. Links to the repo
+  root, to `/tree/<branch>/<folder>` and even straight to a `plugin.json` are
+  all understood. Entries in
+  `~/.config/OSC-DreamChatbox/plugins_sources.json` are merged on top, so your
+  own additions survive an app update.
+- **Two new `plugin.json` keys for store listings:** `image` (file in the
+  plugin folder or a full URL) and `summary`. A plugin without an image gets a
+  generated tile with its initials rather than a hole in the grid.
+- **Install and update straight from GitHub.** Downloading, unpacking and
+  installing runs on a worker thread, so a slow GitHub never freezes the
+  window. Updates keep `configs/`, so settings survive.
+- **Plugin updates in "Check for updates".** The Options button now checks the
+  app *and* every installed plugin. If something is newer, a dialog lists the
+  version jumps and updates them all with one click. The Store tab has its own
+  *Update all* button for the same thing.
+- **Self-updating plugin list.** Hitting **Refresh** in the store downloads
+  the current `plugins.json` from GitHub and caches it in
+  `~/.config/OSC-DreamChatbox/plugins.json`, so new plugins appear without
+  updating the app at all. No version number has to be bumped for that.
+  Writing to the config folder instead of back into the project folder is what
+  makes this work for **AppImage** users (read-only squashfs), AUR installs
+  (root-owned under `/usr`) and git checkouts (a modified file would break the
+  next `git pull --ff-only`) alike. A network error never destroys the working
+  list – the previous one keeps being used. The optional `version` key only
+  decides one thing: a later app release shipping a strictly newer catalogue
+  wins over the cache, which is then discarded. An ⬆ button at the top of the
+  Plugins page still offers the update when the check runs outside the store.
+- **New `slider` setting type** for plugins, rendered as a real slider with a
+  live value label next to it (optional `suffix` for the label).
+- **Nested plugin settings** via an optional `depends` key: a row is indented
+  under its parent switch and hidden while that switch is off, the same way
+  *Max length* sits under *Song title* on the MediaPlay card.
+
+### Changed
+- **World Stats 1.1.0:** the maximum world-name length is a slider now instead
+  of a number field, and it sits indented under *World name*, appearing only
+  while that is switched on. Preview image (`logo.png`) shown in the store.
+- **Sidebar order:** Plugins now sits above Options.
+- Store previews fall back to conventional file names (`logo.png`,
+  `preview.png`, `icon.png`, ...) when a manifest's `image` key is missing or
+  points at a file that is not there.
+- The plugin store deliberately avoids the GitHub API. That endpoint allows 60
+  unauthenticated requests per hour per IP, which one store refresh would eat
+  into; manifests come from `raw.githubusercontent.com` and downloads from
+  `codeload.github.com`, both plain file fetches with no such limit.
+
+### Fixed
+- **AppImage now runs on Linux Mint / Ubuntu 22.04+ (FUSE 2 *and* FUSE 3).**
+  The build used the AppImageKit runtime, which loads `libfuse.so.2` via
+  `dlopen()`. Distributions that ship only fuse3 – Mint 21+ among them –
+  failed with `dlopen(): error loading libfuse.so.2` before a single line of
+  Python ran. The build script now embeds the statically linked
+  [type2-runtime](https://github.com/AppImage/type2-runtime), which carries its
+  own FUSE and picks whatever `fusermount*` the system provides, and verifies
+  after the build that no `libfuse.so.2` reference is left.
+- **Readable errors instead of Qt tracebacks.** `AppRun` checks for the Qt6
+  system libraries that Mint/Ubuntu do not install by default (notably
+  `libxcb-cursor0`) and names the package to install.
+- **`install.sh` now actually installs the Qt libraries it lists.** The
+  dependency step was guarded by `[ -t 0 ]`, which is never true for
+  `curl -sL ... | bash` – the very install path the README recommends. So the
+  step printed "Running non-interactively" and skipped itself, and the first
+  launch died with "xcb-cursor0 or libxcb-cursor0 is needed to load the Qt xcb
+  platform plugin". The prompt now goes through `/dev/tty`, which still works
+  inside a pipe, and with no terminal at all the libraries are installed by
+  default (`DREAMCHATBOX_SKIP_SYSDEPS=1` opts out, `DREAMCHATBOX_ASSUME_YES=1`
+  skips the question). Same bug silently skipped `python3-venv`, which then
+  broke the venv step on Debian-based systems.
+- **`install.sh` verifies the GUI before claiming success.** After building the
+  venv it runs `ldd` against Qt's `libqxcb.so`, maps any missing soname to the
+  right package name for apt/pacman/dnf/zypper and prints the exact command.
+  Works without a display, so it is also useful over SSH.
+- **Complete xcb dependency list.** `libxcb-cursor0` alone is not enough;
+  `libxcb-icccm4`, `libxcb-image0`, `libxcb-keysyms1`, `libxcb-render-util0`,
+  `libxcb-shape0`, `libxcb-xkb1` and `libxkbcommon-x11-0` are now installed too,
+  and the AUR package gained the matching `xcb-util-*` and `libxkbcommon-x11`
+  dependencies.
+- **Python version mismatch is caught up front.** The bundled C extensions
+  (`PyQt6.sip`, `zeroconf`) are built for the Python minor version of the build
+  machine. The AppImage now records that version, looks for a matching
+  `pythonX.Y` on the target system, and otherwise says plainly what is wrong
+  instead of dying with an `ImportError`.
+
 ## [v1.2.0] – 2026-07-29
 
 First non-alpha release. The big change is a **plugin system**: features that
@@ -66,24 +163,6 @@ only some people need no longer have to live in the app itself.
 - The config keys `status_player_in_world`, `status_group_world`,
   `status_realtime` and `vrchat_log_dir` are no longer used.
 
-### Fixed
-- **AppImage now runs on Linux Mint / Ubuntu 22.04+ (FUSE 2 *and* FUSE 3).**
-  The build used the AppImageKit runtime, which loads `libfuse.so.2` via
-  `dlopen()`. Distributions that ship only fuse3 – Mint 21+ among them –
-  failed with `dlopen(): error loading libfuse.so.2` before a single line of
-  Python ran. The build script now embeds the statically linked
-  [type2-runtime](https://github.com/AppImage/type2-runtime), which carries its
-  own FUSE and picks whatever `fusermount*` the system provides, and verifies
-  after the build that no `libfuse.so.2` reference is left.
-- **Readable errors instead of Qt tracebacks.** `AppRun` checks for the Qt6
-  system libraries that Mint/Ubuntu do not install by default (notably
-  `libxcb-cursor0`) and names the package to install.
-- **Python version mismatch is caught up front.** The bundled C extensions
-  (`PyQt6.sip`, `zeroconf`) are built for the Python minor version of the build
-  machine. The AppImage now records that version, looks for a matching
-  `pythonX.Y` on the target system, and otherwise says plainly what is wrong
-  instead of dying with an `ImportError`.
-
 ### Notes
 - Dropping `-alpha` reflects that the feature set is settled, not that every
   edge case is proven. Please keep reporting what breaks.
@@ -143,6 +222,25 @@ only some people need no longer have to live in the app itself.
 - **Readable errors instead of Qt tracebacks.** `AppRun` checks for the Qt6
   system libraries that Mint/Ubuntu do not install by default (notably
   `libxcb-cursor0`) and names the package to install.
+- **`install.sh` now actually installs the Qt libraries it lists.** The
+  dependency step was guarded by `[ -t 0 ]`, which is never true for
+  `curl -sL ... | bash` – the very install path the README recommends. So the
+  step printed "Running non-interactively" and skipped itself, and the first
+  launch died with "xcb-cursor0 or libxcb-cursor0 is needed to load the Qt xcb
+  platform plugin". The prompt now goes through `/dev/tty`, which still works
+  inside a pipe, and with no terminal at all the libraries are installed by
+  default (`DREAMCHATBOX_SKIP_SYSDEPS=1` opts out, `DREAMCHATBOX_ASSUME_YES=1`
+  skips the question). Same bug silently skipped `python3-venv`, which then
+  broke the venv step on Debian-based systems.
+- **`install.sh` verifies the GUI before claiming success.** After building the
+  venv it runs `ldd` against Qt's `libqxcb.so`, maps any missing soname to the
+  right package name for apt/pacman/dnf/zypper and prints the exact command.
+  Works without a display, so it is also useful over SSH.
+- **Complete xcb dependency list.** `libxcb-cursor0` alone is not enough;
+  `libxcb-icccm4`, `libxcb-image0`, `libxcb-keysyms1`, `libxcb-render-util0`,
+  `libxcb-shape0`, `libxcb-xkb1` and `libxkbcommon-x11-0` are now installed too,
+  and the AUR package gained the matching `xcb-util-*` and `libxkbcommon-x11`
+  dependencies.
 - **Python version mismatch is caught up front.** The bundled C extensions
   (`PyQt6.sip`, `zeroconf`) are built for the Python minor version of the build
   machine. The AppImage now records that version, looks for a matching

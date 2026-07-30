@@ -173,10 +173,10 @@ class MainWindow(ConfigMixin, AppsPageMixin, TextboxPageMixin,
 
         self.btn_apps = QPushButton("Apps")
         self.btn_textbox = QPushButton("Textbox")
-        self.btn_options = QPushButton("Options")
         self.btn_plugins = QPushButton("Plugins")
+        self.btn_options = QPushButton("Options")
         self.nav_buttons = (self.btn_apps, self.btn_textbox,
-                            self.btn_options, self.btn_plugins)
+                            self.btn_plugins, self.btn_options)
         for i, b in enumerate(self.nav_buttons):
             b.setObjectName("navbtn")
             b.setCheckable(True)
@@ -190,8 +190,9 @@ class MainWindow(ConfigMixin, AppsPageMixin, TextboxPageMixin,
         self.pages = QStackedWidget()
         self.pages.addWidget(self._wrap_scroll(self.build_apps_page()))
         self.pages.addWidget(self._wrap_scroll(self.build_textbox_page()))
-        self.pages.addWidget(self._wrap_scroll(self.build_options_page()))
+        # order must match nav_buttons above - switch_page() indexes both
         self.pages.addWidget(self._wrap_scroll(self.build_plugins_page()))
+        self.pages.addWidget(self._wrap_scroll(self.build_options_page()))
 
         # ===================== right column =====================
         right = QFrame()

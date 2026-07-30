@@ -13,10 +13,11 @@ core/plugins.py – this file is pure UI plus the handlers wired to it.
 
 from pathlib import Path
 from PyQt6.QtCore import QUrl, Qt
-from PyQt6.QtGui import QDesktopServices
+from PyQt6.QtGui import QColor, QDesktopServices, QPainter, QPixmap
 from PyQt6.QtWidgets import (
-    QCheckBox, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QSpinBox, QVBoxLayout, QWidget)
+    QButtonGroup, QCheckBox, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QGridLayout, QPushButton, QSlider, QSpinBox, QStackedWidget, QTextBrowser, QVBoxLayout, QWidget)
 from core.constants import PLUGINS_DIR, PLUGINS_REPO_URL
+from core.plugin_store import PluginStore, StoreError, compare_versions
 from core.plugins import PluginError, PluginExistsError
 from ui.ui_main import ToggleLabel, ToggleSwitch
 
@@ -83,14 +84,52 @@ class PluginsPageMixin:
     def build_plugins_page(self):
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(24, 20, 24, 20)
-        layout.setSpacing(16)
+        layout.setContentsMargins(24, 14, 24, 20)
+        layout.setSpacing(10)
 
+        head = QHBoxLayout()
         title = QLabel("Plugins")
         title.setObjectName("pagetitle")
-        layout.addWidget(title)
+        head.addWidget(title)
+        head.addStretch()
+
+        # ---- catalogue update: only appears when GitHub has a newer
+        # plugins.json, and only downloads when the user clicks it
+        self.catalogue_btn = QPushButton("\u2B06  Plugin list update")
+        self.catalogue_btn.setFixedHeight(30)
+        self.catalogue_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.catalogue_btn.setStyleSheet(
+            "QPushButton { background: #2b3a4d; border: 1px solid #5b8dc9;"
+            " border-radius: 8px; color: #cfe0f5; padding: 0 12px; }"
+            "QPushButton:hover { background: #34495f; }")
+        self.catalogue_btn.setVisible(False)
+        self.catalogue_btn.clicked.connect(self.on_catalogue_update)
+        head.addWidget(self.catalogue_btn)
+
+        # ---- Installed / Store switch (exclusive, like the AIO templates)
+        self.plugin_tab_group = QButtonGroup(self)
+        self.plugin_tab_group.setExclusive(True)
+        for i, label in enumerate(("\U0001F4E6  Installed", "\U0001F6CD  Store")):
+            b = QPushButton(label)
+            b.setCheckable(True)
+            b.setFixedHeight(30)
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.setStyleSheet(
+                "QPushButton { background: #232833; border: 1px solid #333947;"
+                " border-radius: 8px; color: #aeb4bf; padding: 0 14px; }"
+                "QPushButton:hover { border-color: #5b8dc9; }"
+                "QPushButton:checked { background: #5b8dc9;"
+                " border-color: #5b8dc9; color: #ffffff; }")
+            self.plugin_tab_group.addButton(b, i)
+            head.addWidget(b)
+        self.plugin_tab_group.button(0).setChecked(True)
+        self.plugin_tab_group.idClicked.connect(self.on_plugin_tab)
+        layout.addLayout(head)
 
         self.plugin_info_popup = PluginInfoPopup()
+        self.store = PluginStore(self.log)
+        self.store_tiles_per_row = 4
+        self._store_busy = False
         # pid -> widget, rebuilt on every refresh_plugin_list()
         self.plugin_expanders = {}
         self.plugin_inputs = {}
@@ -99,8 +138,8 @@ class PluginsPageMixin:
         card = QFrame()
         card.setObjectName("card")
         c = QVBoxLayout(card)
-        c.setContentsMargins(16, 14, 16, 16)
-        c.setSpacing(10)
+        c.setContentsMargins(16, 10, 16, 12)
+        c.setSpacing(6)
 
         head = QHBoxLayout()
         ctitle = QLabel("Installed plugins")
@@ -111,6 +150,13 @@ class PluginsPageMixin:
         self.plugin_count_lbl.setObjectName("dim")
         head.addWidget(self.plugin_count_lbl)
         c.addLayout(head)
+
+        note = QLabel(
+            "Note: In the Apps (All-in-One) tab, you can use plugin variables "
+            "(e.g. {world_stats}) to include your plugin data directly.")
+        note.setStyleSheet("color: #7a8290; font-size: 11px;")
+        note.setWordWrap(True)
+        c.addWidget(note)
 
         btn_row = QHBoxLayout()
         install_btn = QPushButton("\u2795  Install plugin from .zip")
@@ -150,23 +196,6 @@ class PluginsPageMixin:
         btn_row.addStretch()
         c.addLayout(btn_row)
 
-        hint = QLabel(
-            f"Each plugin is one folder with a plugin.json and its python "
-            f"file in <span style='font-family:monospace'>{PLUGINS_DIR}</span>."
-            f" Turning a plugin off keeps the files – it is simply no longer "
-            f"loaded, now and on the next start. Every plugin is usable as "
-            f"<span style='font-family:monospace'>{{plugin_id}}</span> in "
-            f"status texts, in the Apps custom strings and in All-in-one.")
-        hint.setObjectName("dim")
-        hint.setTextFormat(Qt.TextFormat.RichText)
-        hint.setWordWrap(True)
-        c.addWidget(hint)
-
-        line = QFrame()
-        line.setFrameShape(QFrame.Shape.HLine)
-        line.setObjectName("hline")
-        c.addWidget(line)
-
         # -------------------------------------------------- plugin list
         self.plugin_list = QVBoxLayout()
         self.plugin_list.setSpacing(8)
@@ -178,8 +207,16 @@ class PluginsPageMixin:
         self.plugin_empty_lbl.setObjectName("dim")
         self.plugin_empty_lbl.setWordWrap(True)
         c.addWidget(self.plugin_empty_lbl)
+        # keeps every row at its natural height and pins the whole block to
+        # the top - without it the leftover space is shared out between the
+        # heading, the buttons and each plugin row
+        c.addStretch(1)
 
-        layout.addWidget(card)
+        self.plugin_stack = QStackedWidget()
+        self.plugin_stack.addWidget(card)                    # 0 installed
+        self.plugin_stack.addWidget(self._build_store_view())  # 1 store
+        self.plugin_stack.addWidget(self._build_store_detail())  # 2 detail
+        layout.addWidget(self.plugin_stack)
         layout.addStretch()
         self.refresh_plugin_list()
         return page
@@ -196,6 +233,7 @@ class PluginsPageMixin:
 
         self.plugin_expanders = {}
         self.plugin_inputs = {}
+        self.plugin_dependents = {}
         plugins = list(self.plugins.plugins.values())
         for plugin in plugins:
             self.plugin_list.addWidget(self._build_plugin_row(plugin))
@@ -370,8 +408,18 @@ class PluginsPageMixin:
             line.setObjectName("hline")
             c.addWidget(line)
             opts = self.plugins.options(plugin.pid)
+            # parent key -> [dependent widgets], so a sub-option can hide
+            # with its parent (Max world name length under World name)
+            deps = {}
             for item in plugin.schema:
-                c.addWidget(self._build_plugin_option(plugin, item, opts))
+                w = self._build_plugin_option(plugin, item, opts)
+                if item.get("depends"):
+                    deps.setdefault(item["depends"], []).append(w)
+                    # indent it so it reads as belonging to the row above
+                    w.setContentsMargins(24, 0, 0, 0)
+                c.addWidget(w)
+            self.plugin_dependents[plugin.pid] = deps
+            self._sync_plugin_dependents(plugin.pid)
         return content
 
     def _build_plugin_option(self, plugin, item, opts):
@@ -381,13 +429,18 @@ class PluginsPageMixin:
         value = opts.get(key, item["default"])
 
         if kind == "bool":
-            w = QCheckBox(item["label"])
-            w.setChecked(bool(value))
-            w.toggled.connect(
+            holder = QWidget()
+            box = QHBoxLayout(holder)
+            box.setContentsMargins(0, 0, 0, 0)
+            chk = QCheckBox(item["label"])
+            chk.setChecked(bool(value))
+            chk.toggled.connect(
                 lambda on, p=pid, k=key: self.on_plugin_option(p, k, on))
             if item["hint"]:
-                w.setToolTip(item["hint"])
-            return w
+                chk.setToolTip(item["hint"])
+            box.addWidget(chk)
+            box.addStretch()
+            return holder
 
         holder = QWidget()
         row = QHBoxLayout(holder)
@@ -397,6 +450,28 @@ class PluginsPageMixin:
         if item["hint"]:
             lbl.setToolTip(item["hint"])
         row.addWidget(lbl)
+
+        if kind == "slider":
+            # live value label next to the handle, so dragging shows the
+            # number instead of leaving people guessing
+            try:
+                start = int(value)
+            except (TypeError, ValueError):
+                start = item["default"]
+            start = max(item["min"], min(item["max"], start))
+            w = QSlider(Qt.Orientation.Horizontal)
+            w.setRange(item["min"], item["max"])
+            w.setValue(start)
+            w.setMinimumWidth(160)
+            val_lbl = QLabel(f"{start}{item.get('suffix', '')}")
+            val_lbl.setObjectName("dim")
+            val_lbl.setMinimumWidth(72)
+            w.valueChanged.connect(
+                lambda v, p=pid, k=key, lb=val_lbl, sfx=item.get("suffix", ""):
+                (lb.setText(f"{v}{sfx}"), self.on_plugin_option(p, k, v)))
+            row.addWidget(w, 1)
+            row.addWidget(val_lbl)
+            return holder
 
         if kind == "int":
             w = QSpinBox()
@@ -420,6 +495,465 @@ class PluginsPageMixin:
                 lambda text, p=pid, k=key: self.on_plugin_option(p, k, text))
             row.addWidget(w, 1)
         return holder
+
+
+    # ================================================================
+    # store
+    # ================================================================
+    def _build_store_view(self):
+        card = QFrame()
+        card.setObjectName("card")
+        c = QVBoxLayout(card)
+        c.setContentsMargins(16, 14, 16, 16)
+        c.setSpacing(10)
+
+        head = QHBoxLayout()
+        t = QLabel("Plugin store")
+        t.setObjectName("cardtitle")
+        head.addWidget(t)
+        head.addStretch()
+        self.store_status = QLabel("")
+        self.store_status.setObjectName("dim")
+        head.addWidget(self.store_status)
+        c.addLayout(head)
+
+        btns = QHBoxLayout()
+        self.store_refresh_btn = QPushButton("\U0001F504  Refresh")
+        self.store_refresh_btn.setObjectName("sendbtn")
+        self.store_refresh_btn.setFixedHeight(34)
+        self.store_refresh_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.store_refresh_btn.setToolTip(
+            "Downloads the current plugin list from GitHub and re-reads "
+            "every plugin's details")
+        self.store_refresh_btn.clicked.connect(self.on_store_refresh)
+        btns.addWidget(self.store_refresh_btn)
+
+        self.store_update_btn = QPushButton("\u2B07  Update all")
+        self.store_update_btn.setObjectName("linkbtn")
+        self.store_update_btn.setFixedHeight(34)
+        self.store_update_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.store_update_btn.setToolTip("Re-download every installed plugin "
+                                         "that has a newer version")
+        self.store_update_btn.setVisible(False)
+        self.store_update_btn.clicked.connect(self.on_store_update_all)
+        btns.addWidget(self.store_update_btn)
+
+        repo_btn = QPushButton("\U0001F9E9  Plugins & template")
+        repo_btn.setObjectName("linkbtn")
+        repo_btn.setFixedHeight(34)
+        repo_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        repo_btn.clicked.connect(
+            lambda: QDesktopServices.openUrl(QUrl(PLUGINS_REPO_URL)))
+        btns.addWidget(repo_btn)
+        btns.addStretch()
+        c.addLayout(btns)
+
+        hint = QLabel(
+            "Catalogue from <span style='font-family:monospace'>plugins.json</span>"
+            " next to the app \u2013 paste a GitHub link to a plugin folder and it "
+            "shows up here. Name, version and preview image come from the "
+            "plugin's own plugin.json.")
+        hint.setObjectName("dim")
+        hint.setTextFormat(Qt.TextFormat.RichText)
+        hint.setWordWrap(True)
+        c.addWidget(hint)
+
+        line = QFrame()
+        line.setFrameShape(QFrame.Shape.HLine)
+        line.setObjectName("hline")
+        c.addWidget(line)
+
+        self.store_grid = QGridLayout()
+        self.store_grid.setSpacing(10)
+        c.addLayout(self.store_grid)
+        c.addStretch()
+        return card
+
+    def _store_placeholder_pixmap(self, entry):
+        """A plugin without a preview image still needs something in the
+        tile, so draw its initials on a flat tile instead of leaving a
+        hole in the grid."""
+        pm = QPixmap(200, 112)
+        pm.fill(QColor("#232833"))
+        painter = QPainter(pm)
+        painter.setPen(QColor("#5b8dc9"))
+        f = painter.font()
+        f.setPointSize(26)
+        f.setBold(True)
+        painter.setFont(f)
+        initials = "".join(w[0] for w in (entry.name or "?").split()[:2]).upper()
+        painter.drawText(pm.rect(), Qt.AlignmentFlag.AlignCenter, initials)
+        painter.end()
+        return pm
+
+    def _build_store_tile(self, entry):
+        tile = QFrame()
+        tile.setObjectName("innerbox")
+        tile.setCursor(Qt.CursorShape.PointingHandCursor)
+        tile.setFixedWidth(212)
+        v = QVBoxLayout(tile)
+        v.setContentsMargins(6, 6, 6, 8)
+        v.setSpacing(6)
+
+        img = QLabel()
+        img.setFixedSize(200, 112)
+        img.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        img.setScaledContents(True)
+        pm = None
+        if entry.image_path:
+            loaded = QPixmap(str(entry.image_path))
+            if not loaded.isNull():
+                pm = loaded
+        img.setPixmap(pm or self._store_placeholder_pixmap(entry))
+        v.addWidget(img)
+
+        name = QLabel(entry.name)
+        name.setStyleSheet("font-weight: 600;")
+        name.setWordWrap(True)
+        v.addWidget(name)
+
+        meta = QLabel(f"v{entry.version.lstrip('v')} \u00b7 {entry.author}")
+        meta.setObjectName("dim")
+        v.addWidget(meta)
+
+        if entry.error:
+            state = QLabel("\u26A0 unreachable")
+            state.setStyleSheet("color: #d9884a; font-size: 12px;")
+            state.setToolTip(entry.error)
+        elif entry.has_update:
+            state = QLabel(f"Update \u2192 v{entry.version.lstrip('v')}")
+            state.setStyleSheet("color: #5b8dc9; font-size: 12px;")
+        elif entry.installed:
+            state = QLabel("\u2713 installed")
+            state.setStyleSheet("color: #6f9f6f; font-size: 12px;")
+        else:
+            state = QLabel("not installed")
+            state.setObjectName("dim")
+        v.addWidget(state)
+
+        # the whole tile is clickable, not just a small button
+        tile.mousePressEvent = (
+            lambda ev, k=entry.source.key: self.on_store_open(k))
+        return tile
+
+    def refresh_store_grid(self):
+        while self.store_grid.count():
+            item = self.store_grid.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.setParent(None)
+                w.deleteLater()
+        entries = self.store.entries
+        per_row = self.store_tiles_per_row
+        for i, entry in enumerate(entries):
+            self.store_grid.addWidget(self._build_store_tile(entry),
+                                      i // per_row, i % per_row)
+        # keep the tiles left-aligned instead of stretched apart
+        self.store_grid.setColumnStretch(per_row, 1)
+        updates = sum(1 for e in entries if e.has_update)
+        self.store_update_btn.setVisible(updates > 0)
+        self.store_update_btn.setText(f"\u2B07  Update all ({updates})")
+        if self.store.last_error:
+            self.store_status.setText(self.store.last_error)
+        else:
+            bits = [f"{len(entries)} plugin(s)"]
+            if updates:
+                bits.append(f"{updates} update(s)")
+            if self.store.catalogue_version not in ("", "0"):
+                bits.append(f"list v{self.store.catalogue_version}")
+            self.store_status.setText(", ".join(bits))
+
+    # ------------------------------------------------------- detail view
+    def _build_store_detail(self):
+        card = QFrame()
+        card.setObjectName("card")
+        c = QVBoxLayout(card)
+        c.setContentsMargins(16, 14, 16, 16)
+        c.setSpacing(10)
+
+        top = QHBoxLayout()
+        back = QPushButton("\u2190  Back to store")
+        back.setObjectName("linkbtn")
+        back.setFixedHeight(30)
+        back.setCursor(Qt.CursorShape.PointingHandCursor)
+        back.clicked.connect(lambda: self.on_plugin_tab(1))
+        top.addWidget(back)
+        top.addStretch()
+        c.addLayout(top)
+
+        self.detail_img = QLabel()
+        self.detail_img.setFixedHeight(200)
+        self.detail_img.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        c.addWidget(self.detail_img)
+
+        self.detail_title = QLabel("")
+        self.detail_title.setObjectName("cardtitle")
+        c.addWidget(self.detail_title)
+        self.detail_meta = QLabel("")
+        self.detail_meta.setObjectName("dim")
+        c.addWidget(self.detail_meta)
+
+        self.detail_text = QTextBrowser()
+        self.detail_text.setOpenExternalLinks(True)
+        self.detail_text.setMinimumHeight(120)
+        self.detail_text.setStyleSheet(
+            "QTextBrowser { background: #191c24; border: 1px solid #333947;"
+            " border-radius: 8px; padding: 8px; }")
+        c.addWidget(self.detail_text)
+
+        row = QHBoxLayout()
+        self.detail_install_btn = QPushButton("Install")
+        self.detail_install_btn.setObjectName("sendbtn")
+        self.detail_install_btn.setFixedHeight(34)
+        self.detail_install_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.detail_install_btn.clicked.connect(self.on_store_install)
+        row.addWidget(self.detail_install_btn)
+
+        self.detail_github_btn = QPushButton("\U0001F310  Open on GitHub")
+        self.detail_github_btn.setObjectName("linkbtn")
+        self.detail_github_btn.setFixedHeight(34)
+        self.detail_github_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.detail_github_btn.clicked.connect(self.on_store_open_github)
+        row.addWidget(self.detail_github_btn)
+        row.addStretch()
+        c.addLayout(row)
+        c.addStretch()
+        return card
+
+    def _current_store_entry(self):
+        key = getattr(self, "_store_selected", "")
+        for e in self.store.entries:
+            if e.source.key == key:
+                return e
+        return None
+
+    def show_store_detail(self):
+        entry = self._current_store_entry()
+        if entry is None:
+            return
+        pm = QPixmap(str(entry.image_path)) if entry.image_path else QPixmap()
+        if pm.isNull():
+            pm = self._store_placeholder_pixmap(entry)
+        self.detail_img.setPixmap(
+            pm.scaledToHeight(200, Qt.TransformationMode.SmoothTransformation))
+        self.detail_title.setText(entry.name)
+        bits = [f"v{entry.version.lstrip('v')}", f"by {entry.author}"]
+        if entry.installed:
+            bits.append(f"installed: v{entry.installed_version.lstrip('v')}")
+        self.detail_meta.setText("  \u00b7  ".join(bits))
+        body = entry.description or "(no description)"
+        if entry.error:
+            body += f"\n\nCould not be read: {entry.error}"
+        self.detail_text.setPlainText(body)
+        if entry.error:
+            self.detail_install_btn.setText("Unavailable")
+            self.detail_install_btn.setEnabled(False)
+        elif entry.has_update:
+            self.detail_install_btn.setText(
+                f"Update to v{entry.version.lstrip('v')}")
+            self.detail_install_btn.setEnabled(True)
+        elif entry.installed:
+            self.detail_install_btn.setText("Reinstall")
+            self.detail_install_btn.setEnabled(True)
+        else:
+            self.detail_install_btn.setText("Install")
+            self.detail_install_btn.setEnabled(True)
+
+    # --------------------------------------------------------- handlers
+    def on_plugin_tab(self, idx):
+        idx = 1 if idx == 1 else (2 if idx == 2 else 0)
+        self.plugin_stack.setCurrentIndex(idx)
+        # the detail view is reached from a tile, so keep "Store" lit for it
+        btn = self.plugin_tab_group.button(1 if idx else 0)
+        if btn is not None:
+            btn.setChecked(True)
+        if idx == 1 and not self.store.entries and not self._store_busy:
+            self.on_store_refresh()
+
+    def on_store_open(self, key):
+        self._store_selected = key
+        self.show_store_detail()
+        self.plugin_stack.setCurrentIndex(2)
+
+    def on_store_open_github(self):
+        entry = self._current_store_entry()
+        if entry is not None:
+            QDesktopServices.openUrl(QUrl(entry.source.web_url))
+
+    def _installed_versions(self):
+        return {pid: p.version for pid, p in self.plugins.plugins.items()}
+
+    def on_store_refresh(self):
+        """Fetches the catalogue on a worker thread - the store must never
+        freeze the window while GitHub is slow."""
+        if self._store_busy:
+            return
+        self._store_busy = True
+        self.store_refresh_btn.setEnabled(False)
+        self.store_status.setText("Loading from GitHub \u2026")
+        installed = self._installed_versions()
+
+        def work():
+            entries = self.store.refresh(installed)
+            for e in entries:          # previews, best effort
+                self.store.fetch_image(e)
+            return entries
+
+        self.run_async(work, self._on_store_refreshed, interval=250)
+
+    def _on_store_refreshed(self, _entries):
+        self._store_busy = False
+        self.store_refresh_btn.setEnabled(True)
+        self.refresh_store_grid()
+        self.sync_catalogue_button()
+
+    def sync_catalogue_button(self):
+        """Shows the up-arrow only while an update is actually pending."""
+        pending = bool(self.store.catalogue_update)
+        self.catalogue_btn.setVisible(pending)
+        if pending:
+            self.catalogue_btn.setText(
+                f"\u2B06  Plugin list v{self.store.remote_version}")
+            self.catalogue_btn.setToolTip(
+                f"A newer plugin list is on GitHub "
+                f"(v{self.store.remote_version}, you have "
+                f"v{self.store.catalogue_version}). Click to download it - "
+                f"new plugins show up in the store without updating the app.")
+
+    def on_catalogue_update(self):
+        """Downloads the newer catalogue, then reloads the store from it."""
+        version = self.store.apply_catalogue_update()
+        if not version:
+            QMessageBox.warning(
+                self, "Plugin list not updated",
+                "The new plugin list could not be saved. See the debug "
+                "console for details.")
+            self.sync_catalogue_button()
+            return
+        self.log(f"Store: plugin list updated to v{version}")
+        self.catalogue_btn.setVisible(False)
+        self.on_plugin_tab(1)
+        self.on_store_refresh()
+
+    def on_store_install(self):
+        entry = self._current_store_entry()
+        if entry is None or self._store_busy:
+            return
+        self._store_busy = True
+        self.detail_install_btn.setEnabled(False)
+        self.detail_install_btn.setText("Downloading \u2026")
+        key = entry.source.key
+
+        def work():
+            try:
+                self.store.install(entry, self.plugins)
+                return (True, entry.name, "")
+            except (StoreError, PluginError) as e:
+                return (False, entry.name, str(e))
+            except Exception as e:     # noqa: BLE001 - never kill the window
+                return (False, entry.name, f"{type(e).__name__}: {e}")
+
+        self.run_async(work,
+                       lambda r, k=key: self._on_store_installed(r, k),
+                       interval=250)
+
+    def _on_store_installed(self, result, key):
+        ok, name, err = result
+        self._store_busy = False
+        self._store_selected = key
+        if ok:
+            self.log(f"Store: installed '{name}'")
+        else:
+            QMessageBox.warning(self, "Installation failed",
+                                f"'{name}' could not be installed:\n\n{err}")
+            self.log(f"Store: install of '{name}' failed: {err}")
+        for e in self.store.entries:
+            e.installed_version = self._installed_versions().get(e.pid, "")
+            e.has_update = bool(
+                e.installed_version and e.version != "?"
+                and compare_versions(e.version, e.installed_version) > 0)
+        self.refresh_plugin_list()
+        self._update_plugin_timer()
+        self.refresh_store_grid()
+        self.show_store_detail()
+        self.update_preview()
+
+    def check_plugin_updates(self):
+        """Called by the "Check for updates" button on the Options page.
+        Looks for newer plugin versions on GitHub and offers to pull them
+        in with one click."""
+        if self._store_busy:
+            return
+        self._store_busy = True
+        installed = self._installed_versions()
+        if not installed:
+            self._store_busy = False
+            return
+
+        def work():
+            try:
+                return (self.store.check_updates(installed), "")
+            except Exception as e:    # noqa: BLE001
+                return ([], f"{type(e).__name__}: {e}")
+
+        self.run_async(work, self._on_plugin_updates_checked, interval=250)
+
+    def _on_plugin_updates_checked(self, result):
+        pending, err = result
+        self._store_busy = False
+        if err:
+            self.log(f"Store: plugin update check failed: {err}")
+            return
+        self.sync_catalogue_button()
+        if not pending:
+            self.log("Store: all plugins are up to date")
+            return
+        lines = "\n".join(
+            f"  \u2022 {e.name}: v{e.installed_version.lstrip('v')} "
+            f"\u2192 v{e.version.lstrip('v')}" for e in pending)
+        answer = QMessageBox.question(
+            self, "Plugin updates available",
+            f"{len(pending)} plugin(s) can be updated:\n\n{lines}\n\n"
+            f"Download and install them now? Your settings are kept.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes)
+        if answer == QMessageBox.StandardButton.Yes:
+            self.refresh_store_grid()
+            self.on_store_update_all()
+
+    def on_store_update_all(self):
+        pending = [e for e in self.store.entries if e.has_update]
+        if not pending or self._store_busy:
+            return
+        self._store_busy = True
+        self.store_update_btn.setEnabled(False)
+        self.store_status.setText(f"Updating {len(pending)} plugin(s) \u2026")
+
+        def work():
+            done, failed = [], []
+            for e in pending:
+                try:
+                    self.store.install(e, self.plugins)
+                    done.append(e.name)
+                except Exception as ex:   # noqa: BLE001
+                    failed.append(f"{e.name}: {ex}")
+            return (done, failed)
+
+        self.run_async(work, self._on_store_updated_all, interval=250)
+
+    def _on_store_updated_all(self, result):
+        done, failed = result
+        self._store_busy = False
+        self.store_update_btn.setEnabled(True)
+        if done:
+            self.log(f"Store: updated {', '.join(done)}")
+        if failed:
+            QMessageBox.warning(self, "Some updates failed",
+                                "\n".join(failed))
+        self.refresh_plugin_list()
+        self._update_plugin_timer()
+        self.on_store_refresh()
+        self.update_preview()
 
     # ---------------------------------------------------------- handlers
     def on_plugin_toggled(self, pid, on):
@@ -461,10 +995,20 @@ class PluginsPageMixin:
         edit.setText(default)   # textChanged writes it back through
         self.update_preview()
 
+    def _sync_plugin_dependents(self, pid):
+        """Shows each dependent row only while its parent bool is on - the
+        same behaviour as the MediaPlay card's sub-options."""
+        opts = self.plugins.options(pid)
+        for parent, widgets in self.plugin_dependents.get(pid, {}).items():
+            on = bool(opts.get(parent))
+            for w in widgets:
+                w.setVisible(on)
+
     def on_plugin_option(self, pid, key, value):
         """One of the plugin's own settings changed. The plugin is told
         via on_settings() and the value is saved with the config."""
         self.plugins.set_option(pid, key, value)
+        self._sync_plugin_dependents(pid)
         self.update_preview()
 
     def on_plugin_info(self, pid, anchor):

@@ -34,10 +34,13 @@ Beyond the required keys, plugin.json may declare:
                             app value that is already filled always wins,
                             so a plugin can never hijack a built-in one.
     "settings":     [{"key": "greeting", "type": "text",
-                      "label": "Greeting", "default": "Hi"}]
+                      "label": "Greeting", "default": "Hi"},
+                     {"key": "len", "type": "slider", "label": "Length",
+                      "default": 24, "min": 6, "max": 64,
+                      "suffix": " chars", "depends": "shout"}]
 
-``settings`` entries (type text | bool | int) are rendered as real
-widgets under the plugin's Settings expander, so an author gets a
+``settings`` entries (type text | bool | int | slider) are rendered as
+real widgets under the plugin's Settings expander, so an author gets a
 config UI without writing a single line of Qt. The current values reach
 the plugin as ``api.settings`` (a live dict) plus the on_settings hook.
 
@@ -80,7 +83,7 @@ MANIFEST_NAME = "plugin.json"
 # per-plugin state lives in <plugin>/configs/config.json
 CONFIG_DIRNAME = "configs"
 CONFIG_NAME = "config.json"
-SETTING_TYPES = ("text", "bool", "int")
+SETTING_TYPES = ("text", "bool", "int", "slider")
 # plugin ids are used as folder AND module names -> keep them boring
 ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 MODULE_PREFIX = "dreamchatbox_plugin_"
@@ -424,10 +427,13 @@ class PluginManager:
                 "type": kind,
                 "label": str(item.get("label") or key),
                 "hint": str(item.get("hint") or ""),
+                # optional: only show this row while the named bool setting
+                # is on, the way "Max length" hides under "Song title"
+                "depends": str(item.get("depends") or "").strip(),
             }
             if kind == "bool":
                 entry["default"] = bool(item.get("default", False))
-            elif kind == "int":
+            elif kind in ("int", "slider"):
                 entry["default"] = int(item.get("default", 0) or 0)
                 entry["min"] = int(item.get("min", 0) or 0)
                 entry["max"] = int(item.get("max", 999) or 999)
@@ -435,6 +441,7 @@ class PluginManager:
                     entry["min"], entry["max"] = entry["max"], entry["min"]
                 entry["default"] = max(entry["min"],
                                        min(entry["max"], entry["default"]))
+                entry["suffix"] = str(item.get("suffix") or "")
             else:
                 entry["default"] = str(item.get("default", ""))
             out.append(entry)
