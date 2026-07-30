@@ -610,10 +610,10 @@ class PluginManager:
         self._snap = snap
         return snap
 
-    def values(self):
-        """Flat placeholder dict for apply_template(): ``{<id>}`` for each
-        plugin plus ``{<id>_<key>}`` for everything get_values() returned.
-        Namespacing by id keeps two plugins from fighting over a key."""
+    def raw_values(self):
+        """The unfiltered values: ``{<id>}`` is whatever the plugin itself
+        produced, ignoring any custom string. This is what a custom string
+        is rendered against."""
         out = {}
         for pid, data in self.snapshot().items():
             plugin = self.plugins.get(pid)
@@ -623,6 +623,31 @@ class PluginManager:
                 # names the plugin claimed unprefixed, e.g. {realtime}
                 if plugin is not None and key in plugin.global_keys:
                     out.setdefault(key, val)
+        return out
+
+    def values(self):
+        """Flat placeholder dict for apply_template(): ``{<id>}`` for each
+        plugin plus ``{<id>_<key>}`` for everything get_values() returned.
+        Namespacing by id keeps two plugins from fighting over a key.
+
+        With the custom string switched on, ``{<id>}`` is that string, not
+        the plugin's raw output – so putting {world_stats} into All-in-one
+        gives the same layout you configured on the Plugins page instead of
+        quietly ignoring it.
+
+        Custom strings are rendered against raw_values(), never against
+        each other. That is what keeps the default template "{<id>}" from
+        recursing into itself, and it means two plugins referencing each
+        other produce a defined result rather than depending on order.
+        """
+        raw = self.raw_values()
+        out = dict(raw)
+        for pid in self.snapshot():
+            entry = self.entry(pid)
+            if not (entry["custom"] and entry["template"].strip()):
+                continue
+            rendered = apply_template(entry["template"], raw)
+            out[pid] = rendered or None
         return out
 
     def merge_into(self, vals):
@@ -643,7 +668,9 @@ class PluginManager:
     def render_lines(self):
         """The lines plugins contribute to the chatbox. With the custom
         string on, the plugin's own output is replaced by the user's
-        template – exactly like the Apps cards work."""
+        template – exactly like the Apps cards work. The rendering already
+        happened in values(), so the line and the {<id>} placeholder can
+        never drift apart."""
         vals = self.values()
         lines = []
         for plugin in self._active():
@@ -652,7 +679,7 @@ class PluginManager:
             if not entry["line"]:
                 continue   # placeholder-only: values yes, own line no
             if entry["custom"] and entry["template"].strip():
-                text = apply_template(entry["template"], vals)
+                text = vals.get(plugin.pid)
                 if text:
                     lines.extend(text.split("\n"))
             else:

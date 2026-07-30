@@ -2,6 +2,21 @@
 
 All notable changes to OSC-DreamChatbox are documented here.
 
+## [v1.2.2] – 2026-07-30
+
+### Changed
+- **A plugin's custom string now drives its placeholder too.** With *Custom
+  string* switched on for a plugin, `{world_stats}` in an All-in-one template,
+  in a Personal Status text or in an Apps custom string returns that string
+  instead of the plugin's raw output. Before, the custom layout only applied
+  to the plugin's own chatbox line and was silently ignored everywhere else.
+- Custom strings are rendered against the plugins' raw values, never against
+  one another. That keeps the default template `{<id>}` from recursing into
+  itself, and two plugins referencing each other now produce a defined result
+  instead of depending on evaluation order.
+- The plugin line and the `{<id>}` placeholder are rendered once and share the
+  result, so they can no longer drift apart.
+
 ## [v1.2.1] – 2026-07-30
 
 Plugin store, one-click plugin updates, and the fixes for the v1.2.0 AppImage and installer.
