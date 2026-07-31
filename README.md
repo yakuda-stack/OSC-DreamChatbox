@@ -19,7 +19,7 @@
 
 Everything you know from MagicChatbox/VRCOSC on Windows – status rotation, now-playing, hardware stats, speech-to-text, the slim-chatbox trick – built natively for Linux (PyQt6, MPRIS/D-Bus, sysfs).
 
-*(Personal Status, MediaPlay, Hardware and All-in-one live on the **Apps** page.)*
+*(Personal Status, MediaPlay, Hardware and All-in-one live on the **Apps** page. Plugins have their own page, theming sits under Options.)*
 
 ### 📝 Personal Status
 - **10 switchable text templates**, each with its own set of up to **20 texts** – exclusive toggles, enabling one switches the others off
@@ -50,11 +50,29 @@ Everything you know from MagicChatbox/VRCOSC on Windows – status rotation, now
 ### 🖥️ Hardware
 - Live **GPU / VRAM / CPU / RAM** stats (AMD via kernel sysfs, NVIDIA via nvidia-smi)
 - Auto-detected or custom GPU/CPU names, temps as `°C` or 🔥
-- Custom string with placeholders: `{gpu_name} {gpu_usage} {gpu_temp} {temp_icon} {vram_usage} {cpu_name} {cpu_usage} {cpu_temp} {ram_usage} {ram_type}`
+- **FPS** via MangoHud – Linux has no general way to read a game's frame rate, so the value comes from MangoHud's log (it already runs inside VRChat). Point the card at the log folder and add the launch options shown there
+- Custom string with placeholders: `{gpu_name} {gpu_usage} {gpu_temp} {temp_icon} {vram_usage} {cpu_name} {cpu_usage} {cpu_temp} {ram_usage} {ram_type} {fps}`
 
 ### 🧩 All in one (AIO)
 - Combine **everything into one master string** – up to 5 rotating layouts
-- All placeholders from every app work here, incl. `{text_1}…{text_20}`, `{time_status}`, `{time_end}`
+- **10 switchable AIO templates**, each with its own set of strings – flip between a gaming, a music and a minimal layout with one click, same as the Personal Status templates
+- All placeholders from every app work here, incl. `{text_1}…{text_20}`, `{time_status}`, `{time_end}`, plus every active plugin as `{plugin_id}`
+
+### 🧩 Plugins
+- Own **Plugins** page with two tabs: **Installed** and **Store**
+- A plugin is one folder with a `plugin.json` and a python file in `~/.config/OSC-DreamChatbox/plugins/` – install from a `.zip` or straight from the store
+- **Store**: a grid of tiles with preview image, version and author; click one for the full description and a single Install button. Updates are detected and applied with one click, and your settings survive them
+- The catalogue is a list of GitHub links in `config/plugins.json`; **Refresh pulls the current list from GitHub**, so new plugins appear without updating the app
+- Every plugin is usable as `{plugin_id}` in status texts, in the Apps custom strings and in All in one – with its own custom string, if you set one
+- **Per-plugin settings** declared in `plugin.json` (text, switch, number, slider) are rendered automatically – a plugin author gets a settings UI without writing any Qt
+- `is_linux` / `is_windows` flags mark what a plugin can run on; anything incompatible is greyed out rather than hidden, and refused by the loader
+- Crash-safe by design: a broken plugin logs a traceback to the debug console and is skipped, it can never take the chatbox down
+- Bundled: **World Stats** (players in your instance, world name, local clock – `{player_in_world} {group_world} {realtime}`) and **Hello World** as a template
+
+### 🎨 Customization (Options page)
+- **8 UI themes** shown as colour swatches – Default, Carbon, Nebula, Embers, Grass, Ocean, Rose, Mono
+- Recolour **any** part of the active theme with a colour picker (accent, window, cards, borders, text …); overrides are kept per theme
+- **Background images** – import your own, switch between them, and adjust how solid the cards sit on top
 
 ### 💬 Textbox
 - Free chat field → sends straight to VRChat (apps pause briefly so nothing overwrites your message)
@@ -130,7 +148,7 @@ makepkg -si
 
 ### One-line install (any distro)
 ```bash
-curl -sL https://raw.githubusercontent.com/yakuda-stack/OSC-DreamChatbox/main/scripts/install.sh | bash
+curl -sL https://raw.githubusercontent.com/yakuda-stack/OSC-DreamChatbox/main/install.sh | bash
 ```
 Then launch **OSC DreamChatbox** from your app menu or run `osc-dreamchatbox`.
 
@@ -146,11 +164,12 @@ python3 -m venv venv
 ### Optional features
 | Feature | Needs |
 |---|---|
-| Speech to Text | `SpeechRecognition` + `pyaudio` (Arch: `python-pyaudio`) |
+| Speech to Text | `SpeechRecognition` + `pyaudio` (Arch: `python-pyaudio` is a hard dependency of the AUR package; `python-speechrecognition` is AUR-only, so install it with `yay -S python-speechrecognition`) |
 | DeepL translation | `deepl` (official library, in requirements.txt) |
 | Offline translation | local LibreTranslate: `pip install libretranslate`, then run `libretranslate` |
 | Exact GPU name | `mesa-utils` (glxinfo) |
 | NVIDIA stats | `nvidia-smi` (driver package) |
+| FPS readout | `mangohud`, started with logging (see the Hardware card) |
 
 ---
 
@@ -166,18 +185,29 @@ OSC-DreamChatbox/
 │   ├── oscquery.py       #   native OSCQuery (mDNS + dynamic ports)
 │   ├── translators.py    #   translation backends (Lingva/Google/Libre/DeepL)
 │   ├── mediafetch.py     #   MPRIS/D-Bus media fetcher
-│   ├── hardware.py       #   CPU/RAM/GPU monitoring
-│   └── speechtotext.py   #   speech recognition + translation
+│   ├── hardware.py       #   CPU/RAM/GPU monitoring + FPS (MangoHud log)
+│   ├── speechtotext.py   #   speech recognition + translation
+│   ├── plugins.py        #   plugin discovery, loading, settings
+│   ├── plugin_store.py   #   store: GitHub catalogue, install, updates
+│   └── theming.py        #   UI themes, colours, background images
+├── config/
+│   └── plugins.json      #   store catalogue (GitHub links)
 ├── ui/                   # UI widgets & stylesheet
-│   ├── mainwindow.py     #   main window (Apps, Textbox, Options)
+│   ├── mainwindow.py     #   main window shell + page switching
+│   ├── config_mixin.py   #   config load/save/validation
+│   ├── pages/            #   one file per page
+│   │   ├── apps_page.py
+│   │   ├── textbox_page.py
+│   │   ├── plugins_page.py
+│   │   └── options_page.py
 │   └── ui_main.py
 ├── assets/               # icons & images
 │   └── icon.png          #   window/taskbar icon (loaded from here)
 ├── packaging/            # AUR PKGBUILD + .desktop file
-├── scripts/              # install & build scripts
-│   ├── install.sh
+├── install.sh            # one-line installer (this is the one the README links)
+├── scripts/              # build scripts
 │   ├── build-appimage.sh   (PyInstaller one-file build)
-│   └── build_appimage.sh   (bundled-source build)
+│   └── build_appimage.sh   (bundled-source build, static FUSE runtime)
 ├── start.sh              # run from a local venv
 ├── requirements.txt
 ├── LICENSE               # GPL-3.0

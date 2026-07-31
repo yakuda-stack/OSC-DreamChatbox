@@ -66,8 +66,10 @@ except Exception:      # a broken install can raise instead of returning None
 def missing_dependency():
     """What exactly is missing, as a sentence the user can act on."""
     if not HAS_SR:
-        return ("SpeechRecognition is not installed. Install it into the "
-                "venv:  ./venv/bin/pip install SpeechRecognition pyaudio")
+        # only in the AUR on Arch, so name the helper rather than pacman
+        return ("SpeechRecognition is not installed. Arch: yay -S "
+                "python-speechrecognition  |  venv: ./venv/bin/pip install "
+                "SpeechRecognition")
     if not HAS_PYAUDIO:
         return ("pyaudio is missing - without it no microphone can be "
                 "opened. Arch: sudo pacman -S python-pyaudio  |  "

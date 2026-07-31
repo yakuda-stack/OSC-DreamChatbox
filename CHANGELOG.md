@@ -2,6 +2,12 @@
 
 All notable changes to OSC-DreamChatbox are documented here.
 
+## [v1.2.4] – 2026-07-31
+
+### Fixed
+- PKGBUILD fix
+- README updated
+
 ## [v1.2.3] – 2026-07-31
 
 ### Fixed
@@ -13,12 +19,14 @@ All notable changes to OSC-DreamChatbox are documented here.
   empty list, which is indistinguishable from a PC with one microphone.
   pyaudio is now detected separately, the reason is logged instead of
   swallowed, and the card says plainly what to install rather than leaving a
-  dead button. On AUR this hit everyone: `python-speechrecognition` and
-  `python-pyaudio` were `optdepends`, so a normal `yay -S osc-dreamchatbox`
-  never installed them. Both are hard `depends` now - the Speech to Text tab
-  is part of the interface, not a hidden extra. (With a source install the
-  usual cause is `install.sh` failing to build pyaudio, which only prints a
-  warning that is easy to miss.)
+  dead button. On AUR this hit everyone: `python-pyaudio` was only an
+  `optdepends`, so a normal install never pulled it in. It is a hard
+  `depends` now - it lives in `[extra]` and brings `portaudio` with it.
+  `python-speechrecognition` stays optional on purpose: it exists only in the
+  AUR, so as a hard dependency it would break plain `makepkg -si` and drag
+  every user into that package's known file conflicts. (With a source install
+  the usual cause is `install.sh` failing to build pyaudio, which only prints
+  a warning that is easy to miss.)
 
 ### Changed
 - **Both bundled plugins updated to 1.2.0 and marked Linux + Windows.**
