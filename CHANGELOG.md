@@ -2,6 +2,49 @@
 
 All notable changes to OSC-DreamChatbox are documented here.
 
+## [v1.2.5] – 2026-07-31
+
+### Added
+- **Anchor per plugin.** A dropdown next to each plugin's info button decides
+  where its line lands: *Above Personal Status*, *Above Media Player*, *Above
+  Hardware* or *Above All in one*. All in one stays the last block, so the
+  fourth option means "below every app". The payload builder walks the app
+  order and drops each anchor group in front of the app it belongs to, so
+  dragging the Apps cards keeps working and plugins follow along.
+- **Manual plugin order by drag & drop**, using the same grip handle as the
+  app cards - dragging is the one reorder gesture in this app, so the Plugins
+  page should not invent a second one. Within an anchor group the order set
+  here is exactly the output order, which is what you want when you run only
+  plugins and no All in one at all. Orders are rewritten as a dense sequence
+  after every move, so two plugins can never end up sharing a position and
+  silently sorting by id, and only the configs that actually changed are
+  written - a drag fires on every mouse move.
+
+### Changed
+- With All in one active, plugin lines now render **above** the AIO block
+  instead of being dropped. Previously the AIO branch returned early, so a
+  plugin's own line vanished the moment you switched All in one on.
+
+### Fixed
+- **Speech to Text is installable on Arch again.** `python-speechrecognition`
+  exists only in the AUR, and that package declares SpeechRecognition's
+  *optional* backends - pocketsphinx, google-cloud-speech, groq - as hard
+  dependencies. `google-cloud-speech` currently fails its own test suite, so
+  the whole chain dies and Speech to Text becomes unreachable, even though we
+  use none of those backends. The app now installs the pure-python library for
+  itself with one button, into `~/.config/OSC-DreamChatbox/extras`, which is
+  added to `sys.path` at startup. pip pulls in only SpeechRecognition and
+  typing-extensions there, nothing is owned by pacman, and no
+  `--break-system-packages` is involved. The AUR package no longer references
+  `python-speechrecognition` at all.
+- **Background image now fills the whole window.** It was applied to the root
+  widget, but four surfaces from the base stylesheet were still painted
+  opaquely on top of it - the window, the page stack in the middle, `#sidebar`
+  and `#rightpanel` - so the picture only showed in the gaps and looked like
+  three separate backgrounds instead of one. All four are transparent now; the
+  two side columns keep a light 30% tint for legibility and the cards follow
+  the opacity slider, so the image runs behind the entire UI as a single layer.
+
 ## [v1.2.4] – 2026-07-31
 
 ### Fixed

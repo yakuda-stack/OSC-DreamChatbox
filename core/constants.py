@@ -8,7 +8,7 @@ core/constants.py – shared constants & paths for OSC-DreamChatbox
 from pathlib import Path
 
 APP_NAME = "OSC-DreamChatbox"
-VERSION = "v1.2.4"
+VERSION = "v1.2.5"
 GITHUB_REPO = "yakuda-stack/OSC-DreamChatbox"
 DISCORD_URL = "https://discord.gg/X5TaN4A47h"
 DONATE_URL = "https://ko-fi.com/yakuda_"
@@ -32,6 +32,9 @@ LYRICS_DIR = CONFIG_DIR / "lyrics"
 # one subfolder per plugin (plugin.json + main.py), see core/plugins.py.
 # Its state lives with it in plugins/<id>/configs/config.json, which also
 # doubles as the plugin's own writable folder (api.data_dir).
+# optional pure-python extras the app installs for itself with pip when the
+# distribution's own package is unusable (see core/pyextras.py)
+EXTRAS_DIR = CONFIG_DIR / "extras"
 PLUGINS_DIR = CONFIG_DIR / "plugins"
 # store catalogue: a list of GitHub links, shipped with the app so it can be
 # extended with a pull request. APP_ROOT is where osc_dreamchatbox.py lives.

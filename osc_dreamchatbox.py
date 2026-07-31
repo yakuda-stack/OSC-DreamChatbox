@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-OSC-DreamChatbox v1.2.4
+OSC-DreamChatbox v1.2.5
 A simple, clean VRChat OSC chatbox sender for Linux.
 
 Entry point only – the actual code lives in:
@@ -25,6 +25,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from core.constants import APP_NAME  # noqa: E402
+from core import pyextras  # noqa: E402
+
+# our own extras folder goes on sys.path before anything optional is
+# imported - see core/pyextras.py for why it exists
+pyextras.activate()
 
 
 def _set_process_name(name=APP_NAME):

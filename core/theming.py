@@ -18,9 +18,13 @@ than touching widgets. Every theme is just a dict of those tokens:
 
 A user can start from a preset and override any token with the colour
 picker; overrides are stored per theme so switching presets and coming
-back keeps them. A background image is optional and sits behind the
-whole window, with the cards drawn semi-transparent on top so the image
-stays visible without making text unreadable.
+back keeps them. A background image is optional. It is applied to the root widget as a
+single stretched layer, and every surface that would otherwise cover it -
+the window, the page stack, the sidebar and the preview column - is made
+transparent, so the picture runs behind the whole UI in one piece rather
+than peeking out between three separately painted columns. The side
+columns keep a light tint and the cards follow the opacity slider, which
+is what keeps text readable on a bright image.
 """
 
 # Copyright (C) 2026 yakuda
@@ -36,6 +40,9 @@ from core.constants import CONFIG_DIR
 # file the user might move or delete later
 BACKGROUND_DIR = CONFIG_DIR / "backgrounds"
 IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".webp", ".bmp")
+# how strongly the sidebar and the preview column are tinted over the
+# background image - a hint of darkening for legibility, not a fill
+COLUMN_TINT = 0.30
 
 # token -> colour of the built-in look. The keys are also the search
 # terms used against the stylesheet, so they must stay in sync with
@@ -195,15 +202,36 @@ def build_style(base_style, theme_id="default", overrides=None,
 
     image = background_path(background)
     if image is not None:
-        # the image goes behind everything; cards get a translucent
-        # background so it stays visible without hurting readability
-        rgba = _rgba(tokens["card"], opacity)
-        panel_rgba = _rgba(tokens["panel"], min(1.0, opacity + 0.08))
+        # One image, one layer, right at the back.
+        #
+        # The base stylesheet paints four opaque surfaces on top of the
+        # root widget: the window itself, the page stack in the middle,
+        # #sidebar on the left and #rightpanel on the right. Left alone
+        # they hide the image everywhere except the gaps between them,
+        # which looks like three separate backgrounds instead of one.
+        # So they all go transparent, and the two side columns get a
+        # light tint instead of a fill - enough to keep text legible
+        # without turning them back into solid panels.
+        card_rgba = _rgba(tokens["card"], opacity)
+        inner_rgba = _rgba(tokens["inner"], opacity)
+        column_rgba = _rgba(tokens["panel"], COLUMN_TINT)
         out += (
             f"\nQWidget#root {{ border-image: url('{image.as_posix()}')"
             f" 0 0 0 0 stretch stretch; }}\n"
-            f"QFrame#card {{ background: {rgba}; }}\n"
-            f"QFrame#sidebar {{ background: {panel_rgba}; }}\n")
+            # let the image through
+            f"QMainWindow {{ background: transparent; }}\n"
+            f"QStackedWidget, QStackedWidget > QWidget"
+            f" {{ background: transparent; }}\n"
+            f"QScrollArea {{ background: transparent; }}\n"
+            f"QScrollArea > QWidget > QWidget"
+            f" {{ background: transparent; }}\n"
+            # side columns: tint only, so the image stays visible
+            f"#sidebar {{ background: {column_rgba}; }}\n"
+            f"#rightpanel {{ background: {column_rgba}; }}\n"
+            # content surfaces follow the opacity slider
+            f"QFrame#card {{ background: {card_rgba}; }}\n"
+            f"QFrame#innerbox {{ background: {inner_rgba}; }}\n"
+            f"QFrame#previewbox {{ background: {inner_rgba}; }}\n")
     return out
 
 

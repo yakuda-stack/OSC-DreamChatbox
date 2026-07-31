@@ -488,10 +488,18 @@ class MainWindow(ConfigMixin, AppsPageMixin, TextboxPageMixin,
         # one snapshot per frame: every plugin hook runs exactly once, no
         # matter how many templates ask for its values below
         self.plugins.invalidate()
+        # plugin lines grouped by the app they are anchored above; each
+        # group is already in the order set on the Plugins page
+        anchored = self.plugins.lines_by_anchor()
         if self.cfg["aio_active"]:
-            return self.plugins.filter_text("\n".join(self.build_aio_lines()))
+            # All in one is one block at the very bottom, so every plugin
+            # line goes above it - anchors have nothing else to sit on here
+            lines = self.plugins.render_lines()
+            lines.extend(self.build_aio_lines())
+            return self.plugins.filter_text("\n".join(lines))
         lines = []
         for key in self.cfg["app_order"]:
+            lines.extend(anchored.get(key, []))    # anchored ABOVE this app
             if key == "status" and self.cfg["status_active"]:
                 cur = self._render_status(self.current_status_text())
                 if cur:
@@ -500,9 +508,8 @@ class MainWindow(ConfigMixin, AppsPageMixin, TextboxPageMixin,
                 lines.extend(self.build_media_lines())
             elif key == "hardware" and self.cfg["hw_active"]:
                 lines.extend(self.build_hw_lines())
-        # plugins may append their own lines and/or rewrite the result;
-        # both calls are crash-safe (see core/plugins.py)
-        lines.extend(self.plugins.render_lines())
+        # "Above All in one" with AIO off means: after everything else
+        lines.extend(anchored.get("aio", []))
         return self.plugins.filter_text("\n".join(lines))
 
     def send_now(self):

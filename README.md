@@ -164,7 +164,7 @@ python3 -m venv venv
 ### Optional features
 | Feature | Needs |
 |---|---|
-| Speech to Text | `SpeechRecognition` + `pyaudio` (Arch: `python-pyaudio` is a hard dependency of the AUR package; `python-speechrecognition` is AUR-only, so install it with `yay -S python-speechrecognition`) |
+| Speech to Text | `pyaudio` (Arch: `python-pyaudio`, a hard dependency of the AUR package). `SpeechRecognition` installs itself with one button in the Speech to Text card, into `~/.config/OSC-DreamChatbox/extras` – no AUR package needed |
 | DeepL translation | `deepl` (official library, in requirements.txt) |
 | Offline translation | local LibreTranslate: `pip install libretranslate`, then run `libretranslate` |
 | Exact GPU name | `mesa-utils` (glxinfo) |

@@ -8,11 +8,13 @@ window class stays small. All `self.*` refer to the MainWindow instance.
 import time
 from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtWidgets import (
-    QComboBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QSpinBox, QVBoxLayout, QWidget)
+    QComboBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QSpinBox, QVBoxLayout, QWidget)
 from core.constants import CHATBOX_INPUT, CHATBOX_LIMIT, SLIM_SUFFIX
 from core.speechtotext import (
-    LANGUAGES, OUTPUT_LANGUAGES, SpeechWorker, list_microphones,
-    missing_dependency)
+    LANGUAGES, OUTPUT_LANGUAGES, SpeechWorker, has_sr, list_microphones,
+    missing_dependency, reload_sr)
+from core import pyextras
+from core.constants import EXTRAS_DIR
 from core.translators import (
     DEFAULT_LIBRE_URL, METHODS as TR_METHODS, METHOD_DEEPL, METHOD_GOOGLE, METHOD_LIBRE, METHOD_LINGVA, get_translator, libretranslate_installed, translate_with_fallback)
 from ui.ui_main import DragHandle, ToggleLabel, ToggleSwitch
@@ -327,13 +329,22 @@ class TextboxPageMixin:
         self.stt_status_lbl.setObjectName("dim")
         self.stt_status_lbl.setWordWrap(True)
         sc.addWidget(self.stt_status_lbl)
-        if not SpeechWorker.available():
-            self.stt_button.setEnabled(False)
-            self.stt_button.setToolTip(missing_dependency())
-            self.mic_combo.setEnabled(False)
-            self.mic_combo.setToolTip(missing_dependency())
-            self.stt_status_lbl.setText(f"\u26A0 {missing_dependency()}")
-            self.stt_status_lbl.setStyleSheet("color: #d9884a;")
+        # one-click installer for the pure-python half of Speech to Text.
+        # Arch has no working package for it (the AUR one drags in
+        # backends we do not use and currently fails to build), so the app
+        # can put it into its own folder instead - see core/pyextras.py.
+        self.stt_install_btn = QPushButton(
+            "\u2B07  Install SpeechRecognition")
+        self.stt_install_btn.setObjectName("linkbtn")
+        self.stt_install_btn.setFixedHeight(30)
+        self.stt_install_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.stt_install_btn.setToolTip(
+            f"Installs it with pip into {EXTRAS_DIR} - your system packages "
+            f"are not touched")
+        self.stt_install_btn.clicked.connect(self.on_install_speech)
+        self.stt_install_btn.setVisible(False)
+        sc.addWidget(self.stt_install_btn)
+        self._sync_stt_availability()
         # ----- presets -----
         pcard = QFrame()
         pcard.setObjectName("card")
@@ -706,6 +717,62 @@ class TextboxPageMixin:
         self.cfg["stt_deepl_key"] = text
         self.save_config_later()
         self.stt.deepl_key = text  # applies live
+
+    def _sync_stt_availability(self):
+        """Enables or disables the whole Speech to Text card in one place,
+        so the state cannot drift between the button, the dropdown and the
+        status line."""
+        ok = SpeechWorker.available()
+        self.stt_button.setEnabled(ok)
+        self.mic_combo.setEnabled(ok)
+        self.stt_button.setToolTip("" if ok else missing_dependency())
+        self.mic_combo.setToolTip("" if ok else missing_dependency())
+        # the installer only helps for the python half; pyaudio is a
+        # compiled module and has to come from the distribution
+        needs_sr = not has_sr()
+        self.stt_install_btn.setVisible(needs_sr)
+        if ok:
+            self.stt_status_lbl.setText("")
+            self.stt_status_lbl.setStyleSheet("")
+        else:
+            self.stt_status_lbl.setText(f"\u26A0 {missing_dependency()}")
+            self.stt_status_lbl.setStyleSheet("color: #d9884a;")
+        return ok
+
+    def on_install_speech(self):
+        """Runs pip on a worker thread - it downloads, so it must not
+        freeze the window."""
+        self.stt_install_btn.setEnabled(False)
+        self.stt_install_btn.setText("Installing \u2026")
+
+        def work():
+            return pyextras.install("speech_recognition", self.log)
+
+        self.run_async(work, self._on_speech_installed, interval=250)
+
+    def _on_speech_installed(self, result):
+        ok, message = result
+        self.stt_install_btn.setEnabled(True)
+        self.stt_install_btn.setText("\u2B07  Install SpeechRecognition")
+        if not ok:
+            self.log(f"Speech to Text: install failed - {message}")
+            QMessageBox.warning(
+                self, "Installation failed",
+                f"SpeechRecognition could not be installed:\n\n{message}")
+            return
+        self.log(f"Speech to Text: {message}")
+        reload_sr()
+        self._fill_mic_combo()
+        if self._sync_stt_availability():
+            QMessageBox.information(
+                self, "Speech to Text ready",
+                "SpeechRecognition is installed and Speech to Text is "
+                "ready to use.")
+        else:
+            QMessageBox.information(
+                self, "One more step",
+                f"SpeechRecognition is installed, but Speech to Text still "
+                f"needs pyaudio:\n\n{missing_dependency()}")
 
     def on_stt_toggled(self, on):
         if on:

@@ -46,10 +46,38 @@ def _silence_stderr():
             pass
 
 try:
+    from core import pyextras
+    pyextras.activate()      # no-op when the folder does not exist
+except Exception:
+    pyextras = None
+
+try:
     import speech_recognition as sr
     HAS_SR = True
 except ImportError:
     HAS_SR = False
+
+
+def has_sr():
+    """Live check. HAS_SR is a module constant, so anything that imported
+    it by value would keep reporting the state from startup and never
+    notice the in-app installer."""
+    return HAS_SR
+
+
+def reload_sr():
+    """Re-attempts the import after the in-app installer ran, so Speech
+    to Text becomes usable without restarting the app."""
+    global sr, HAS_SR
+    try:
+        import importlib
+        importlib.invalidate_caches()
+        import speech_recognition as _sr
+        sr = _sr
+        HAS_SR = True
+    except Exception:
+        HAS_SR = False
+    return HAS_SR
 
 # SpeechRecognition imports fine WITHOUT pyaudio - it only needs it the
 # moment you touch sr.Microphone. Checking HAS_SR alone therefore reports
@@ -66,10 +94,11 @@ except Exception:      # a broken install can raise instead of returning None
 def missing_dependency():
     """What exactly is missing, as a sentence the user can act on."""
     if not HAS_SR:
-        # only in the AUR on Arch, so name the helper rather than pacman
-        return ("SpeechRecognition is not installed. Arch: yay -S "
-                "python-speechrecognition  |  venv: ./venv/bin/pip install "
-                "SpeechRecognition")
+        # On Arch the only package is the AUR one, and that currently
+        # fails to build - so point at the in-app installer instead of a
+        # command line that may not work.
+        return ("SpeechRecognition is not installed \u2013 use the "
+                "\u201cInstall SpeechRecognition\u201d button below.")
     if not HAS_PYAUDIO:
         return ("pyaudio is missing - without it no microphone can be "
                 "opened. Arch: sudo pacman -S python-pyaudio  |  "

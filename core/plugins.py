@@ -88,6 +88,15 @@ from core.textutils import apply_template
 MANIFEST_NAME = "plugin.json"
 # per-plugin state lives in <plugin>/configs/config.json
 CONFIG_DIRNAME = "configs"
+# where a plugin's lines land relative to the standard apps. The value is
+# the app key it sits ABOVE; "aio" means "below everything else", because
+# All in one is always the last block.
+ANCHORS = ("status", "media", "hardware", "aio")
+ANCHOR_LABELS = (("status", "Above Personal Status"),
+                 ("media", "Above Media Player"),
+                 ("hardware", "Above Hardware"),
+                 ("aio", "Above All in one"))
+DEFAULT_ANCHOR = "aio"
 CONFIG_NAME = "config.json"
 SETTING_TYPES = ("text", "bool", "int", "slider")
 # plugin ids are used as folder AND module names -> keep them boring
@@ -239,7 +248,8 @@ class PluginManager:
         plugin = self.plugins.get(pid)
         if plugin is not None:
             return self._read_config(plugin)
-        entry = {"enabled": False, "line": True, "custom": False,
+        entry = {"enabled": False, "anchor": DEFAULT_ANCHOR, "order": 1000,
+                 "line": True, "custom": False,
                  "template": "{%s}" % pid, "options": {}}
         self.settings[pid] = entry
         return entry
@@ -258,6 +268,60 @@ class PluginManager:
         """Persist one plugin's config and drop the cached snapshot."""
         self._snap = None
         self._write_config(pid)
+
+    def set_anchor(self, pid, anchor):
+        """Where this plugin's lines go relative to the standard apps."""
+        self.entry(pid)["anchor"] = (anchor if anchor in ANCHORS
+                                     else DEFAULT_ANCHOR)
+        self._changed(pid)
+
+    def ordered(self):
+        """All known plugins in the user's order. Ties fall back to the id,
+        so the list can never jump around between starts."""
+        return sorted(self.plugins.values(),
+                      key=lambda p: (self.entry(p.pid)["order"], p.pid))
+
+    def move_to(self, pid, index):
+        """Puts a plugin at a given position among the plugins.
+
+        Orders are rewritten as a dense 0..n-1 sequence afterwards, so
+        repeated moves cannot drift apart or collide - otherwise two
+        plugins sharing an order would silently sort by id instead.
+        Only the configs that actually changed are written, because a
+        drag fires this on every mouse move.
+        """
+        ids = [p.pid for p in self.ordered()]
+        if pid not in ids:
+            return False
+        index = max(0, min(len(ids) - 1, int(index)))
+        if ids.index(pid) == index:
+            return False
+        ids.remove(pid)
+        ids.insert(index, pid)
+        for pos, key in enumerate(ids):
+            entry = self.entry(key)
+            if entry["order"] != pos:
+                entry["order"] = pos
+                self._write_config(key)
+        self._snap = None
+        return True
+
+    def move(self, pid, delta):
+        """Convenience wrapper: one step up (-1) or down (+1)."""
+        ids = [p.pid for p in self.ordered()]
+        if pid not in ids:
+            return False
+        return self.move_to(pid, ids.index(pid) + delta)
+
+    def normalize_order(self):
+        """Gives every plugin a distinct order. Called after discovery so
+        freshly installed plugins land at the end instead of all sharing
+        the default 1000."""
+        for pos, plugin in enumerate(self.ordered()):
+            entry = self.entry(plugin.pid)
+            if entry["order"] != pos:
+                entry["order"] = pos
+                self._write_config(plugin.pid)
 
     def set_line(self, pid, on):
         self.entry(pid)["line"] = bool(on)
@@ -306,8 +370,15 @@ class PluginManager:
             except Exception as e:
                 self.log(f"Plugins: '{plugin.pid}' config unreadable ({e}) – "
                          f"using the defaults from {MANIFEST_NAME}.")
+        anchor = str(data.get("anchor", DEFAULT_ANCHOR))
+        try:
+            order = int(data.get("order", 1000))
+        except (TypeError, ValueError):
+            order = 1000
         entry = {
             "enabled": bool(data.get("enabled", plugin.default_enabled)),
+            "anchor": anchor if anchor in ANCHORS else DEFAULT_ANCHOR,
+            "order": order,
             "line": bool(data.get("line", True)),
             "custom": bool(data.get("custom", False)),
             "template": (str(data.get("template") or "").strip()
@@ -371,6 +442,7 @@ class PluginManager:
         # config.json can only be read once the plugin is in self.plugins
         for plugin in found.values():
             plugin.enabled = self._read_config(plugin)["enabled"]
+        self.normalize_order()
         self._snap = None
         return list(self.plugins.values())
 
@@ -591,7 +663,7 @@ class PluginManager:
             return False, None
 
     def _active(self):
-        return [p for p in self.plugins.values()
+        return [p for p in self.ordered()
                 if p.enabled and p.loaded and p.supported]
 
     def dispatch(self, hook, *args, **kwargs):
@@ -698,25 +770,39 @@ class PluginManager:
         window know it should keep the preview refresh timer running."""
         return bool(self._active())
 
-    def render_lines(self):
-        """The lines plugins contribute to the chatbox. With the custom
-        string on, the plugin's own output is replaced by the user's
-        template – exactly like the Apps cards work. The rendering already
-        happened in values(), so the line and the {<id>} placeholder can
-        never drift apart."""
+    def _plugin_lines(self, plugin, vals):
+        entry = self.entry(plugin.pid)
+        if not entry["line"]:
+            return []      # placeholder-only: values yes, own line no
+        if entry["custom"] and entry["template"].strip():
+            text = vals.get(plugin.pid)
+            return text.split("\n") if text else []
+        return list(self.snapshot().get(plugin.pid, {}).get("lines", []))
+
+    def lines_by_anchor(self):
+        """{anchor: [lines]} for every active plugin, each group already in
+        the user's plugin order. MainWindow walks the app order and drops
+        each group in front of the app it is anchored to, so anchors decide
+        the section and the plugin order decides the rest."""
+        out = {a: [] for a in ANCHORS}
         vals = self.values()
-        lines = []
-        for plugin in self._active():
-            data = self.snapshot().get(plugin.pid, {})
+        active = {p.pid for p in self._active()}
+        for plugin in self.ordered():
+            if plugin.pid not in active:
+                continue
             entry = self.entry(plugin.pid)
-            if not entry["line"]:
-                continue   # placeholder-only: values yes, own line no
-            if entry["custom"] and entry["template"].strip():
-                text = vals.get(plugin.pid)
-                if text:
-                    lines.extend(text.split("\n"))
-            else:
-                lines.extend(data.get("lines", []))
+            anchor = entry["anchor"] if entry["anchor"] in ANCHORS \
+                else DEFAULT_ANCHOR
+            out[anchor].extend(self._plugin_lines(plugin, vals))
+        return out
+
+    def render_lines(self):
+        """Every plugin line in order, ignoring the anchors. Used when
+        there is no app order to slot them into."""
+        grouped = self.lines_by_anchor()
+        lines = []
+        for anchor in ANCHORS:
+            lines.extend(grouped[anchor])
         return lines
 
     def filter_text(self, text):

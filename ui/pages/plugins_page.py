@@ -15,11 +15,11 @@ from pathlib import Path
 from PyQt6.QtCore import QUrl, Qt
 from PyQt6.QtGui import QColor, QDesktopServices, QPainter, QPixmap
 from PyQt6.QtWidgets import (
-    QButtonGroup, QCheckBox, QFileDialog, QFrame, QGraphicsColorizeEffect, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QSlider, QSpinBox, QStackedWidget, QTextBrowser, QVBoxLayout, QWidget)
+    QButtonGroup, QCheckBox, QComboBox, QFileDialog, QFrame, QGraphicsColorizeEffect, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QSlider, QSpinBox, QStackedWidget, QTextBrowser, QVBoxLayout, QWidget)
 from core.constants import PLUGINS_DIR, PLUGINS_REPO_URL
 from core.plugin_store import PluginStore, StoreError, compare_versions
-from core.plugins import PluginError, PluginExistsError
-from ui.ui_main import ToggleLabel, ToggleSwitch
+from core.plugins import ANCHOR_LABELS, PluginError, PluginExistsError
+from ui.ui_main import DragHandle, ToggleLabel, ToggleSwitch
 
 
 class PluginInfoPopup(QFrame):
@@ -234,9 +234,13 @@ class PluginsPageMixin:
         self.plugin_expanders = {}
         self.plugin_inputs = {}
         self.plugin_dependents = {}
-        plugins = list(self.plugins.plugins.values())
+        # user order, not folder order (Plugins page ▲▼)
+        plugins = self.plugins.ordered()
+        self.plugin_rows = {}
         for plugin in plugins:
-            self.plugin_list.addWidget(self._build_plugin_row(plugin))
+            row = self._build_plugin_row(plugin)
+            self.plugin_rows[plugin.pid] = row
+            self.plugin_list.addWidget(row)
 
         self.plugin_empty_lbl.setVisible(not plugins)
         active = sum(1 for p in plugins if p.enabled)
@@ -256,6 +260,19 @@ class PluginsPageMixin:
         # ------------------------------------------------------ header
         outer = QHBoxLayout()
         outer.setSpacing(12)
+
+        if plugin.supported:
+            # same grip as the app cards - dragging is the one reorder
+            # gesture in this app, so plugins should not invent a second
+            outer.addWidget(
+                DragHandle(lambda pos, pid=plugin.pid:
+                           self.plugin_drag(pid, pos),
+                           lambda pid=plugin.pid: self.plugin_drag_end(pid)),
+                0, Qt.AlignmentFlag.AlignVCenter)
+        else:
+            spacer = QWidget()
+            spacer.setFixedSize(22, 22)
+            outer.addWidget(spacer, 0, Qt.AlignmentFlag.AlignVCenter)
 
         toggle = ToggleSwitch()
         toggle.blockSignals(True)
@@ -323,14 +340,27 @@ class PluginsPageMixin:
             lambda _, pid=plugin.pid, b=info_btn: self.on_plugin_info(pid, b))
         outer.addWidget(info_btn, 0, Qt.AlignmentFlag.AlignVCenter)
 
-        del_btn = QPushButton("\U0001F5D1")
-        del_btn.setObjectName("iconbtn")
-        del_btn.setFixedSize(30, 30)
-        del_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        del_btn.setToolTip("Delete this plugin from disk")
-        del_btn.clicked.connect(
-            lambda _, pid=plugin.pid: self.on_plugin_delete(pid))
-        outer.addWidget(del_btn, 0, Qt.AlignmentFlag.AlignVCenter)
+        # ---- where this plugin's lines go relative to the Apps cards
+        anchor_box = QComboBox()
+        anchor_box.setFixedWidth(168)
+        anchor_box.setToolTip(
+            "Where this plugin's line goes in the chatbox. All in one is "
+            "always the last block, so \u201cAbove All in one\u201d means "
+            "below every app.")
+        for key, label in ANCHOR_LABELS:
+            anchor_box.addItem(label, key)
+        current = self.plugins.entry(plugin.pid)["anchor"]
+        pos = anchor_box.findData(current)
+        anchor_box.setCurrentIndex(pos if pos >= 0 else
+                                   anchor_box.count() - 1)
+        if plugin.supported:
+            anchor_box.currentIndexChanged.connect(
+                lambda _i, pid=plugin.pid, b=anchor_box:
+                self.on_plugin_anchor(pid, b.currentData()))
+        else:
+            anchor_box.setEnabled(False)
+        outer.addWidget(anchor_box, 0, Qt.AlignmentFlag.AlignVCenter)
+
         box.addLayout(outer)
 
         # ---------------------------------------------------- settings
@@ -1012,6 +1042,37 @@ class PluginsPageMixin:
         # runs while at least one of them is loaded
         self._update_plugin_timer()
         self.update_preview()
+
+    def on_plugin_anchor(self, pid, anchor):
+        """Anchor changed - only the render order moves, nothing reloads."""
+        self.plugins.set_anchor(pid, anchor)
+        self.update_preview()
+
+    def plugin_drag(self, pid, global_pos):
+        """Live reorder while dragging - the row follows the cursor instead
+        of only jumping on release. Mirrors card_drag() on the Apps page:
+        count how many other rows the cursor has passed and move there."""
+        order = [p.pid for p in self.plugins.ordered()]
+        if pid not in order:
+            return
+        cur = order.index(pid)
+        y = global_pos.y()
+        others = [k for k in order if k != pid and k in self.plugin_rows]
+        new_idx = sum(
+            1 for k in others
+            if y > self.plugin_rows[k].mapToGlobal(
+                self.plugin_rows[k].rect().center()).y())
+        if new_idx == cur:
+            return
+        self.plugins.move_to(pid, new_idx)
+        row = self.plugin_rows[pid]
+        self.plugin_list.removeWidget(row)
+        self.plugin_list.insertWidget(new_idx, row)
+        self.update_preview()
+
+    def plugin_drag_end(self, pid):
+        self.log("Plugin order: "
+                 + " > ".join(p.pid for p in self.plugins.ordered()))
 
     def on_plugin_line(self, pid, on):
         """Own line on/off. The plugin keeps running either way – this only
