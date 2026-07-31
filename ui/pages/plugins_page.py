@@ -15,7 +15,7 @@ from pathlib import Path
 from PyQt6.QtCore import QUrl, Qt
 from PyQt6.QtGui import QColor, QDesktopServices, QPainter, QPixmap
 from PyQt6.QtWidgets import (
-    QButtonGroup, QCheckBox, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QGridLayout, QPushButton, QSlider, QSpinBox, QStackedWidget, QTextBrowser, QVBoxLayout, QWidget)
+    QButtonGroup, QCheckBox, QFileDialog, QFrame, QGraphicsColorizeEffect, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QSlider, QSpinBox, QStackedWidget, QTextBrowser, QVBoxLayout, QWidget)
 from core.constants import PLUGINS_DIR, PLUGINS_REPO_URL
 from core.plugin_store import PluginStore, StoreError, compare_versions
 from core.plugins import PluginError, PluginExistsError
@@ -259,10 +259,17 @@ class PluginsPageMixin:
 
         toggle = ToggleSwitch()
         toggle.blockSignals(True)
-        toggle.setChecked(plugin.enabled)
+        toggle.setChecked(plugin.enabled and plugin.supported)
         toggle.blockSignals(False)
-        toggle.toggled.connect(
-            lambda on, pid=plugin.pid: self.on_plugin_toggled(pid, on))
+        if plugin.supported:
+            toggle.toggled.connect(
+                lambda on, pid=plugin.pid: self.on_plugin_toggled(pid, on))
+        else:
+            # greyed out rather than hidden: hiding it would look like the
+            # plugin vanished after installing it
+            toggle.setEnabled(False)
+            toggle.setToolTip(plugin.error or plugin.platform_note)
+            row.setStyleSheet("QFrame#innerbox { opacity: 0.5; }")
         outer.addWidget(toggle, 0, Qt.AlignmentFlag.AlignVCenter)
 
         texts = QVBoxLayout()
@@ -282,7 +289,12 @@ class PluginsPageMixin:
         tag.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse)
         head.addWidget(tag)
-        if plugin.error:
+        if not plugin.supported:
+            note = QLabel(f"\u26D4 {plugin.platform_note}")
+            note.setStyleSheet("color: #8a8f99; font-size: 12px;")
+            note.setToolTip(plugin.error or plugin.platform_note)
+            head.addWidget(note)
+        elif plugin.error:
             warn = QLabel("\u26A0 error")
             warn.setStyleSheet("color: #d9884a; font-size: 12px;")
             warn.setToolTip(plugin.error)
@@ -294,6 +306,9 @@ class PluginsPageMixin:
         sub.setObjectName("dim")
         sub.setWordWrap(True)
         texts.addWidget(sub)
+        if not plugin.supported:
+            for lbl in (sub,):
+                lbl.setStyleSheet("color: #5c626c;")
         by = QLabel(f"by {plugin.author}")
         by.setObjectName("dim")
         texts.addWidget(by)
@@ -319,6 +334,9 @@ class PluginsPageMixin:
         box.addLayout(outer)
 
         # ---------------------------------------------------- settings
+        if not plugin.supported:
+            # no settings for something that cannot run here
+            return row
         content = self._build_plugin_settings(plugin)
         # the expander needs to reference itself in its own callback, so
         # look it back up in the dict instead of chasing a forward name
@@ -586,6 +604,15 @@ class PluginsPageMixin:
         painter.end()
         return pm
 
+    @staticmethod
+    def _grey_effect():
+        """Desaturates a preview so an incompatible plugin reads as
+        unavailable at a glance, without hiding what it looks like."""
+        eff = QGraphicsColorizeEffect()
+        eff.setColor(QColor("#6b7180"))
+        eff.setStrength(0.85)
+        return eff
+
     def _build_store_tile(self, entry):
         tile = QFrame()
         tile.setObjectName("innerbox")
@@ -616,7 +643,16 @@ class PluginsPageMixin:
         meta.setObjectName("dim")
         v.addWidget(meta)
 
-        if entry.error:
+        if not entry.supported:
+            state = QLabel(f"\u26D4 {entry.platform_note}")
+            state.setStyleSheet("color: #8a8f99; font-size: 12px;")
+            tile.setStyleSheet(
+                "QFrame#innerbox { background: #1a1d24; border-color:"
+                " #262a33; }")
+            img.setGraphicsEffect(self._grey_effect())
+            name.setStyleSheet("font-weight: 600; color: #6b7180;")
+            meta.setStyleSheet("color: #565c66;")
+        elif entry.error:
             state = QLabel("\u26A0 unreachable")
             state.setStyleSheet("color: #d9884a; font-size: 12px;")
             state.setToolTip(entry.error)
@@ -745,7 +781,10 @@ class PluginsPageMixin:
         if entry.error:
             body += f"\n\nCould not be read: {entry.error}"
         self.detail_text.setPlainText(body)
-        if entry.error:
+        if not entry.supported:
+            self.detail_install_btn.setText(entry.platform_note.capitalize())
+            self.detail_install_btn.setEnabled(False)
+        elif entry.error:
             self.detail_install_btn.setText("Unavailable")
             self.detail_install_btn.setEnabled(False)
         elif entry.has_update:

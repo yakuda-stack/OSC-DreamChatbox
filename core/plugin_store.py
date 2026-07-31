@@ -62,6 +62,7 @@ from pathlib import Path
 
 from core.constants import (
     CONFIG_DIR, GITHUB_REPO, STORE_SOURCES_FILE, VERSION)
+from core.plugins import IS_WINDOWS, OS_NAME
 
 RAW_HOST = "https://raw.githubusercontent.com"
 # where to look for a newer catalogue when plugins.json names no self_url
@@ -205,6 +206,8 @@ class StoreEntry:
     summary: str = ""
     image_url: str = ""
     image_path: Path = None
+    is_linux: bool = True
+    is_windows: bool = True
     error: str = ""
     # filled in against the installed set
     installed_version: str = ""
@@ -213,6 +216,14 @@ class StoreEntry:
     @property
     def installed(self):
         return bool(self.installed_version)
+
+    @property
+    def supported(self):
+        return self.is_windows if IS_WINDOWS else self.is_linux
+
+    @property
+    def platform_note(self):
+        return "" if self.supported else f"not for {OS_NAME}"
 
 
 class PluginStore:
@@ -446,6 +457,8 @@ class PluginStore:
         entry.version = str(data.get("version") or "?")
         entry.author = str(data.get("author") or "unknown")
         entry.description = str(data.get("description") or "")
+        entry.is_linux = bool(data.get("is_linux", True))
+        entry.is_windows = bool(data.get("is_windows", True))
         entry.summary = str(data.get("summary") or entry.description)
         image = str(data.get("image") or "").strip()
         if image:

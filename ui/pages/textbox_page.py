@@ -11,7 +11,8 @@ from PyQt6.QtWidgets import (
     QComboBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QSpinBox, QVBoxLayout, QWidget)
 from core.constants import CHATBOX_INPUT, CHATBOX_LIMIT, SLIM_SUFFIX
 from core.speechtotext import (
-    LANGUAGES, OUTPUT_LANGUAGES, SpeechWorker, list_microphones)
+    LANGUAGES, OUTPUT_LANGUAGES, SpeechWorker, list_microphones,
+    missing_dependency)
 from core.translators import (
     DEFAULT_LIBRE_URL, METHODS as TR_METHODS, METHOD_DEEPL, METHOD_GOOGLE, METHOD_LIBRE, METHOD_LINGVA, get_translator, libretranslate_installed, translate_with_fallback)
 from ui.ui_main import DragHandle, ToggleLabel, ToggleSwitch
@@ -328,10 +329,11 @@ class TextboxPageMixin:
         sc.addWidget(self.stt_status_lbl)
         if not SpeechWorker.available():
             self.stt_button.setEnabled(False)
-            self.stt_status_lbl.setText(
-                "Not available: install SpeechRecognition + pyaudio "
-                "(pip install SpeechRecognition pyaudio \u2013 "
-                "Arch: sudo pacman -S python-pyaudio).")
+            self.stt_button.setToolTip(missing_dependency())
+            self.mic_combo.setEnabled(False)
+            self.mic_combo.setToolTip(missing_dependency())
+            self.stt_status_lbl.setText(f"\u26A0 {missing_dependency()}")
+            self.stt_status_lbl.setStyleSheet("color: #d9884a;")
         # ----- presets -----
         pcard = QFrame()
         pcard.setObjectName("card")
@@ -545,7 +547,7 @@ class TextboxPageMixin:
         self.mic_combo.blockSignals(True)
         self.mic_combo.clear()
         self.mic_combo.addItem("System default", "")
-        for name, idx in list_microphones():
+        for name, idx in list_microphones(self.log):
             self.mic_combo.addItem(name, name)
         want = self.cfg.get("stt_mic", "") if hasattr(self, "cfg") else ""
         pos = self.mic_combo.findData(want)
@@ -565,7 +567,7 @@ class TextboxPageMixin:
         name = self.cfg.get("stt_mic", "")
         if not name:
             return -1
-        for n, i in list_microphones():
+        for n, i in list_microphones(self.log):
             if n == name:
                 return i
         self.log(f"Speech to Text: microphone '{name}' not found "

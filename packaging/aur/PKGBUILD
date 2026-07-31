@@ -1,6 +1,6 @@
 # Maintainer: yakuda <yakuda@outlook.de>
 pkgname=osc-dreamchatbox
-pkgver=1.2.2
+pkgver=1.2.3
 pkgrel=1
 pkgdesc="Native Linux alternative to MagicChatbox (VRCOSC) - VRChat OSC chatbox companion (status, now-playing, hardware, speech-to-text, OSCQuery)"
 arch=('any')
@@ -8,12 +8,16 @@ url="https://github.com/yakuda-stack/OSC-DreamChatbox"
 license=('GPL-3.0-or-later')
 # xcb-util-cursor & Co: Qt >= 6.5 braucht sie zum Laden des xcb-Plugins,
 # sonst bricht der Start mit "Could not load the Qt platform plugin xcb" ab
+# python-speechrecognition + python-pyaudio sind hier bewusst harte
+# depends und keine optdepends: der Speech-to-Text-Tab ist Teil der
+# Oberflaeche, nicht ein verstecktes Extra. Ohne pyaudio bleibt das
+# Mikrofon-Dropdown auf "System default" stehen und der Aufnahmeknopf
+# tut nichts - fuer AUR-Nutzer sah das wie ein Bug aus.
 depends=('python' 'python-pyqt6' 'python-zeroconf' 'python-osc' 'python-setproctitle'
+         'python-speechrecognition' 'python-pyaudio'
          'xcb-util-cursor' 'xcb-util-wm' 'xcb-util-image' 'xcb-util-keysyms'
          'xcb-util-renderutil' 'libxkbcommon-x11')
-optdepends=('python-speechrecognition: Speech to Text'
-            'python-pyaudio: Speech to Text (microphone access)'
-            'python-deepl: DeepL translation backend'
+optdepends=(            'python-deepl: DeepL translation backend'
             'mesa-utils: exact GPU name detection (glxinfo)'
             'nvidia-utils: NVIDIA GPU stats (nvidia-smi)')
 # Git-Tag enthaelt einen Bindestrich (v1.0.6-alpha), pkgver darf keinen haben

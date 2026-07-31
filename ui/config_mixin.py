@@ -7,6 +7,7 @@ window class stays small. All `self.*` refer to the MainWindow instance.
 
 import json
 import shutil
+from core.theming import THEMES
 from core.constants import (
     CONFIG_DIR, CONFIG_FILE, LYRICS_DIR, OLD_CONFIG_FILE, TITLE_MAX_LEN)
 from core.textutils import DEFAULT_CUSTOM_BAR, TIME_POS_LINE
@@ -67,6 +68,14 @@ class ConfigMixin:
             "stt_mode": "stt",       # "stt" (speech->text) | "ttt" (text->text)
             "stt_show_both": False,  # send "source -> translation" in chat
             "aio_active": False,
+            # FPS via MangoHud's log (see core/hardware.py)
+            "hw_fps": False,
+            "hw_mangohud_dir": "",
+            # customization (core/theming.py)
+            "theme": "default",
+            "theme_colors": {},        # theme id -> {token: "#rrggbb"}
+            "theme_background": "",    # file name inside config/backgrounds
+            "theme_opacity": 0.82,     # card opacity when a background is set
             "aio_count": 1,
             # 10 switchable AIO layouts, each with its own 1-5 strings
             "aio_sets": [
@@ -186,6 +195,15 @@ class ConfigMixin:
         if not isinstance(aio, list):
             aio = ["{text} \\n {artist} : {title} | {time} \\n {bar}", "", "", "", ""]
         aio = [str(t) for t in aio][:5]
+        if defaults.get("theme") not in THEMES:
+            defaults["theme"] = "default"
+        if not isinstance(defaults.get("theme_colors"), dict):
+            defaults["theme_colors"] = {}
+        try:
+            defaults["theme_opacity"] = min(1.0, max(0.25, float(
+                defaults.get("theme_opacity", 0.82))))
+        except (TypeError, ValueError):
+            defaults["theme_opacity"] = 0.82
         defaults["aio_templates"] = aio + [""] * (5 - len(aio))
         defaults["aio_count"] = min(5, max(1, int(defaults.get("aio_count", 1))))
         # AIO template sets: normalise / migrate old single-list configs

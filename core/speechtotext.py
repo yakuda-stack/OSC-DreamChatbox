@@ -51,16 +51,49 @@ try:
 except ImportError:
     HAS_SR = False
 
-def list_microphones():
-    """[(name, device_index)] of available input devices, for the UI
-    dropdown. Empty list when SpeechRecognition/pyaudio is missing."""
+# SpeechRecognition imports fine WITHOUT pyaudio - it only needs it the
+# moment you touch sr.Microphone. Checking HAS_SR alone therefore reports
+# "available" on a system where the microphone can never open, which ends
+# in an empty device list and a Start button that does nothing.
+import importlib.util
+try:
+    # presence check only - importing pyaudio here would print ALSA noise
+    HAS_PYAUDIO = importlib.util.find_spec("pyaudio") is not None
+except Exception:      # a broken install can raise instead of returning None
+    HAS_PYAUDIO = False
+
+
+def missing_dependency():
+    """What exactly is missing, as a sentence the user can act on."""
     if not HAS_SR:
+        return ("SpeechRecognition is not installed. Install it into the "
+                "venv:  ./venv/bin/pip install SpeechRecognition pyaudio")
+    if not HAS_PYAUDIO:
+        return ("pyaudio is missing - without it no microphone can be "
+                "opened. Arch: sudo pacman -S python-pyaudio  |  "
+                "Debian/Mint: sudo apt install portaudio19-dev && "
+                "./venv/bin/pip install pyaudio")
+    return ""
+
+def list_microphones(log=None):
+    """[(name, device_index)] of available input devices, for the UI
+    dropdown. Empty list when SpeechRecognition/pyaudio is missing.
+
+    The reason is logged rather than swallowed - an empty dropdown that
+    only ever says "System default" is otherwise indistinguishable from
+    a machine that genuinely has one microphone.
+    """
+    if not HAS_SR or not HAS_PYAUDIO:
+        if callable(log):
+            log(f"Speech to Text: {missing_dependency()}")
         return []
     try:
         with _silence_stderr():
             names = sr.Microphone.list_microphone_names()
         return [(n, i) for i, n in enumerate(names) if n]
-    except Exception:
+    except Exception as e:
+        if callable(log):
+            log(f"Speech to Text: microphones could not be listed ({e})")
         return []
 
 
@@ -121,7 +154,9 @@ class SpeechWorker:
 
     @staticmethod
     def available():
-        return HAS_SR
+        """Both parts have to be there: SpeechRecognition for the
+        recognition and pyaudio to open the microphone at all."""
+        return HAS_SR and HAS_PYAUDIO
 
     @property
     def running(self):

@@ -27,6 +27,11 @@ Personal Status texts.
 
 Beyond the required keys, plugin.json may declare:
 
+    "is_linux":     false to mark the plugin as Linux-incompatible
+    "is_windows":   false to mark it as Windows-incompatible
+                    Both default to true: most plugins are plain python and
+                    run anywhere, so only a plugin that really touches
+                    pactl, /sys, WMI or similar has to say so.
     "template":     default custom string, e.g. "\U0001F44B {hello_world}"
     "placeholders": {"mood": "what it means"}   – shown as a UI hint
     "global_placeholders": ["realtime"]  – claim these names WITHOUT the
@@ -67,6 +72,7 @@ fresh install; after that the config file decides.
 
 import importlib.util
 import json
+import platform
 import re
 import shutil
 import sys
@@ -87,6 +93,11 @@ SETTING_TYPES = ("text", "bool", "int", "slider")
 # plugin ids are used as folder AND module names -> keep them boring
 ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 MODULE_PREFIX = "dreamchatbox_plugin_"
+# what we are running on right now - decided per start, never stored: a
+# config carried to another machine would otherwise pick the wrong branch
+IS_WINDOWS = platform.system() == "Windows"
+IS_LINUX = not IS_WINDOWS
+OS_NAME = "Windows" if IS_WINDOWS else "Linux"
 # zip bomb / typo protection (uncompressed size of the whole archive)
 MAX_UNPACKED_BYTES = 64 * 1024 * 1024
 
@@ -119,6 +130,8 @@ class Plugin:
     github: str = ""
     main: str = "main.py"
     default_enabled: bool = True
+    is_linux: bool = True          # manifest flags, both default to true
+    is_windows: bool = True
     template: str = ""             # default custom string from the manifest
     placeholders: dict = field(default_factory=dict)   # name -> description
     global_keys: list = field(default_factory=list)    # unprefixed names
@@ -131,6 +144,15 @@ class Plugin:
     @property
     def loaded(self):
         return self.module is not None
+
+    @property
+    def supported(self):
+        """False when the manifest rules this platform out."""
+        return self.is_windows if IS_WINDOWS else self.is_linux
+
+    @property
+    def platform_note(self):
+        return "" if self.supported else f"not for {OS_NAME}"
 
     @property
     def main_path(self):
@@ -399,6 +421,8 @@ class PluginManager:
             github=str(github),
             main=main,
             default_enabled=bool(data.get("enabled", True)),
+            is_linux=bool(data.get("is_linux", True)),
+            is_windows=bool(data.get("is_windows", True)),
             template=template,
             placeholders={str(k): str(v) for k, v in placeholders.items()},
             global_keys=global_keys,
@@ -460,6 +484,14 @@ class PluginManager:
         success; failures are stored in plugin.error and logged."""
         if plugin.loaded:
             return True
+        if not plugin.supported:
+            # a zip install bypasses the store, so the guard belongs here:
+            # loading anyway would end in a traceback from some missing
+            # system tool rather than a clear message
+            plugin.error = (f"This plugin is marked as not compatible with "
+                            f"{OS_NAME} ({MANIFEST_NAME}).")
+            self.log(f"Plugins: '{plugin.pid}' skipped - {plugin.platform_note}")
+            return False
         if not plugin.main_path.exists():
             plugin.error = f"{plugin.main} not found"
             self.log(f"Plugins: '{plugin.pid}' – {plugin.error}")
@@ -559,7 +591,8 @@ class PluginManager:
             return False, None
 
     def _active(self):
-        return [p for p in self.plugins.values() if p.enabled and p.loaded]
+        return [p for p in self.plugins.values()
+                if p.enabled and p.loaded and p.supported]
 
     def dispatch(self, hook, *args, **kwargs):
         """Fire-and-forget hook on every active plugin. Returns the list of

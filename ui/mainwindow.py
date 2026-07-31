@@ -20,6 +20,7 @@ from core.hardware import HardwareMonitor
 from core.lyrics import LyricsFetcher
 from core.mediafetch import MediaFetcher
 from core.oscquery import HAS_ZEROCONF, OSCQueryService
+from core.theming import build_style
 from core.plugins import PluginManager
 from core.speechtotext import SpeechWorker
 from core.textutils import (
@@ -74,7 +75,8 @@ class MainWindow(ConfigMixin, AppsPageMixin, TextboxPageMixin,
         self.libre_server = LibreTranslateServer(self.log)
         self._oscq_applied = None   # zuletzt uebernommenes VRChat-Ziel
         self._block_updating = False
-        self.hw = HardwareMonitor(self.log)
+        self.hw = HardwareMonitor(
+            self.log, self.cfg.get("hw_mangohud_dir") or None)
         self.hw_info = None
         # user plugins (core/plugins.py) – discovered before build_ui()
         # so the Plugins page can render the list right away. Their
@@ -107,6 +109,8 @@ class MainWindow(ConfigMixin, AppsPageMixin, TextboxPageMixin,
         self.apply_config_to_ui()
         # import enabled plugins once the window is fully built, so a
         # plugin's setup(api) can already touch api.host safely
+        self.mangohud_dir_lbl.setText(
+            self.cfg.get("hw_mangohud_dir") or "(not set)")
         self.plugins.load_enabled()
         self.refresh_plugin_list()
         self._update_plugin_timer()
@@ -158,6 +162,7 @@ class MainWindow(ConfigMixin, AppsPageMixin, TextboxPageMixin,
 
     def build_ui(self):
         root = QWidget()
+        root.setObjectName("root")   # theming paints the background here
         root_layout = QHBoxLayout(root)
         root_layout.setContentsMargins(0, 0, 0, 0)
         root_layout.setSpacing(0)
@@ -252,7 +257,7 @@ class MainWindow(ConfigMixin, AppsPageMixin, TextboxPageMixin,
         root_layout.addWidget(self.pages, 1)
         root_layout.addWidget(right)
 
-        self.setStyleSheet(STYLE)
+        self.apply_theme()
 
     @staticmethod
     def _wrap_scroll(widget):
@@ -275,6 +280,23 @@ class MainWindow(ConfigMixin, AppsPageMixin, TextboxPageMixin,
     def set_expanded(btn, content, expanded):
         content.setVisible(expanded)
         btn.setText(("⌄  Settings") if expanded else ("›  Settings"))
+
+    def apply_theme(self):
+        """(Re)builds the stylesheet from the current theme settings and
+        applies it to the whole window. Cheap enough to call on every
+        change, so the colour picker can update live."""
+        try:
+            style = build_style(
+                STYLE,
+                self.cfg.get("theme", "default"),
+                self.cfg.get("theme_colors", {}).get(
+                    self.cfg.get("theme", "default"), {}),
+                self.cfg.get("theme_background", ""),
+                float(self.cfg.get("theme_opacity", 0.82)))
+        except Exception as e:      # noqa: BLE001 - never leave it unstyled
+            self.log(f"Theme could not be built ({e}), using the default")
+            style = STYLE
+        self.setStyleSheet(style)
 
     def switch_page(self, idx):
         self.pages.setCurrentIndex(idx)

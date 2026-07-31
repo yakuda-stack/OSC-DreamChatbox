@@ -475,6 +475,38 @@ class AppsPageMixin:
             return chk
 
         # ----- GPU -----
+        self.chk_fps = hw_chk("FPS  (needs MangoHud, see below)", "hw_fps")
+        fps_row = QHBoxLayout()
+        fps_row.addSpacing(24)
+        fps_row.addWidget(QLabel("MangoHud log folder"))
+        self.mangohud_dir_lbl = QLabel("(not set)")
+        self.mangohud_dir_lbl.setObjectName("dim")
+        fps_row.addWidget(self.mangohud_dir_lbl, 1)
+        pick_mh = QPushButton("Choose\u2026")
+        pick_mh.setObjectName("linkbtn")
+        pick_mh.setFixedHeight(26)
+        pick_mh.setCursor(Qt.CursorShape.PointingHandCursor)
+        pick_mh.clicked.connect(self.on_choose_mangohud_dir)
+        fps_row.addWidget(pick_mh)
+        hc.addLayout(fps_row)
+        # kept small on purpose: the toggle costs nothing at runtime, the
+        # setup note is the only thing people need to see once
+        fps_hint = QLabel("\u2139 read via MangoHud \u2013 hover for the "
+                          "launch options")
+        fps_hint.setStyleSheet("color: #7a8290; font-size: 11px;")
+        fps_hint.setToolTip(
+            "Linux has no general way to read a game's FPS. MangoHud runs "
+            "inside VRChat and can log it.\n\nSteam launch options:\n"
+            "MANGOHUD=1 MANGOHUD_CONFIG=output_folder=~/mangohud,"
+            "autostart_log=1,log_interval=1000 mangohud %command%\n\n"
+            "Then pick that folder above. Polling only reads the last few "
+            "lines of the log, so it costs nothing measurable.")
+        fps_hint.setWordWrap(True)
+        hint_row = QHBoxLayout()
+        hint_row.addSpacing(24)
+        hint_row.addWidget(fps_hint, 1)
+        hc.addLayout(hint_row)
+
         gpu_lbl = QLabel("GPU:")
         gpu_lbl.setObjectName("cardtitle")
         gpu_lbl.setStyleSheet("font-size: 14px;")
@@ -1381,12 +1413,27 @@ class AppsPageMixin:
             return None
         return f"{t:.0f}\U0001F525" if self.cfg["hw_flame"] else f"{t:.0f}\u00b0C"
 
+    def on_choose_mangohud_dir(self):
+        folder = QFileDialog.getExistingDirectory(
+            self, "MangoHud log folder",
+            self.cfg.get("hw_mangohud_dir") or str(Path.home()))
+        if not folder:
+            return
+        self.cfg["hw_mangohud_dir"] = folder
+        self.hw.mangohud_dir = Path(folder)
+        self.mangohud_dir_lbl.setText(folder)
+        self.save_config()
+        self.update_preview()
+
     def _hw_values(self, info):
         """Placeholder values for the custom string. They automatically
         follow the checkboxes above (unchecked -> empty / generic name)."""
         c = self.cfg
         gpu = info.get("gpu") or {}
         ram = info.get("ram") or {}
+        # {fps} stays empty unless the checkbox is on AND MangoHud is
+        # actually writing - so a template never shows a stale number
+        fps = info.get("fps") if c.get("hw_fps") else None
         # names: custom > auto-detected (if "name" is checked) > generic
         if c["hw_gpu_custom"] and c["hw_gpu_custom_name"].strip():
             gpu_name = c["hw_gpu_custom_name"].strip()
@@ -1400,6 +1447,7 @@ class AppsPageMixin:
             cpu_name = self.hw.cpu_name_auto
         else:
             cpu_name = "CPU"
+        vals_fps = f"{fps:.0f}" if fps else None
         # VRAM / RAM: numbers and/or % depending on the checkboxes
         vram_parts = []
         if c["hw_vram_used"] and gpu.get("vram_used") is not None and gpu.get("vram_total"):
@@ -1426,6 +1474,7 @@ class AppsPageMixin:
             "cpu_temp": (self._temp_str(info.get("cpu_temp")) if c["hw_cpu_temp"] else None),
             "ram_usage": " ".join(ram_parts) or None,
             "ram_pct": (f"{ram['pct']:.0f}%" if c["hw_ram_pct"] and ram else None),
+            "fps": vals_fps,
             "ram_type": c["hw_ram_type"].strip() or None,
             "icon_flame": "\U0001F525",
         }

@@ -8,7 +8,7 @@ core/constants.py – shared constants & paths for OSC-DreamChatbox
 from pathlib import Path
 
 APP_NAME = "OSC-DreamChatbox"
-VERSION = "v1.2.2"
+VERSION = "v1.2.3"
 GITHUB_REPO = "yakuda-stack/OSC-DreamChatbox"
 DISCORD_URL = "https://discord.gg/X5TaN4A47h"
 DONATE_URL = "https://ko-fi.com/yakuda_"

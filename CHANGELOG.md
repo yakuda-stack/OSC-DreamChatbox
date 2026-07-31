@@ -2,6 +2,56 @@
 
 All notable changes to OSC-DreamChatbox are documented here.
 
+## [v1.2.3] – 2026-07-31
+
+### Fixed
+- **Speech to Text: microphone stuck on "System default" and the record button
+  did nothing.** `available()` only checked for SpeechRecognition, which
+  imports fine *without* pyaudio - pyaudio is needed the moment `sr.Microphone`
+  is touched. So the UI reported everything as fine while `list_microphones()`
+  silently swallowed `AttributeError: Could not find PyAudio` and returned an
+  empty list, which is indistinguishable from a PC with one microphone.
+  pyaudio is now detected separately, the reason is logged instead of
+  swallowed, and the card says plainly what to install rather than leaving a
+  dead button. On AUR this hit everyone: `python-speechrecognition` and
+  `python-pyaudio` were `optdepends`, so a normal `yay -S osc-dreamchatbox`
+  never installed them. Both are hard `depends` now - the Speech to Text tab
+  is part of the interface, not a hidden extra. (With a source install the
+  usual cause is `install.sh` failing to build pyaudio, which only prints a
+  warning that is easy to miss.)
+
+### Changed
+- **Both bundled plugins updated to 1.2.0 and marked Linux + Windows.**
+  *World Stats* now finds VRChat's log on Windows too
+  (`AppData\LocalLow\VRChat\VRChat`) alongside the Steam/Proton prefix on
+  Linux, skips the Steam library scan where it makes no sense, and words its
+  "log not found" message per platform. *Hello World* is pure python and runs
+  anywhere as-is. World Stats also ships its `logo.png` for the store tile.
+
+### Added
+- **Customization on the Options page.** Eight UI themes shown as colour
+  swatches, every colour of the active theme overridable with a colour picker,
+  and a background image behind the whole window – import your own, switch
+  between them, adjust how solid the cards sit on top. Overrides are stored per
+  theme, so switching away and back keeps them. Theming works by substituting
+  colour tokens in the app stylesheet, so it covers every widget without any of
+  them knowing that themes exist.
+- **`is_linux` / `is_windows` in `plugin.json`.** Both default to true, so a
+  plain-python plugin needs no extra keys. A plugin ruled out for the current
+  platform is greyed out in the store with its install button disabled, greyed
+  out in the installed list with its toggle locked, and refused by the plugin
+  manager – that last one matters because a .zip install bypasses the store
+  entirely, and loading anyway would end in a traceback instead of a message.
+  The platform is detected per start, never stored, so a config copied to
+  another machine cannot select the wrong branch.
+- **FPS in the Hardware card**, usable as `{fps}` in the custom string, in
+  All-in-one and in status texts. Linux exposes GPU load through `/sys` but
+  frames per second only exist inside the process drawing them, so this reads
+  MangoHud's log: it already runs inside VRChat and appends a row per interval.
+  Set the log folder in the Hardware card and add the launch options shown
+  there. A log older than 15 seconds counts as stale, so the chatbox never
+  shows the frame rate of a session that ended hours ago.
+
 ## [v1.2.2] – 2026-07-30
 
 ### Changed

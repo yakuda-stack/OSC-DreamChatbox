@@ -9,11 +9,15 @@ import json
 import os
 import shutil
 import sys
+from pathlib import Path
 from PyQt6.QtCore import QUrl, Qt
-from PyQt6.QtGui import QDesktopServices
+from PyQt6.QtGui import QColor, QDesktopServices, QPainter, QPixmap
 from PyQt6.QtWidgets import (
-    QFrame, QHBoxLayout, QLabel, QLineEdit, QListWidget, QMessageBox, QPushButton, QSpinBox, QVBoxLayout, QWidget)
+    QColorDialog, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget, QMessageBox, QPushButton, QSlider, QSpinBox, QVBoxLayout, QWidget)
 from core import desktop_integration, queryfix, vrc_pictures
+from core.theming import (
+    TOKEN_LABELS, import_background, list_backgrounds, remove_background,
+    resolve_tokens, theme_ids, theme_name)
 from core.constants import (
     CHATBOX_INPUT, DISCORD_URL, DONATE_URL, GITHUB_REPO, VERSION, VRCHAT_GROUP_URL)
 from core.oscquery import HAS_ZEROCONF
@@ -205,6 +209,7 @@ class OptionsPageMixin:
         c.addWidget(hint2)
 
         layout.addWidget(card)
+        layout.addWidget(self.build_customization_card())
 
         # ----- Community & Updates -----
         ucard = QFrame()
@@ -290,6 +295,317 @@ class OptionsPageMixin:
 
         layout.addStretch()
         return page
+
+
+    # ================================================================
+    # customization
+    # ================================================================
+    def build_customization_card(self):
+        """Theme presets, per-colour overrides and background images.
+
+        Lives on the Options page next to the other app-wide settings -
+        it changes how the whole window looks, so it does not belong in
+        any single feature's card.
+        """
+        card = QFrame()
+        card.setObjectName("card")
+        c = QVBoxLayout(card)
+        c.setContentsMargins(16, 12, 16, 14)
+        c.setSpacing(8)
+
+        t = QLabel("Customization")
+        t.setObjectName("cardtitle")
+        c.addWidget(t)
+        hint = QLabel("Pick a theme, then recolour anything you like or drop "
+                      "an image behind the window.")
+        hint.setObjectName("dim")
+        hint.setWordWrap(True)
+        c.addWidget(hint)
+
+        # ---- theme tiles
+        self.theme_grid = QGridLayout()
+        self.theme_grid.setSpacing(8)
+        c.addLayout(self.theme_grid)
+        self._build_theme_tiles()
+
+        line = QFrame()
+        line.setFrameShape(QFrame.Shape.HLine)
+        line.setObjectName("hline")
+        c.addWidget(line)
+
+        # ---- colour pickers
+        col_head = QHBoxLayout()
+        col_head.addWidget(QLabel("Colors"))
+        col_head.addStretch()
+        reset = QPushButton("\u21BA  Reset colors")
+        reset.setObjectName("linkbtn")
+        reset.setFixedHeight(28)
+        reset.setCursor(Qt.CursorShape.PointingHandCursor)
+        reset.setToolTip("Back to the colours of the selected theme")
+        reset.clicked.connect(self.on_theme_reset_colors)
+        col_head.addWidget(reset)
+        c.addLayout(col_head)
+
+        self.color_grid = QGridLayout()
+        self.color_grid.setSpacing(6)
+        c.addLayout(self.color_grid)
+        self._build_color_buttons()
+
+        line2 = QFrame()
+        line2.setFrameShape(QFrame.Shape.HLine)
+        line2.setObjectName("hline")
+        c.addWidget(line2)
+
+        # ---- backgrounds
+        bg_head = QHBoxLayout()
+        bg_head.addWidget(QLabel("Background"))
+        bg_head.addStretch()
+        add_bg = QPushButton("\u2795  Add image")
+        add_bg.setObjectName("sendbtn")
+        add_bg.setFixedHeight(28)
+        add_bg.setCursor(Qt.CursorShape.PointingHandCursor)
+        add_bg.clicked.connect(self.on_background_add)
+        bg_head.addWidget(add_bg)
+        c.addLayout(bg_head)
+
+        self.bg_grid = QGridLayout()
+        self.bg_grid.setSpacing(8)
+        c.addLayout(self.bg_grid)
+
+        op_row = QHBoxLayout()
+        self.bg_opacity_lbl = QLabel("")
+        op_row.addWidget(QLabel("Card opacity"))
+        self.bg_opacity = QSlider(Qt.Orientation.Horizontal)
+        self.bg_opacity.setRange(25, 100)
+        self.bg_opacity.setValue(int(float(self.cfg.get("theme_opacity",
+                                                        0.82)) * 100))
+        self.bg_opacity.setMinimumWidth(160)
+        self.bg_opacity.setToolTip("How solid the cards are drawn on top of "
+                                   "a background image")
+        self.bg_opacity.valueChanged.connect(self.on_theme_opacity)
+        op_row.addWidget(self.bg_opacity, 1)
+        self.bg_opacity_lbl.setObjectName("dim")
+        self.bg_opacity_lbl.setMinimumWidth(48)
+        op_row.addWidget(self.bg_opacity_lbl)
+        c.addLayout(op_row)
+        self._build_background_tiles()
+        self._sync_opacity_row()
+        return card
+
+    # ------------------------------------------------------------ tiles
+    @staticmethod
+    def _clear_layout(layout):
+        while layout.count():
+            item = layout.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.setParent(None)
+                w.deleteLater()
+
+    def _theme_swatch(self, tokens, w=104, h=64):
+        """Draws the theme as vertical colour bars, the way VRChat shows
+        its UI themes - faster to read than a name."""
+        pm = QPixmap(w, h)
+        pm.fill(QColor(tokens["bg"]))
+        painter = QPainter(pm)
+        bars = [tokens["panel"], tokens["card"], tokens["inner"],
+                tokens["accent"], tokens["text"]]
+        bw = w / len(bars)
+        for i, col in enumerate(bars):
+            painter.fillRect(int(i * bw), 0, int(bw) + 1, h, QColor(col))
+        painter.end()
+        return pm
+
+    def _build_theme_tiles(self):
+        self._clear_layout(self.theme_grid)
+        current = self.cfg.get("theme", "default")
+        for i, tid in enumerate(theme_ids()):
+            tokens = resolve_tokens(tid, self.cfg.get("theme_colors", {})
+                                    .get(tid, {}))
+            tile = QFrame()
+            tile.setObjectName("innerbox")
+            tile.setCursor(Qt.CursorShape.PointingHandCursor)
+            tile.setFixedWidth(116)
+            v = QVBoxLayout(tile)
+            v.setContentsMargins(5, 5, 5, 5)
+            v.setSpacing(4)
+            img = QLabel()
+            img.setPixmap(self._theme_swatch(tokens))
+            img.setFixedSize(104, 64)
+            v.addWidget(img)
+            name = QLabel(theme_name(tid))
+            name.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            v.addWidget(name)
+            if tid == current:
+                tile.setStyleSheet(
+                    "QFrame#innerbox { border: 2px solid %s; }"
+                    % tokens["accent"])
+                name.setStyleSheet("font-weight: 600;")
+            tile.mousePressEvent = (
+                lambda ev, k=tid: self.on_theme_selected(k))
+            self.theme_grid.addWidget(tile, i // 5, i % 5)
+        self.theme_grid.setColumnStretch(5, 1)
+
+    def _build_color_buttons(self):
+        self._clear_layout(self.color_grid)
+        tid = self.cfg.get("theme", "default")
+        overrides = self.cfg.get("theme_colors", {}).get(tid, {})
+        tokens = resolve_tokens(tid, overrides)
+        for i, (key, label) in enumerate(TOKEN_LABELS):
+            btn = QPushButton(f"  {label}")
+            btn.setFixedHeight(28)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            edited = key in overrides
+            btn.setStyleSheet(
+                f"QPushButton {{ background: {tokens[key]};"
+                f" border: 1px solid {'#ffffff' if edited else '#333947'};"
+                f" border-radius: 6px; color: {self._readable(tokens[key])};"
+                f" text-align: left; padding-left: 8px; }}")
+            btn.setToolTip(f"{tokens[key]}"
+                           + ("  (changed)" if edited else ""))
+            btn.clicked.connect(
+                lambda _, k=key, l=label: self.on_pick_color(k, l))
+            self.color_grid.addWidget(btn, i // 3, i % 3)
+
+    @staticmethod
+    def _readable(hex_colour):
+        """Black or white label text, whichever survives on that swatch."""
+        try:
+            r = int(hex_colour[1:3], 16)
+            g = int(hex_colour[3:5], 16)
+            b = int(hex_colour[5:7], 16)
+        except (ValueError, IndexError):
+            return "#ffffff"
+        return "#000000" if (r * 299 + g * 587 + b * 114) / 1000 > 140 \
+            else "#ffffff"
+
+    def _build_background_tiles(self):
+        self._clear_layout(self.bg_grid)
+        current = self.cfg.get("theme_background", "")
+        items = [("", None)] + [(p.name, p) for p in list_backgrounds()]
+        for i, (name, path) in enumerate(items):
+            tile = QFrame()
+            tile.setObjectName("innerbox")
+            tile.setCursor(Qt.CursorShape.PointingHandCursor)
+            tile.setFixedWidth(132)
+            v = QVBoxLayout(tile)
+            v.setContentsMargins(5, 5, 5, 5)
+            v.setSpacing(4)
+            img = QLabel()
+            img.setFixedSize(120, 68)
+            img.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            if path is None:
+                pm = QPixmap(120, 68)
+                tokens = resolve_tokens(self.cfg.get("theme", "default"))
+                pm.fill(QColor(tokens["bg"]))
+                img.setPixmap(pm)
+            else:
+                loaded = QPixmap(str(path))
+                img.setPixmap(loaded.scaled(
+                    120, 68, Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                    Qt.TransformationMode.SmoothTransformation))
+            v.addWidget(img)
+            row = QHBoxLayout()
+            row.setSpacing(4)
+            lbl = QLabel("None" if path is None else Path(name).stem[:14])
+            lbl.setObjectName("dim")
+            row.addWidget(lbl)
+            row.addStretch()
+            if path is not None:
+                rm = QPushButton("\U0001F5D1")
+                rm.setObjectName("iconbtn")
+                rm.setFixedSize(22, 22)
+                rm.setCursor(Qt.CursorShape.PointingHandCursor)
+                rm.setToolTip("Remove this image")
+                rm.clicked.connect(
+                    lambda _, n=name: self.on_background_remove(n))
+                row.addWidget(rm)
+            v.addLayout(row)
+            if name == current:
+                tokens = resolve_tokens(self.cfg.get("theme", "default"))
+                tile.setStyleSheet("QFrame#innerbox { border: 2px solid %s; }"
+                                   % tokens["accent"])
+            tile.mousePressEvent = (
+                lambda ev, n=name: self.on_background_selected(n))
+            self.bg_grid.addWidget(tile, i // 4, i % 4)
+        self.bg_grid.setColumnStretch(4, 1)
+
+    def _sync_opacity_row(self):
+        on = bool(self.cfg.get("theme_background"))
+        self.bg_opacity.setEnabled(on)
+        self.bg_opacity_lbl.setText(f"{self.bg_opacity.value()}%")
+
+    def _refresh_customization(self):
+        self._build_theme_tiles()
+        self._build_color_buttons()
+        self._build_background_tiles()
+        self._sync_opacity_row()
+
+    # --------------------------------------------------------- handlers
+    def on_theme_selected(self, theme_id):
+        self.cfg["theme"] = theme_id
+        self.save_config()
+        self.apply_theme()
+        self._refresh_customization()
+        self.log(f"Theme: {theme_name(theme_id)}")
+
+    def on_pick_color(self, key, label):
+        tid = self.cfg.get("theme", "default")
+        overrides = self.cfg.setdefault("theme_colors", {}).setdefault(tid, {})
+        tokens = resolve_tokens(tid, overrides)
+        chosen = QColorDialog.getColor(
+            QColor(tokens[key]), self, f"{label} color")
+        if not chosen.isValid():
+            return
+        overrides[key] = chosen.name().lower()
+        self.save_config()
+        self.apply_theme()
+        self._refresh_customization()
+
+    def on_theme_reset_colors(self):
+        tid = self.cfg.get("theme", "default")
+        self.cfg.setdefault("theme_colors", {}).pop(tid, None)
+        self.save_config()
+        self.apply_theme()
+        self._refresh_customization()
+        self.log(f"Theme: colors reset to {theme_name(tid)}")
+
+    def on_background_add(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Choose a background image", str(Path.home()),
+            "Images (*.png *.jpg *.jpeg *.webp *.bmp)")
+        if not path:
+            return
+        try:
+            name = import_background(path)
+        except Exception as e:      # noqa: BLE001
+            QMessageBox.warning(self, "Image not added", str(e))
+            return
+        self.cfg["theme_background"] = name
+        self.save_config()
+        self.apply_theme()
+        self._refresh_customization()
+        self.log(f"Background: {name}")
+
+    def on_background_selected(self, name):
+        self.cfg["theme_background"] = name
+        self.save_config()
+        self.apply_theme()
+        self._refresh_customization()
+
+    def on_background_remove(self, name):
+        if self.cfg.get("theme_background") == name:
+            self.cfg["theme_background"] = ""
+        remove_background(name)
+        self.save_config()
+        self.apply_theme()
+        self._refresh_customization()
+
+    def on_theme_opacity(self, val):
+        self.cfg["theme_opacity"] = val / 100.0
+        self.bg_opacity_lbl.setText(f"{val}%")
+        self.save_config_later()
+        self.apply_theme()
 
     def _aur_helper(self):
         """The installed AUR helper ('yay' or 'paru', yay preferred), or

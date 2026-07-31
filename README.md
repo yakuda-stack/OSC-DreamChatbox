@@ -95,17 +95,19 @@ Everything you know from MagicChatbox/VRCOSC on Windows – status rotation, now
 
 <table>
   <tr>
-    <td><b>Apps – Personal Status</b><br><img src="assets/p1.png" alt="Personal Status" width="300"/></td>
-    <td><b>MediaPlay & Songbar</b><br><img src="assets/p2.png" alt="MediaPlay" width="300"/></td>
-    <td><b>Hardware Monitor</b><br><img src="assets/p3.png" alt="Hardware" width="300"/></td>
+    <td><b>Apps – Personal Status</b><br><img src="assets/p1.png" alt="Personal Status" width="600"/></td>
+    <td><b>Hardware Monitor</b><br><img src="assets/p2.png" alt="MediaPlay" width="600"/></td>
+    <td><b>MediaPlay & Songbar</b><br><img src="assets/p3.png" alt="Hardware" width="600"/></td>
   </tr>
   <tr>
-    <td><b>All in one (AIO)</b><br><img src="assets/p4.png" alt="All in one" width="300"/></td>
-    <td><b>Textbox & Presets</b><br><img src="assets/p5.png" alt="Textbox" width="300"/></td>
-    <td><b>Speech to Text</b><br><img src="assets/p6.png" alt="Speech to Text" width="300"/></td>
+    <td><b>All in one (AIO)</b><br><img src="assets/p4.png" alt="All in one" width="600"/></td>
+    <td><b>Speech to Text </b><br><img src="assets/p5.png" alt="Textbox" width="600"/></td>
+    <td><b>Textbox & Presets</b><br><img src="assets/p6.png" alt="Speech to Text" width="600"/></td>
   </tr>
   <tr>
-    <td><b>Options – OSCQuery</b><br><img src="assets/p7.png" alt="Options" width="300"/></td>
+    <td><b>Options – OSCQuery</b><br><img src="assets/p7.png" alt="Options" width="600"/></td>
+    <td><b>plugins – Installed</b><br><img src="assets/p8.png" alt="Options" width="600"/></td>
+    <td><b>plugins – Store</b><br><img src="assets/p9.png" alt="Options" width="600"/></td>
   </tr>
 </table>
 
