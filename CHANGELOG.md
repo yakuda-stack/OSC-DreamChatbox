@@ -2,6 +2,34 @@
 
 All notable changes to OSC-DreamChatbox are documented here.
 
+🟢 Linux Support: Complete & Stable (v1.2.6)
+
+## [v1.2.6] – 2026-08-01
+
+### Fixed
+- **Personal Status preview and VRChat now always show the same text.** The
+  rotate timer and the send timer ran independently, so a new text appeared in
+  the preview immediately while VRChat kept displaying the previous one until
+  the next send tick - up to a full send interval later.
+
+  A text switch is now only *pending* until it is actually sent: the send
+  commits it and refreshes the preview, so the preview can never show
+  something that has not gone out. On top of that a switch triggers a send
+  right away and restarts the send timer from that moment, so the text changes
+  without waiting and a scheduled tick cannot re-send the identical payload a
+  fraction of a second later.
+
+  This also covers the cases where sending is blocked: while a manual textbox
+  message is up or Speech to Text is recording, the preview holds still
+  together with VRChat and catches up on the next real send. Only with
+  SendToVRChat switched off does the preview rotate on its own again - nothing
+  is going out then, so it is a plain preview.
+
+### Changed
+- **"Change text every" has a 10 second minimum** (was 2). Anything shorter is
+  gone before it can be read, and every switch now costs a chatbox send.
+  Existing configs below 10 are lifted on load.
+
 ## [v1.2.5] – 2026-07-31
 
 ### Added

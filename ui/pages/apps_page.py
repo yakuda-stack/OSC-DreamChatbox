@@ -12,7 +12,7 @@ from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (
     QButtonGroup, QCheckBox, QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QSlider, QSpinBox, QVBoxLayout, QWidget)
 from core.constants import (
-    CHATBOX_LIMIT, LYRICS_DIR, SLIM_SUFFIX, SONGBAR_LEN, TITLE_MAX_LEN)
+    CHATBOX_LIMIT, LYRICS_DIR, MIN_STATUS_CYCLE_SEC, SLIM_SUFFIX, SONGBAR_LEN, TITLE_MAX_LEN)
 from core.textutils import (
     CUSTOM_STYLE_INDEX, DEFAULT_CUSTOM_BAR, SONGBAR_STYLES, TIME_POSITIONS, TIME_POS_LINE, apply_template, bar_length, compose_bar_line, make_songbar)
 from pathlib import Path
@@ -101,7 +101,12 @@ class AppsPageMixin:
         cnt_row.addWidget(QLabel("Change text every"))
         self.status_cycle_spin = QSpinBox()
         self.status_cycle_spin.setObjectName("smallspin")
-        self.status_cycle_spin.setRange(2, 3600)
+        # 10 s minimum: below that a line is gone before it can be read,
+        # and every switch costs a chatbox send
+        self.status_cycle_spin.setRange(MIN_STATUS_CYCLE_SEC, 3600)
+        self.status_cycle_spin.setToolTip(
+            f"How long each text stays up (at least "
+            f"{MIN_STATUS_CYCLE_SEC} seconds)")
         self.status_cycle_spin.setFixedSize(72, 28)
         self.status_cycle_spin.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.status_cycle_spin.valueChanged.connect(self.on_status_cycle)
@@ -906,11 +911,37 @@ class AppsPageMixin:
         texts = [t.strip() for t in
                  self.cfg["status_texts"][:self.cfg["status_count"]]]
         texts = [t for t in texts if t]
-        if len(texts) > 1:
-            current = self.status_index % len(texts)
-            choices = [i for i in range(len(texts)) if i != current]
-            self.status_index = random.choice(choices)
-        self.update_preview()
+        if len(texts) <= 1:
+            return
+        current = self.status_index % len(texts)
+        choices = [i for i in range(len(texts)) if i != current]
+        nxt = random.choice(choices)
+
+        # The new text is only PENDING at this point. The preview must not
+        # show anything VRChat is not showing, so the switch is committed
+        # by the send itself (see commit_status / send_now). Rotate and
+        # send run on independent timers, and sending can also be blocked
+        # entirely - by a manual textbox message, for instance - and in
+        # that case the preview has to keep standing still too.
+        self.pending_status_index = nxt
+        if self.sending_live():
+            self.send_after_change()
+        elif not self.cfg.get("send_active"):
+            # SendToVRChat is off, so nothing is going out at all and the
+            # preview is a plain preview again - let it rotate
+            self.commit_status()
+            self.update_preview()
+        # else: sending is only paused (manual message, speech to text).
+        # The switch stays pending and the preview stands still, so it
+        # keeps matching what VRChat is actually showing.
+
+    def commit_status(self):
+        """Applies a pending text switch. Called right before a payload is
+        built for sending, so preview and VRChat always show the same
+        text."""
+        if self.pending_status_index is not None:
+            self.status_index = self.pending_status_index
+            self.pending_status_index = None
 
     def current_status_text(self):
         """Returns the currently shown status text (switches randomly

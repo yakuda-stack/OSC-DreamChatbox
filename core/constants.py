@@ -8,7 +8,7 @@ core/constants.py – shared constants & paths for OSC-DreamChatbox
 from pathlib import Path
 
 APP_NAME = "OSC-DreamChatbox"
-VERSION = "v1.2.5"
+VERSION = "v1.2.6"
 GITHUB_REPO = "yakuda-stack/OSC-DreamChatbox"
 DISCORD_URL = "https://discord.gg/X5TaN4A47h"
 DONATE_URL = "https://ko-fi.com/yakuda_"
@@ -46,6 +46,9 @@ STORE_SOURCES_FILE = APP_ROOT / "config" / "plugins.json"
 # (Same trick as the hidden BlankEgg/BoiHanny feature in MagicChatbox)
 SLIM_SUFFIX = "\u0003\u001f"
 CHATBOX_INPUT = "/chatbox/input"
+# a status text below this is unreadable in VRChat and burns a send each
+# time it flips, so the UI and the config validator both enforce it
+MIN_STATUS_CYCLE_SEC = 10
 CHATBOX_LIMIT = 144  # VRChat chatbox character limit
 
 TITLE_MAX_LEN = 24   # max characters of the song title shown

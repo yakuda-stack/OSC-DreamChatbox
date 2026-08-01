@@ -21,9 +21,16 @@ Everything you know from MagicChatbox/VRCOSC on Windows – status rotation, now
 
 *(Personal Status, MediaPlay, Hardware and All-in-one live on the **Apps** page. Plugins have their own page, theming sits under Options.)*
 
+
+### 🟢 Linux Support: Complete & Stable (v1.2.6)
+
+    As of version 1.2.6, the Linux version of the OSC Dream Chatbox is fully completed, tested, and stable.
+    All core features (chatbox sync, caching, STT, live translation, AUR packaging) are fully optimized for Linux systems.
+    
+
 ### 📝 Personal Status
 - **10 switchable text templates**, each with its own set of up to **20 texts** – exclusive toggles, enabling one switches the others off
-- Adjustable change interval; texts switch **randomly** (never the same one twice in a row)
+- Adjustable change interval (10 s minimum); texts switch **randomly** (never the same one twice in a row) and are pushed to VRChat the moment they change
 - Text fields fold in/out so the card stays compact
 - Built-in **icon picker** (🔥 🎵 🎮 …) for every text field
 

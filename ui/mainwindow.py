@@ -63,6 +63,8 @@ class MainWindow(ConfigMixin, AppsPageMixin, TextboxPageMixin,
         self._deferred_logs = []
         self.emoji_popup = EmojiPopup()
         self.status_index = 0
+        # a text switch waiting to be sent - see advance_status()
+        self.pending_status_index = None
         self.media = MediaFetcher(self.log)
         self.media_info = None
         self.lyrics = LyricsFetcher(self.log)
@@ -468,6 +470,8 @@ class MainWindow(ConfigMixin, AppsPageMixin, TextboxPageMixin,
         else:
             self.rotate_timer.stop()
             self.status_index = 0
+        # a text switch waiting to be sent - see advance_status()
+        self.pending_status_index = None
         # AIO string rotation (only when AIO active, rotation enabled
         # and more than one non-empty string exists)
         if (self.cfg["aio_active"] and self.cfg["aio_rotate"]
@@ -512,11 +516,35 @@ class MainWindow(ConfigMixin, AppsPageMixin, TextboxPageMixin,
         lines.extend(anchored.get("aio", []))
         return self.plugins.filter_text("\n".join(lines))
 
+    def sending_live(self):
+        """True when a payload would actually reach VRChat right now."""
+        return bool(self.cfg.get("send_active")
+                    and self.osc_client is not None
+                    and not self.stt_recording
+                    and time.time() >= self.manual_pause_until)
+
+    def send_after_change(self):
+        """Sends immediately because the text changed, and restarts the
+        send timer from now.
+
+        Restarting matters: otherwise a scheduled tick can land a fraction
+        of a second later and send the very same payload twice, which
+        counts against VRChat's chatbox rate limit for nothing.
+        """
+        if not self.sending_live():
+            return
+        self.send_now()
+        if self.send_timer.isActive():
+            self.send_timer.start(self.cfg["interval_sec"] * 1000)
+
     def send_now(self):
         if self.stt_recording:
             return  # speech to text is recording - sending is blocked
         if time.time() < self.manual_pause_until:
             return  # a manual textbox message is currently shown
+        # take over a pending text switch, so what we send is exactly what
+        # the preview shows afterwards
+        self.commit_status()
         text = self.build_payload()
         if not text or self.osc_client is None:
             return
@@ -537,6 +565,9 @@ class MainWindow(ConfigMixin, AppsPageMixin, TextboxPageMixin,
                      f"to {self.cfg['osc_ip']}:{self.cfg['osc_port']}\n{text}")
         except Exception as e:
             self.log(f"ERROR while sending: {e}")
+        # the committed switch has to reach the preview as well, otherwise
+        # the two drift apart in the other direction
+        self.update_preview()
 
     def update_preview(self):
         if time.time() < self.manual_pause_until and self.last_manual_text:

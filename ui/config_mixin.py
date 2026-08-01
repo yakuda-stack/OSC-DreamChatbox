@@ -9,7 +9,7 @@ import json
 import shutil
 from core.theming import THEMES
 from core.constants import (
-    CONFIG_DIR, CONFIG_FILE, LYRICS_DIR, OLD_CONFIG_FILE, TITLE_MAX_LEN)
+    CONFIG_DIR, CONFIG_FILE, LYRICS_DIR, MIN_STATUS_CYCLE_SEC, OLD_CONFIG_FILE, TITLE_MAX_LEN)
 from core.textutils import DEFAULT_CUSTOM_BAR, TIME_POS_LINE
 from core.translators import METHOD_LINGVA
 
@@ -204,6 +204,15 @@ class ConfigMixin:
                 defaults.get("theme_opacity", 0.82))))
         except (TypeError, ValueError):
             defaults["theme_opacity"] = 0.82
+        # older configs may still carry a 2 s cycle from before the
+        # 10 s minimum - lift those instead of leaving an out-of-range
+        # value that the spin box cannot even display
+        try:
+            defaults["status_cycle_sec"] = max(
+                MIN_STATUS_CYCLE_SEC,
+                min(3600, int(defaults.get("status_cycle_sec", 10))))
+        except (TypeError, ValueError):
+            defaults["status_cycle_sec"] = MIN_STATUS_CYCLE_SEC
         defaults["aio_templates"] = aio + [""] * (5 - len(aio))
         defaults["aio_count"] = min(5, max(1, int(defaults.get("aio_count", 1))))
         # AIO template sets: normalise / migrate old single-list configs
