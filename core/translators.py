@@ -493,11 +493,13 @@ class LibreTranslateServer:
         if exe is None and not libretranslate_installed():
             self.error = "libretranslate is not installed"
             return False
+        out = subprocess.DEVNULL
+        handle = None
         try:
-            out = subprocess.DEVNULL
             if self.log_path is not None:
                 self.log_path.parent.mkdir(parents=True, exist_ok=True)
-                out = open(self.log_path, "wb")
+                handle = open(self.log_path, "wb")
+                out = handle
             # start_new_session is POSIX-only; on Windows the equivalent
             # is CREATE_NEW_PROCESS_GROUP, plus CREATE_NO_WINDOW so the
             # server does not open a console over the game
@@ -513,6 +515,16 @@ class LibreTranslateServer:
             self.error = f"could not start server: {e}"
             self.proc = None
             return False
+        finally:
+            # Popen duplicates the descriptor for the child, so OUR copy
+            # has done its job. Leaving it open leaked one handle per
+            # start, and on Windows an open handle keeps the file locked -
+            # the log could then never be replaced or removed.
+            if handle is not None:
+                try:
+                    handle.close()
+                except Exception:
+                    pass
 
     def _log_tail(self) -> str:
         try:

@@ -709,9 +709,28 @@ class TextboxPageMixin:
 
     def _poll_libre_server(self):
         """Watches the starting/running server: flips the status line
-        to 'running' once it answers, reports errors if it dies."""
+        to 'running' once it answers, reports errors if it dies.
+
+        check_ready() does an HTTP request with a 1 s timeout, and this
+        runs on a 750 ms timer - i.e. on the GUI thread. While the server
+        boots it accepts connections without answering, so the window
+        froze for about a second every 750 ms, for as long as the first
+        run takes to download its language models. That is minutes.
+        The probe therefore goes to a worker thread; the timer only
+        schedules it.
+        """
+        if getattr(self, "_libre_probe_busy", False):
+            return
+        self._libre_probe_busy = True
         srv = self.libre_server
-        if srv.check_ready():
+        self.run_async(
+            srv.check_ready, self._on_libre_probe, interval=150,
+            on_error=lambda _e: setattr(self, "_libre_probe_busy", False))
+
+    def _on_libre_probe(self, ready):
+        self._libre_probe_busy = False
+        srv = self.libre_server
+        if ready:
             self._libre_srv_timer.setInterval(3000)  # watchdog mode
             self._update_tr_method_ui()
             self.tr_method_hint.setText(

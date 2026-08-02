@@ -234,6 +234,13 @@ class SpeechWorker:
         self.messages = queue.Queue()
         self._stop = threading.Event()
         self._thread = None
+        # Every start() opens a new session. The old recording thread can
+        # still be sitting inside r.listen() (up to phrase_time_limit
+        # seconds) and will emit a "stopped" AFTER the new one began -
+        # which the UI reads as "recording ended" and unchecks the button.
+        # Messages therefore carry the session they belong to, and a
+        # stale session's messages are dropped.
+        self._session = 0
         self.language = "en-US"
         self.translate_to = ""  # e.g. "en" - empty = no translation
         self.method = METHOD_LINGVA   # "lingva" | "libre" | "deepl"
@@ -256,11 +263,15 @@ class SpeechWorker:
     def start(self, language, translate_to="", method=METHOD_LINGVA,
               deepl_key="", libre_url="", mic_index=-1,
               google_key=""):
-        # make sure a previous recording thread is fully stopped first
-        # (otherwise restarting after a language change silently fails)
-        if self.running:
-            self._stop.set()
-            self._thread.join(timeout=6)
+        # A previous recording thread has to finish before the new one
+        # opens the microphone. It used to be joined RIGHT HERE - on the
+        # GUI thread, for up to 6 seconds, because r.listen() only checks
+        # the stop flag between phrases. Toggling Speech to Text off and
+        # on, or changing the language, froze the window for that long.
+        # The wait now happens on the new worker thread instead.
+        previous, prev_stop = self._thread, self._stop
+        if previous is not None and previous.is_alive():
+            prev_stop.set()
         # drain leftover messages from the previous session
         while not self.messages.empty():
             try:
@@ -274,17 +285,30 @@ class SpeechWorker:
         self.libre_url = libre_url or ""
         self.google_key = google_key or ""
         self.mic_index = mic_index if mic_index is not None else -1
-        self._stop.clear()
-        self._thread = threading.Thread(target=self._run, daemon=True)
+        # a fresh Event per session: clearing the shared one would also
+        # un-stop the thread we just asked to quit
+        self._stop = threading.Event()
+        self._session += 1
+        self._thread = threading.Thread(
+            target=self._run, args=(self._stop, self._session, previous),
+            daemon=True)
         self._thread.start()
 
     def stop(self):
         self._stop.set()
 
     # ------------------------------------------------------------------ loop
-    def _run(self):
+    def _run(self, stop, session, previous=None):
+        def emit(kind, payload):
+            """Only the current session may talk to the UI."""
+            if session == self._session:
+                self.messages.put((kind, payload))
+
+        if previous is not None and previous.is_alive():
+            # the blocking wait, moved off the GUI thread
+            previous.join(timeout=20)
         if not HAS_SR:
-            self.messages.put(("error", "SpeechRecognition is not installed."))
+            emit("error", "SpeechRecognition is not installed.")
             return
         try:
             with _silence_stderr():
@@ -297,35 +321,35 @@ class SpeechWorker:
                     mic = mic_sounddevice.make_microphone(sr, self.mic_index)
         except Exception as e:
             if IS_WINDOWS:
-                self.messages.put((
+                emit(
                     "error",
                     f"Microphone not available ({e}). Check Windows "
                     "Settings \u203a Privacy & security \u203a Microphone: "
                     "\u201cLet desktop apps access your microphone\u201d has "
                     "to be on, otherwise the device opens but stays "
                     "silent. If no driver is installed at all:  "
-                    "pip install sounddevice"))
+                    "pip install sounddevice")
             else:
-                self.messages.put((
+                emit(
                     "error",
                     f"Microphone not available ({e}). NOTE: the app runs "
                     "inside its own venv \u2013 a pacman/system install of "
                     "pyaudio is NOT visible there. Install it into the "
                     "venv instead:  ./venv/bin/pip install pyaudio  "
-                    "(needs portaudio: pacman -S portaudio)."))
+                    "(needs portaudio: pacman -S portaudio).")
             return
         try:
             with _silence_stderr(), mic as source:
                 r.adjust_for_ambient_noise(source, duration=0.4)
-                self.messages.put(("status", "Listening \u2026 speak now"))
-                while not self._stop.is_set():
+                emit("status", "Listening \u2026 speak now")
+                while not stop.is_set():
                     try:
                         audio = r.listen(source, timeout=1, phrase_time_limit=12)
                     except sr.WaitTimeoutError:
                         continue
-                    if self._stop.is_set():
+                    if stop.is_set():
                         break
-                    self.messages.put(("status", "Transcribing \u2026"))
+                    emit("status", "Transcribing \u2026")
                     try:
                         text = r.recognize_google(audio, language=self.language)
                         text = text.strip()
@@ -334,33 +358,32 @@ class SpeechWorker:
                             tgt = self.translate_to
                             if tgt and not self.language.lower().startswith(
                                     tgt.lower().split("-")[0]):
-                                self.messages.put(("status", "Translating \u2026"))
+                                emit("status", "Translating \u2026")
                                 tr = translate_with_fallback(
                                     self.method, text,
                                     self.language, tgt,
                                     deepl_key=self.deepl_key,
                                     libre_url=self.libre_url,
                                     google_key=self.google_key,
-                                    log=lambda m: self.messages.put(
-                                        ("status", m)))
+                                    log=lambda m: emit("status", m))
                                 if tr:
-                                    self.messages.put(
-                                        ("status", f'\"{text}\" \u2192 \"{tr}\"'))
+                                    emit("status",
+                                         f'\"{text}\" \u2192 \"{tr}\"')
                                     out = tr
                                 else:
-                                    self.messages.put(
-                                        ("status", "Translation failed \u2013 "
-                                                   "sending original"))
+                                    emit("status",
+                                         "Translation failed \u2013 "
+                                         "sending original")
                             # emit (source, final) so the UI can show both
-                            self.messages.put(("text", (text, out)))
-                        self.messages.put(("status", "Listening \u2026"))
+                            emit("text", (text, out))
+                        emit("status", "Listening \u2026")
                     except sr.UnknownValueError:
-                        self.messages.put(("status",
-                                           "Didn't catch that \u2013 listening \u2026"))
+                        emit("status",
+                             "Didn't catch that \u2013 listening \u2026")
                     except sr.RequestError as e:
-                        self.messages.put(("error", f"Speech API error: {e}"))
+                        emit("error", f"Speech API error: {e}")
                         break
         except Exception as e:
-            self.messages.put(("error", f"Recording error: {e}"))
+            emit("error", f"Recording error: {e}")
         finally:
-            self.messages.put(("stopped", ""))
+            emit("stopped", "")

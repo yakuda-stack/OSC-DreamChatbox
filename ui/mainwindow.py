@@ -125,7 +125,7 @@ class MainWindow(ConfigMixin, AppsPageMixin, TextboxPageMixin,
         self.update_osc_client()
         self.update_timers()
 
-    def run_async(self, work, on_done, interval=200):
+    def run_async(self, work, on_done, interval=200, on_error=None):
         """Runs ``work()`` in a daemon thread and delivers its return value
         to ``on_done(result)`` back on the GUI thread. This is the single
         implementation of the worker+queue+QTimer pattern used everywhere
@@ -135,6 +135,13 @@ class MainWindow(ConfigMixin, AppsPageMixin, TextboxPageMixin,
         Queue and a short-lived QTimer that is disposed of once it fires, so
         no timer objects accumulate on the window. Exceptions inside ``work``
         are caught and logged instead of silently hanging the poller.
+
+        ``on_error(exception)`` is the important half of that promise. Any
+        caller that flips a "busy" flag before starting MUST pass it,
+        because a failing ``work()`` used to mean ``on_done`` never ran -
+        so the flag stayed True and that poller (or the whole plugin
+        store) was dead until the app restarted. One offline moment was
+        enough to lose the Store for the rest of the session.
         """
         q = _queue.Queue()
 
@@ -155,9 +162,23 @@ class MainWindow(ConfigMixin, AppsPageMixin, TextboxPageMixin,
             timer.stop()
             timer.deleteLater()   # don't leak one QTimer per call
             if ok:
-                on_done(res)
+                # An exception raised inside a Qt slot does not just get
+                # printed: PyQt6 hands it to sys.excepthook, whose default
+                # aborts the process. A callback bug must not take the
+                # whole app down with it.
+                try:
+                    on_done(res)
+                except Exception as e:      # noqa: BLE001
+                    self.log(f"run_async: result handler failed: "
+                             f"{type(e).__name__}: {e}")
             else:
                 self.log(f"run_async: background task failed: {res}")
+                if on_error is not None:
+                    try:
+                        on_error(res)
+                    except Exception as e:  # noqa: BLE001
+                        self.log(f"run_async: error handler failed: "
+                                 f"{type(e).__name__}: {e}")
         timer.timeout.connect(poll)
         timer.start(interval)
         return timer
@@ -606,12 +627,31 @@ class MainWindow(ConfigMixin, AppsPageMixin, TextboxPageMixin,
             self.debug_console.log(msg)
 
     def closeEvent(self, ev):
-        self.clear_chatbox()   # don't leave stale text hanging in VRChat
-        self.plugins.shutdown()   # teardown() every loaded plugin
-        self.stt.stop()
-        self.libre_server.stop_sync()   # no orphaned server on exit
-        self.oscq.stop()
+        # ORDER MATTERS. The config used to be written last, AFTER
+        # libre_server.stop_sync(), which waits for a process to die and
+        # can take several seconds. Anything that went wrong in there -
+        # or an impatient user killing the seemingly frozen window - cost
+        # the settings of the whole session. So: persist first, tidy up
+        # afterwards.
         self._save_timer.stop()
-        self._write_config()
-        self.debug_console.close()
+        try:
+            self._write_config()
+        except Exception as e:      # noqa: BLE001
+            print(f"closeEvent: config could not be written: {e}")
+
+        # Each step is isolated: one failing teardown must not skip the
+        # ones after it, or we leak a server / leave text in the chatbox.
+        for name, step in (
+                ("clear_chatbox", self.clear_chatbox),
+                ("plugins.shutdown", self.plugins.shutdown),
+                ("stt.stop", self.stt.stop),
+                # slowest one last - by now everything else is done and
+                # the config is safely on disk
+                ("libre_server.stop_sync", self.libre_server.stop_sync),
+                ("oscq.stop", self.oscq.stop),
+                ("debug_console.close", self.debug_console.close)):
+            try:
+                step()
+            except Exception as e:  # noqa: BLE001
+                print(f"closeEvent: {name} failed: {e}")
         super().closeEvent(ev)

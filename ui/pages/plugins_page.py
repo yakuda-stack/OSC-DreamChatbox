@@ -894,7 +894,29 @@ class PluginsPageMixin:
                 self.store.fetch_image(e)
             return entries
 
-        self.run_async(work, self._on_store_refreshed, interval=250)
+        # a StoreError (offline, GitHub 503, rate limit) used to leave
+        # _store_busy True and the button disabled for good - one bad
+        # moment cost the Store tab for the whole session
+        self.run_async(work, self._on_store_refreshed, interval=250,
+                       on_error=lambda e: self._store_release(
+                           f"Catalogue could not be loaded: {e}"))
+
+    def _store_release(self, message=""):
+        """Single place that puts the Store back into a usable state.
+
+        Every background job here sets _store_busy and disables a button;
+        if the job blows up, something has to undo that, or the tab stays
+        frozen with no way back short of restarting the app.
+        """
+        self._store_busy = False
+        for name in ("store_refresh_btn", "store_update_btn"):
+            btn = getattr(self, name, None)
+            if btn is not None:
+                btn.setEnabled(True)
+        if message:
+            self.log(f"Store: {message}")
+            if getattr(self, "store_status", None) is not None:
+                self.store_status.setText(f"\u26A0 {message}")
 
     def _on_store_refreshed(self, _entries):
         self._store_busy = False
@@ -1034,7 +1056,9 @@ class PluginsPageMixin:
                     failed.append(f"{e.name}: {ex}")
             return (done, failed)
 
-        self.run_async(work, self._on_store_updated_all, interval=250)
+        self.run_async(work, self._on_store_updated_all, interval=250,
+                       on_error=lambda e: self._store_release(
+                           f"Update failed: {e}"))
 
     def _on_store_updated_all(self, result):
         done, failed = result

@@ -1350,7 +1350,12 @@ class AppsPageMixin:
         if getattr(self, "_media_busy", False):
             return
         self._media_busy = True
-        self.run_async(self.media.fetch, self._on_media_result)
+        # on_error is not optional here: without it a failing poll
+        # would leave _media_busy True forever and this card would
+        # silently stop updating for the rest of the session
+        self.run_async(
+            self.media.fetch, self._on_media_result,
+            on_error=lambda _e: setattr(self, "_media_busy", False))
 
     def _on_media_result(self, info):
         self._media_busy = False
@@ -1491,7 +1496,12 @@ class AppsPageMixin:
         if getattr(self, "_hw_busy", False):
             return
         self._hw_busy = True
-        self.run_async(self.hw.snapshot, self._on_hw_result)
+        # on_error is not optional here: without it a failing poll
+        # would leave _hw_busy True forever and this card would
+        # silently stop updating for the rest of the session
+        self.run_async(
+            self.hw.snapshot, self._on_hw_result,
+            on_error=lambda _e: setattr(self, "_hw_busy", False))
 
     def _on_hw_result(self, info):
         self._hw_busy = False
