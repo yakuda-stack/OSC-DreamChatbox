@@ -71,7 +71,12 @@ STOP_FILE = HELPER_DIR / "stop"
 #: a reading older than this is stale - the helper died or was killed
 FRESH_SEC = 8.0
 
-LHM_DOWNLOAD_URL = "https://github.com/LibreHardwareMonitor/LibreHardwareMonitor/releases"
+LHM_DOWNLOAD_URL = ("https://github.com/LibreHardwareMonitor"
+                    "/LibreHardwareMonitor/releases")
+# RTSS is not on GitHub; Guru3D is where the author publishes it.
+# It also ships inside MSI Afterburner, so many people already have it.
+RTSS_DOWNLOAD_URL = ("https://www.guru3d.com/download/"
+                     "rtss-rivatuner-statistics-server-download/")
 
 # ShellExecuteW returns <= 32 on failure; 5 is "user said No to UAC"
 _SE_ACCESS_DENIED = 5
@@ -267,6 +272,10 @@ class TempHelper:
         self.log = log
         self.last_message = ""
         self._cache = (0.0, None, None, "")
+        # a launch takes a few seconds to produce its first reading. Until
+        # then the status still says "not active", and people click again -
+        # which means a second UAC prompt and a second elevated helper.
+        self._pending_until = 0.0
 
     # ---------------------------------------------------------- reading
     def temps(self):
@@ -313,8 +322,12 @@ class TempHelper:
         """(state, text) for the UI. state in:
         'active' | 'lhm-ready' | 'lhm-found' | 'none'"""
         if self.running():
+            self._pending_until = 0.0
             src = self.source() or "helper"
             return "active", f"Temperature monitoring active (source: {src})."
+        if time.monotonic() < self._pending_until:
+            return "starting", ("Helper started \u2013 waiting for the first "
+                                "reading\u2026")
         exe = find_lhm()
         if exe and _lhm_running():
             return "lhm-ready", ("LibreHardwareMonitor is running but not "
@@ -333,6 +346,9 @@ class TempHelper:
             return False, "Windows only."
         if self.running():
             return True, "Temperature monitoring is already active."
+        if time.monotonic() < self._pending_until:
+            return True, ("A helper was just started - give it a few seconds "
+                          "before trying again.")
 
         messages = []
 
@@ -373,11 +389,18 @@ class TempHelper:
                 messages.append(msg)
 
         if not exe:
+            # Deliberately phrased as a possibility: ACPI thermal zones do
+            # work on many laptops, so promising that LHM is REQUIRED was
+            # wrong on exactly the machines where the button just worked.
             messages.append(
-                "For CPU temperatures on a desktop board you will most "
-                "likely need LibreHardwareMonitor - it ships the signed "
-                "kernel driver Windows requires: " + LHM_DOWNLOAD_URL)
+                "If no CPU temperature shows up in a few seconds, this "
+                "board exposes no ACPI thermal zone and you need "
+                "LibreHardwareMonitor - it ships the signed kernel driver "
+                "Windows requires.")
 
+        # block a second launch (and a second UAC prompt) while the first
+        # one is still finding its feet
+        self._pending_until = time.monotonic() + 20.0
         text = " ".join(m for m in messages if m)
         self.last_message = text
         if callable(self.log):

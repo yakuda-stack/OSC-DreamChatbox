@@ -14,6 +14,9 @@ from PyQt6.QtWidgets import (
 from core.constants import (
     CHATBOX_LIMIT, LYRICS_DIR, MIN_STATUS_CYCLE_SEC, SLIM_SUFFIX, SONGBAR_LEN, TITLE_MAX_LEN)
 from core.osinfo import IS_WINDOWS
+# download links for the two optional Windows helpers; harmless to
+# import on Linux (the module is pure stdlib) but only used there
+from core.backends.wintemp import LHM_DOWNLOAD_URL, RTSS_DOWNLOAD_URL
 from core.textutils import (
     CUSTOM_STYLE_INDEX, DEFAULT_CUSTOM_BAR, SONGBAR_STYLES, TIME_POSITIONS, TIME_POS_LINE, apply_template, bar_length, compose_bar_line, make_songbar)
 from pathlib import Path
@@ -518,8 +521,14 @@ class AppsPageMixin:
                 "Then pick that folder above. Polling only reads the last few "
                 "lines of the log, so it costs nothing measurable.")
         else:
-            fps_hint = QLabel("\u2139 read via RTSS \u2013 nothing to "
-                              "configure, hover for details")
+            # rich text so the word RTSS itself is the link - the button
+            # below is for people who do not expect a label to be clickable
+            fps_hint = QLabel(
+                f'\u2139 read via <a href="{RTSS_DOWNLOAD_URL}" '
+                f'style="color:#5b8dc9;">RTSS</a> \u2013 nothing to '
+                f'configure, hover for details')
+            fps_hint.setTextFormat(Qt.TextFormat.RichText)
+            fps_hint.setOpenExternalLinks(True)
             fps_hint.setToolTip(
                 "Windows has no general way to read a game's FPS either. "
                 "RivaTuner Statistics Server (RTSS) sits inside the game and "
@@ -534,6 +543,19 @@ class AppsPageMixin:
         hint_row.addSpacing(24)
         hint_row.addWidget(fps_hint, 1)
         hc.addLayout(hint_row)
+        if IS_WINDOWS:
+            rtss_row = QHBoxLayout()
+            rtss_row.addSpacing(24)
+            rtss_btn = QPushButton("Download RTSS / MSI Afterburner")
+            rtss_btn.setObjectName("linkbtn")
+            rtss_btn.setFixedHeight(26)
+            rtss_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            rtss_btn.setToolTip(RTSS_DOWNLOAD_URL)
+            rtss_btn.clicked.connect(
+                lambda: QDesktopServices.openUrl(QUrl(RTSS_DOWNLOAD_URL)))
+            rtss_row.addWidget(rtss_btn)
+            rtss_row.addStretch()
+            hc.addLayout(rtss_row)
 
         gpu_lbl = QLabel("GPU:")
         gpu_lbl.setObjectName("cardtitle")
@@ -1513,6 +1535,32 @@ class AppsPageMixin:
         self.wintemp_lbl.setWordWrap(True)
         hint_row.addWidget(self.wintemp_lbl, 1)
         outer.addLayout(hint_row)
+
+        # ----- recommended extra software -----
+        rec_row = QHBoxLayout()
+        rec_row.addSpacing(24)
+        rec = QLabel(
+            "Recommended extra software: LibreHardwareMonitor (LHM). "
+            "Lightweight, open source and uses practically no system "
+            "resources, so your performance stays untouched. Inside LHM, "
+            "enable Options \u203a Remote Web Server once.")
+        rec.setStyleSheet("color: #7a8290; font-size: 11px;")
+        rec.setWordWrap(True)
+        rec_row.addWidget(rec, 1)
+        outer.addLayout(rec_row)
+
+        dl_row = QHBoxLayout()
+        dl_row.addSpacing(24)
+        lhm_btn = QPushButton("Download LibreHardwareMonitor")
+        lhm_btn.setObjectName("linkbtn")
+        lhm_btn.setFixedHeight(26)
+        lhm_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        lhm_btn.setToolTip(LHM_DOWNLOAD_URL)
+        lhm_btn.clicked.connect(
+            lambda: QDesktopServices.openUrl(QUrl(LHM_DOWNLOAD_URL)))
+        dl_row.addWidget(lhm_btn)
+        dl_row.addStretch()
+        outer.addLayout(dl_row)
         return outer
 
     def _wintemp_helper(self):
@@ -1528,13 +1576,17 @@ class AppsPageMixin:
             state, text = helper.status()
         except Exception as e:
             state, text = "none", f"Temperature helper unavailable ({e})"
-        icon = "\u2714" if state == "active" else "\u2139"
+        icon = {"active": "\u2714", "starting": "\u23F3"}.get(state, "\u2139")
         self.wintemp_lbl.setText(f"{icon} {text}")
         if hasattr(self, "wintemp_btn"):
-            self.wintemp_btn.setEnabled(state != "active")
+            # "starting" keeps the button locked too, otherwise an
+            # impatient second click means a second UAC prompt and a
+            # second elevated helper process
+            self.wintemp_btn.setEnabled(state not in ("active", "starting"))
             self.wintemp_btn.setText(
-                "Temperature monitoring active" if state == "active"
-                else "Enable advanced temperature monitoring\u2026")
+                {"active": "Temperature monitoring active",
+                 "starting": "Starting\u2026"}.get(
+                     state, "Enable advanced temperature monitoring\u2026"))
 
     def on_enable_wintemp(self):
         """Button handler. Pops UAC, so it must stay on the GUI thread."""
@@ -1550,9 +1602,13 @@ class AppsPageMixin:
             ok, msg = False, f"{type(e).__name__}: {e}"
         self.log(f"Temps: {msg}")
         self.wintemp_lbl.setText(("\u2714 " if ok else "\u26A0 ") + msg)
-        # the helper needs a moment to produce its first reading; the
-        # next hardware poll refreshes the line properly
-        self.wintemp_btn.setEnabled(True)
+        # Do NOT simply re-enable here: on success the helper is in its
+        # grace period and refresh_wintemp_status() keeps the button
+        # locked until a reading arrives. Only a failure gets it back
+        # right away, so a declined UAC prompt can be retried.
+        self.refresh_wintemp_status()
+        if not ok:
+            self.wintemp_btn.setEnabled(True)
 
     def on_choose_mangohud_dir(self):
         folder = QFileDialog.getExistingDirectory(
