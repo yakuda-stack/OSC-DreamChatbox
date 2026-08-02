@@ -1,93 +1,56 @@
 """
-core/mediafetch.py – MPRIS media fetcher for OSC-DreamChatbox
-(Spotify, YT Music, browsers, VLC, ... via D-Bus)
+core/mediafetch.py – now-playing info: picks the backend for this OS
+
+The actual player queries live in core/backends/:
+
+    media_linux.MediaFetcher       MPRIS over D-Bus (Spotify, browsers,
+                                   VLC, YT Music, ...)
+    media_null.NullMediaFetcher    fetch() always returns None
+
+Same pattern as core/hardware.py and core/translators.py: one name, one
+contract (``fetch()`` -> dict | None), the platform decides which class
+is behind it. Existing code keeps working unchanged:
+
+    from core.mediafetch import MediaFetcher
+    media = MediaFetcher(log)
+
+On Windows the null backend answers "nothing playing", which the Media
+Player card and the lyrics fetcher already handle - it is the same answer
+Linux gives when no player is running.
 """
 
-# MPRIS media detection via D-Bus (part of PyQt6, Linux only)
-try:
-    from PyQt6.QtDBus import QDBusConnection, QDBusInterface
-    HAS_DBUS = True
-except ImportError:
+# Copyright (C) 2026 yakuda
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+from __future__ import annotations
+
+from core.osinfo import IS_WINDOWS, OS_NAME
+from core.backends.media_null import NullMediaFetcher
+
+if IS_WINDOWS:
+    # No SMTC/winrt backend yet - drop in core/backends/media_windows.py
+    # and import it here when it exists.
+    MediaFetcher = NullMediaFetcher
     HAS_DBUS = False
+else:
+    from core.backends.media_linux import HAS_DBUS, MediaFetcher  # noqa: F401
+
+#: True when a real player source exists on this platform
+MEDIA_AVAILABLE = not IS_WINDOWS
+BACKEND_NAME = "mpris" if MEDIA_AVAILABLE else "null"
 
 
-class MediaFetcher:
-    def __init__(self, log_fn):
-        self.log = log_fn
-        self.bus = None
-        self._cached_player = None
-        if HAS_DBUS:
-            bus = QDBusConnection.sessionBus()
-            if bus.isConnected():
-                self.bus = bus
-            else:
-                self.log("MediaPlay: D-Bus session bus not available.")
-        else:
-            self.log("MediaPlay: QtDBus not available on this system.")
+def get_media_fetcher(log_fn):
+    """Factory - use this in new code instead of the class directly."""
+    return MediaFetcher(log_fn)
 
-    def _list_players(self):
-        iface = QDBusInterface("org.freedesktop.DBus", "/org/freedesktop/DBus",
-                               "org.freedesktop.DBus", self.bus)
-        reply = iface.call("ListNames")
-        names = reply.arguments()[0] if reply.arguments() else []
-        return [n for n in names if n.startswith("org.mpris.MediaPlayer2.")]
 
-    def _get_prop(self, service, prop):
-        props = QDBusInterface(service, "/org/mpris/MediaPlayer2",
-                               "org.freedesktop.DBus.Properties", self.bus)
-        reply = props.call("Get", "org.mpris.MediaPlayer2.Player", prop)
-        args = reply.arguments()
-        return args[0] if args else None
+def backend_note() -> str:
+    """One line the UI can show next to the Media Player card."""
+    if MEDIA_AVAILABLE:
+        return ""
+    return f"Media player detection is not implemented on {OS_NAME} yet."
 
-    def fetch(self):
-        """Returns dict {artist, title, position, length, player, playing}
-        or None if nothing is playing / no player found."""
-        if self.bus is None:
-            return None
-        try:
-            chosen, status = None, ""
-            # fast path: re-use the last known player if it is still playing
-            if self._cached_player:
-                st = self._get_prop(self._cached_player, "PlaybackStatus")
-                if st == "Playing":
-                    chosen, status = self._cached_player, st
-                else:
-                    self._cached_player = None
-            if chosen is None:
-                players = self._list_players()
-                if not players:
-                    return None
-                for p in players:
-                    st = self._get_prop(p, "PlaybackStatus") or ""
-                    if st == "Playing":
-                        chosen, status = p, st
-                        break
-                if chosen is None:
-                    chosen = players[0]
-                    status = self._get_prop(chosen, "PlaybackStatus") or ""
-                self._cached_player = chosen
 
-            meta = self._get_prop(chosen, "Metadata") or {}
-            if not isinstance(meta, dict):
-                return None
-            title = str(meta.get("xesam:title", "") or "")
-            artist_v = meta.get("xesam:artist", "")
-            if isinstance(artist_v, (list, tuple)):
-                artist = ", ".join(str(a) for a in artist_v)
-            else:
-                artist = str(artist_v or "")
-            length_us = meta.get("mpris:length", 0) or 0
-            pos_us = self._get_prop(chosen, "Position") or 0
-            if not title and not artist:
-                return None
-            return {
-                "player": chosen.split("org.mpris.MediaPlayer2.")[-1],
-                "playing": status == "Playing",
-                "artist": artist,
-                "title": title,
-                "position": float(pos_us) / 1_000_000.0,
-                "length": float(length_us) / 1_000_000.0,
-            }
-        except Exception as e:
-            self.log(f"MediaPlay: error while querying player: {e}")
-            return None
+__all__ = ["MediaFetcher", "NullMediaFetcher", "MEDIA_AVAILABLE",
+           "BACKEND_NAME", "HAS_DBUS", "get_media_fetcher", "backend_note"]

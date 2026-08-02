@@ -1,0 +1,20 @@
+# Dependencies for the OSC-DreamChatbox WINDOWS build.
+# Linux keeps using requirements.txt / the AUR package - this file is
+# only read by packaging/windows/build-exe.ps1.
+
+# --- required to run ---
+PyQt6
+python-osc
+
+# --- required to build the .exe ---
+pyinstaller>=6.0
+pillow            # converts assets/icon.png -> assets/icon.ico
+
+# --- optional, bundled automatically when installed ---
+zeroconf          # OSCQuery auto-discovery
+SpeechRecognition # Speech to Text
+deepl             # DeepL translation backend
+
+# NOT listed on purpose:
+#   setproctitle - Linux process-name cosmetics, the .exe already has a name
+#   pyaudio      - microphone input; add it once Speech to Text is ported

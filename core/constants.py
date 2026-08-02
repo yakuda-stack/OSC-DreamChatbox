@@ -1,11 +1,18 @@
 """
 core/constants.py – shared constants & paths for OSC-DreamChatbox
+
+Every path that differs per platform is resolved in core/osinfo.py; this
+module only names things. On Linux the values are byte-for-byte what they
+have always been.
 """
 
 # Copyright (C) 2026 yakuda
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-from pathlib import Path
+from pathlib import Path  # noqa: F401  (kept: tools import Path from here)
+
+from core.osinfo import (  # noqa: F401  (IS_WINDOWS/OS_NAME re-exported)
+    IS_WINDOWS, OS_NAME, config_dir, legacy_config_dir, resource_root)
 
 APP_NAME = "OSC-DreamChatbox"
 VERSION = "v1.2.6"
@@ -18,12 +25,16 @@ VRCHAT_GROUP_URL = ("https://vrchat.com/home/group/"
 PLUGINS_REPO_URL = "https://github.com/yakuda-stack/Dream-Chatbox-Plugins"
 
 # ---------------------------------------------------------------- paths
-# project root = folder that contains osc_dreamchatbox.py / core / ui
-PROJECT_DIR = Path(__file__).resolve().parent.parent
+# project root = folder that contains osc_dreamchatbox.py / core / ui.
+# Inside a PyInstaller build this is the unpacked bundle instead, so
+# assets/ and config/ keep resolving the same way.
+PROJECT_DIR = resource_root()
 
-CONFIG_DIR = Path.home() / ".config" / "OSC-DreamChatbox"
+# Linux:   ~/.config/OSC-DreamChatbox      (unchanged)
+# Windows: %APPDATA%\OSC-DreamChatbox
+CONFIG_DIR = config_dir()
 CONFIG_FILE = CONFIG_DIR / "config.json"
-OLD_CONFIG_FILE = Path.home() / ".config" / "osc-dreamchatbox" / "settings.json"
+OLD_CONFIG_FILE = legacy_config_dir() / "settings.json"
 
 # default folder for the user's own .lrc files (local lyrics)
 LYRICS_DIR = CONFIG_DIR / "lyrics"
@@ -38,7 +49,7 @@ EXTRAS_DIR = CONFIG_DIR / "extras"
 PLUGINS_DIR = CONFIG_DIR / "plugins"
 # store catalogue: a list of GitHub links, shipped with the app so it can be
 # extended with a pull request. APP_ROOT is where osc_dreamchatbox.py lives.
-APP_ROOT = Path(__file__).resolve().parent.parent
+APP_ROOT = PROJECT_DIR
 STORE_SOURCES_FILE = APP_ROOT / "config" / "plugins.json"
 
 # ------------------------------------------------------------- chatbox

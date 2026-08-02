@@ -72,7 +72,6 @@ fresh install; after that the config file decides.
 
 import importlib.util
 import json
-import platform
 import re
 import shutil
 import sys
@@ -83,6 +82,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from core.constants import APP_NAME, PLUGINS_DIR, VERSION
+# re-exported below so plugins and core/plugin_store.py can keep
+# doing `from core.plugins import IS_WINDOWS, OS_NAME`
+from core.osinfo import IS_LINUX, IS_WINDOWS, OS_NAME  # noqa: F401
 from core.textutils import apply_template
 
 MANIFEST_NAME = "plugin.json"
@@ -102,11 +104,11 @@ SETTING_TYPES = ("text", "bool", "int", "slider")
 # plugin ids are used as folder AND module names -> keep them boring
 ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 MODULE_PREFIX = "dreamchatbox_plugin_"
-# what we are running on right now - decided per start, never stored: a
-# config carried to another machine would otherwise pick the wrong branch
-IS_WINDOWS = platform.system() == "Windows"
-IS_LINUX = not IS_WINDOWS
-OS_NAME = "Windows" if IS_WINDOWS else "Linux"
+# what we are running on right now - decided per start in
+# core/osinfo.py, never stored: a config carried to another machine
+# would otherwise pick the wrong branch. IS_WINDOWS / IS_LINUX /
+# OS_NAME are imported above and stay importable from here, so
+# every existing plugin and every plugin.json keeps working.
 # zip bomb / typo protection (uncompressed size of the whole archive)
 MAX_UNPACKED_BYTES = 64 * 1024 * 1024
 
