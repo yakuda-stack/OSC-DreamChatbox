@@ -45,6 +45,9 @@ class NullHardwareMonitor:
         self.amd_card = None
         self.cpu_name_auto = "CPU"
         self.gpu_name_auto = "GPU"
+        # see hardware_windows.py: lets the UI print a platform-correct
+        # label instead of the hardcoded Linux "AMD (sysfs)"
+        self.gpu_backend_label = "none detected"
         self._prev_cpu = None
         self.log(f"Hardware: no backend for {OS_NAME} yet - CPU/GPU/RAM/FPS "
                  f"stay empty. Set a custom CPU/GPU name in the Hardware "

@@ -103,6 +103,12 @@ hiddenimports = [
     "core.backends",
     "core.backends.hardware_null",
     "core.backends.media_null",
+    "core.backends.hardware_windows",
+    # ctypes/winreg/mmap back the Windows hardware sources; winreg in
+    # particular is easy for the analysis to miss behind a local import
+    "winreg",
+    "mmap",
+    "ctypes.wintypes",
 ]
 
 # optional extras: only bundled when they are actually installed, so a
