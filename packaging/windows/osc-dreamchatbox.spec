@@ -83,6 +83,15 @@ datas = [
     (str(PROJECT_ROOT / "assets"), "assets"),
     (str(PROJECT_ROOT / "config"), "config"),
 ]
+# the elevated temperature helper must ship WITH the app; it is copied
+# out to CONFIG_DIR at runtime (see core/backends/wintemp.deploy_helper)
+_helper = PROJECT_ROOT / "packaging" / "windows" / "dreamtemp-helper.ps1"
+if _helper.exists():
+    datas.append((str(_helper), "packaging/windows"))
+else:
+    print("[spec] WARNING: dreamtemp-helper.ps1 missing - the temperature "
+          "button will not work in this build")
+
 for _doc in ("LICENSE", "THIRD_PARTY_NOTICES.md"):
     _p = PROJECT_ROOT / _doc
     if _p.exists():
@@ -104,6 +113,7 @@ hiddenimports = [
     "core.backends.hardware_null",
     "core.backends.media_null",
     "core.backends.hardware_windows",
+    "core.backends.wintemp",
     # ctypes/winreg/mmap back the Windows hardware sources; winreg in
     # particular is easy for the analysis to miss behind a local import
     "winreg",

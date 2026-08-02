@@ -611,6 +611,12 @@ class WindowsHardwareMonitor:
 
         self._lhm = _Lhm(log_fn)
         self._rtss = _Rtss(log_fn)
+        # elevated helper (Hardware card button) - see core/backends/wintemp.py
+        try:
+            from core.backends.wintemp import TempHelper
+            self.temp_helper = TempHelper(log_fn)
+        except Exception:
+            self.temp_helper = None
 
         reg_name, reg_vram = _registry_gpu()
         self._vram_total_bytes = reg_vram or None
@@ -639,8 +645,7 @@ class WindowsHardwareMonitor:
             sources.append("PDH")
         self.log(f"Hardware: Windows backend, sources={'+'.join(sources) or 'none'}"
                  f", CPU='{self.cpu_name_auto}', GPU name='{self.gpu_name_auto}'")
-        self.log("Hardware: temperatures need LibreHardwareMonitor "
-                 "(web server on), FPS needs RTSS. Both are optional.")
+        self.log("Hardware: temperatures need a kernel driver on Windows - use the \"Enable advanced temperature monitoring\" button on the Hardware card. FPS needs RTSS. Both are optional.")
 
     # ------------------------------------------------------------ names
     def _detect_gpu_name(self, registry_name=""):
@@ -657,11 +662,22 @@ class WindowsHardwareMonitor:
     def cpu_usage(self):
         return self._win32.cpu_usage() if self._win32 else None
 
+    def _temps(self):
+        """(cpu, gpu) from LHM's web server, falling back to the elevated
+        helper file. Two independent paths to the same numbers: the web
+        server needs LHM configured, the helper only needs the button."""
+        cpu, gpu = self._lhm.temps()
+        if (cpu is None or gpu is None) and self.temp_helper is not None:
+            h_cpu, h_gpu = self.temp_helper.temps()
+            cpu = cpu if cpu is not None else h_cpu
+            gpu = gpu if gpu is not None else h_gpu
+        return cpu, gpu
+
     def cpu_temp(self):
-        return self._lhm.temps()[0]
+        return self._temps()[0]
 
     def amd_gpu_temp(self):
-        return self._lhm.temps()[1]
+        return self._temps()[1]
 
     # ------------------------------------------------------------- ram
     def ram(self):
@@ -691,7 +707,7 @@ class WindowsHardwareMonitor:
         vu = vram_used / GB if vram_used else None
         vt = self._vram_total_bytes / GB if self._vram_total_bytes else None
         return {"usage": usage,
-                "temp": self._lhm.temps()[1],
+                "temp": self._temps()[1],
                 "vram_used": vu,
                 "vram_total": vt,
                 "vram_pct": (100.0 * vu / vt)

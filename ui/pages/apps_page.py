@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import (
     QButtonGroup, QCheckBox, QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QSlider, QSpinBox, QVBoxLayout, QWidget)
 from core.constants import (
     CHATBOX_LIMIT, LYRICS_DIR, MIN_STATUS_CYCLE_SEC, SLIM_SUFFIX, SONGBAR_LEN, TITLE_MAX_LEN)
+from core.osinfo import IS_WINDOWS
 from core.textutils import (
     CUSTOM_STYLE_INDEX, DEFAULT_CUSTOM_BAR, SONGBAR_STYLES, TIME_POSITIONS, TIME_POS_LINE, apply_template, bar_length, compose_bar_line, make_songbar)
 from pathlib import Path
@@ -480,32 +481,54 @@ class AppsPageMixin:
             return chk
 
         # ----- GPU -----
-        self.chk_fps = hw_chk("FPS  (needs MangoHud, see below)", "hw_fps")
-        fps_row = QHBoxLayout()
-        fps_row.addSpacing(24)
-        fps_row.addWidget(QLabel("MangoHud log folder"))
+        # FPS only exists inside the process drawing the frames, so both
+        # platforms need a helper - MangoHud on Linux, RTSS on Windows.
+        # The row below is the ONLY difference between them.
+        self.chk_fps = hw_chk(
+            "FPS  (needs RTSS, see below)" if IS_WINDOWS
+            else "FPS  (needs MangoHud, see below)", "hw_fps")
+
+        # The label is created on every platform because ui/mainwindow.py
+        # writes to it at startup; on Windows it simply never joins a
+        # layout, so nothing MangoHud-related is ever shown there.
         self.mangohud_dir_lbl = QLabel("(not set)")
         self.mangohud_dir_lbl.setObjectName("dim")
-        fps_row.addWidget(self.mangohud_dir_lbl, 1)
-        pick_mh = QPushButton("Choose\u2026")
-        pick_mh.setObjectName("linkbtn")
-        pick_mh.setFixedHeight(26)
-        pick_mh.setCursor(Qt.CursorShape.PointingHandCursor)
-        pick_mh.clicked.connect(self.on_choose_mangohud_dir)
-        fps_row.addWidget(pick_mh)
-        hc.addLayout(fps_row)
-        # kept small on purpose: the toggle costs nothing at runtime, the
-        # setup note is the only thing people need to see once
-        fps_hint = QLabel("\u2139 read via MangoHud \u2013 hover for the "
-                          "launch options")
+
+        if not IS_WINDOWS:
+            fps_row = QHBoxLayout()
+            fps_row.addSpacing(24)
+            fps_row.addWidget(QLabel("MangoHud log folder"))
+            fps_row.addWidget(self.mangohud_dir_lbl, 1)
+            pick_mh = QPushButton("Choose\u2026")
+            pick_mh.setObjectName("linkbtn")
+            pick_mh.setFixedHeight(26)
+            pick_mh.setCursor(Qt.CursorShape.PointingHandCursor)
+            pick_mh.clicked.connect(self.on_choose_mangohud_dir)
+            fps_row.addWidget(pick_mh)
+            hc.addLayout(fps_row)
+            # kept small on purpose: the toggle costs nothing at runtime,
+            # the setup note is the only thing people need to see once
+            fps_hint = QLabel("\u2139 read via MangoHud \u2013 hover for the "
+                              "launch options")
+            fps_hint.setToolTip(
+                "Linux has no general way to read a game's FPS. MangoHud runs "
+                "inside VRChat and can log it.\n\nSteam launch options:\n"
+                "MANGOHUD=1 MANGOHUD_CONFIG=output_folder=~/mangohud,"
+                "autostart_log=1,log_interval=1000 mangohud %command%\n\n"
+                "Then pick that folder above. Polling only reads the last few "
+                "lines of the log, so it costs nothing measurable.")
+        else:
+            fps_hint = QLabel("\u2139 read via RTSS \u2013 nothing to "
+                              "configure, hover for details")
+            fps_hint.setToolTip(
+                "Windows has no general way to read a game's FPS either. "
+                "RivaTuner Statistics Server (RTSS) sits inside the game and "
+                "publishes the frame rate in shared memory - this app reads "
+                "it from there.\n\nRTSS ships with MSI Afterburner and is "
+                "what most Windows overlays already use. Install it, leave it "
+                "running, and the value appears by itself.\n\nNo folder and "
+                "no launch options are needed.")
         fps_hint.setStyleSheet("color: #7a8290; font-size: 11px;")
-        fps_hint.setToolTip(
-            "Linux has no general way to read a game's FPS. MangoHud runs "
-            "inside VRChat and can log it.\n\nSteam launch options:\n"
-            "MANGOHUD=1 MANGOHUD_CONFIG=output_folder=~/mangohud,"
-            "autostart_log=1,log_interval=1000 mangohud %command%\n\n"
-            "Then pick that folder above. Polling only reads the last few "
-            "lines of the log, so it costs nothing measurable.")
         fps_hint.setWordWrap(True)
         hint_row = QHBoxLayout()
         hint_row.addSpacing(24)
@@ -547,6 +570,8 @@ class AppsPageMixin:
         hc.addWidget(cpu_lbl)
         self.chk_cpu_usage = hw_chk("CPU usage  (e.g. CPU: 27%)", "hw_cpu_usage")
         self.chk_cpu_temp = hw_chk("CPU temp", "hw_cpu_temp")
+        if IS_WINDOWS:
+            hc.addLayout(self._build_wintemp_row())
         self.chk_cpu_name = hw_chk("CPU name", "hw_cpu_name")
         cname_row = QHBoxLayout()
         self.chk_cpu_custom = QCheckBox("Custom CPU name:")
@@ -1433,16 +1458,101 @@ class AppsPageMixin:
     def _on_hw_result(self, info):
         self._hw_busy = False
         self.hw_info = info
-        self.hw_status_lbl.setText(
-            "GPU backend: " + ("NVIDIA (nvidia-smi)" if self.hw.has_nvidia
-                               else ("AMD (sysfs)" if self.hw.amd_card
-                                     else "none detected – GPU values unavailable")))
+        # backends can name themselves; "AMD (sysfs)" is a Linux-only
+        # phrase and would be wrong on a Windows machine with a Radeon
+        label = getattr(self.hw, "gpu_backend_label", None)
+        if not label:
+            label = ("NVIDIA (nvidia-smi)" if self.hw.has_nvidia
+                     else ("AMD (sysfs)" if self.hw.amd_card
+                           else "none detected – GPU values unavailable"))
+        self.hw_status_lbl.setText("GPU backend: " + label)
+        if IS_WINDOWS:
+            self.refresh_wintemp_status()
         self.update_preview()
 
     def _temp_str(self, t):
         if t is None:
             return None
         return f"{t:.0f}\U0001F525" if self.cfg["hw_flame"] else f"{t:.0f}\u00b0C"
+
+    # ------------------------------------------------- Windows temps
+    def _build_wintemp_row(self):
+        """Windows only: CPU temperatures need a kernel driver, which no
+        unelevated process has. See core/backends/wintemp.py for why."""
+        outer = QVBoxLayout()
+        outer.setSpacing(4)
+
+        row = QHBoxLayout()
+        row.addSpacing(24)
+        self.wintemp_btn = QPushButton(
+            "Enable advanced temperature monitoring\u2026")
+        self.wintemp_btn.setObjectName("linkbtn")
+        self.wintemp_btn.setFixedHeight(26)
+        self.wintemp_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.wintemp_btn.setToolTip(
+            "Windows does not let any normal program read CPU core "
+            "temperatures - they live in registers only kernel-mode code "
+            "can touch, and administrator rights alone do not change "
+            "that.\n\nThis button starts a small helper with administrator "
+            "rights (you will see a UAC prompt) that reads every source "
+            "reachable without installing a driver, and hands the values "
+            "back to this app.\n\nOn most desktop boards you will also "
+            "need LibreHardwareMonitor, which ships the signed driver "
+            "Windows requires. The button starts it for you if it is "
+            "installed.\n\nNothing is installed and no driver is added by "
+            "this app. The helper exits by itself when the chatbox closes.")
+        self.wintemp_btn.clicked.connect(self.on_enable_wintemp)
+        row.addWidget(self.wintemp_btn)
+        row.addStretch()
+        outer.addLayout(row)
+
+        hint_row = QHBoxLayout()
+        hint_row.addSpacing(24)
+        self.wintemp_lbl = QLabel("\u2139 checking\u2026")
+        self.wintemp_lbl.setStyleSheet("color: #7a8290; font-size: 11px;")
+        self.wintemp_lbl.setWordWrap(True)
+        hint_row.addWidget(self.wintemp_lbl, 1)
+        outer.addLayout(hint_row)
+        return outer
+
+    def _wintemp_helper(self):
+        return getattr(self.hw, "temp_helper", None)
+
+    def refresh_wintemp_status(self):
+        """Called after every hardware poll, so the line reflects reality
+        instead of whatever was true when the window opened."""
+        helper = self._wintemp_helper()
+        if helper is None or not hasattr(self, "wintemp_lbl"):
+            return
+        try:
+            state, text = helper.status()
+        except Exception as e:
+            state, text = "none", f"Temperature helper unavailable ({e})"
+        icon = "\u2714" if state == "active" else "\u2139"
+        self.wintemp_lbl.setText(f"{icon} {text}")
+        if hasattr(self, "wintemp_btn"):
+            self.wintemp_btn.setEnabled(state != "active")
+            self.wintemp_btn.setText(
+                "Temperature monitoring active" if state == "active"
+                else "Enable advanced temperature monitoring\u2026")
+
+    def on_enable_wintemp(self):
+        """Button handler. Pops UAC, so it must stay on the GUI thread."""
+        helper = self._wintemp_helper()
+        if helper is None:
+            self.log("Temps: no helper on this platform.")
+            return
+        self.wintemp_btn.setEnabled(False)
+        self.wintemp_lbl.setText("\u2139 waiting for the UAC prompt\u2026")
+        try:
+            ok, msg = helper.enable()
+        except Exception as e:
+            ok, msg = False, f"{type(e).__name__}: {e}"
+        self.log(f"Temps: {msg}")
+        self.wintemp_lbl.setText(("\u2714 " if ok else "\u26A0 ") + msg)
+        # the helper needs a moment to produce its first reading; the
+        # next hardware poll refreshes the line properly
+        self.wintemp_btn.setEnabled(True)
 
     def on_choose_mangohud_dir(self):
         folder = QFileDialog.getExistingDirectory(
