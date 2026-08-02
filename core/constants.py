@@ -15,7 +15,7 @@ from core.osinfo import (  # noqa: F401  (IS_WINDOWS/OS_NAME re-exported)
     IS_WINDOWS, OS_NAME, config_dir, legacy_config_dir, resource_root)
 
 APP_NAME = "OSC-DreamChatbox"
-VERSION = "v1.2.6"
+VERSION = "v1.3.0"
 GITHUB_REPO = "yakuda-stack/OSC-DreamChatbox"
 DISCORD_URL = "https://discord.gg/X5TaN4A47h"
 DONATE_URL = "https://ko-fi.com/yakuda_"

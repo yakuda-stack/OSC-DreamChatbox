@@ -2,7 +2,214 @@
 
 All notable changes to OSC-DreamChatbox are documented here.
 
+🟢 Windows Support: Complete & Stable
+
 🟢 Linux Support: Complete & Stable (v1.2.6)
+
+## [v1.3.0] – 2026-08-02
+
+**Windows support.** The app runs natively on Windows 10/11 - same codebase,
+same features, no Wine. Everything platform-dependent now sits behind one
+switch and has a real backend on both sides. Linux behaviour is unchanged
+throughout: the existing code was moved, not rewritten.
+
+### Added
+
+- **`core/osinfo.py` - the single platform switch.** The one place that calls
+  `platform.system()`. It hands out `IS_WINDOWS` / `IS_LINUX` / `OS_NAME`,
+  resolves the config directory (`~/.config` vs `%APPDATA%`) and knows where
+  the read-only app files are, whether that is the project folder or the
+  inside of a PyInstaller bundle. `core/plugins.py` re-exports the flags from
+  here, so every existing plugin and every `plugin.json` keeps working
+  untouched.
+
+- **`core/backends/` - one implementation per platform, one interface.** Same
+  pattern `core/translators.py` already used: several classes behind one
+  contract, and a factory picks at startup. `core/hardware.py` and
+  `core/mediafetch.py` became those factories, so `from core.hardware import
+  HardwareMonitor` in the UI resolves to whichever backend fits. The Linux
+  code moved into `hardware_linux.py` / `media_linux.py` byte for byte.
+
+- **Media player on Windows** via GSMTC, the system media session Windows
+  uses for its own media keys - Spotify, Apple Music, VLC, foobar2000,
+  MusicBee, and any browser tab playing audio or video.
+
+  The part that usually gets this wrong: GSMTC does *not* update the playback
+  position continuously. Spotify writes it on play, pause, seek and track
+  change and nothing in between, so a naively read song bar freezes for
+  minutes and then jumps. The position is therefore extrapolated from the
+  timeline's own timestamp, clamped to the track length, and guarded against
+  every way that can go wrong - paused, past the end, a player that never
+  sets the timestamp (it stays at the 1601 epoch, which would report a
+  position of several centuries), a browser tab that reports no duration at
+  all.
+
+  WinRT objects have COM apartment affinity, so the backend owns one daemon
+  thread that holds the apartment and refreshes a snapshot once a second;
+  `fetch()` only copies it and never blocks.
+
+- **Hardware on Windows**, stacked from "always works" to "only if you
+  installed something", each source isolated so a missing one costs its own
+  values and nothing else:
+  - CPU load via `GetSystemTimes()`, RAM via `GlobalMemoryStatusEx()`, CPU and
+    GPU names from the registry - no dependencies, always available
+  - GPU load and VRAM from `nvidia-smi`, or otherwise from the same
+    `\GPU Engine` / `\GPU Process Memory` performance counters the Task
+    Manager reads. Utilisation is summed per engine type and the busiest type
+    wins; adding up every instance would double-count, because 3D, Copy and
+    VideoDecode run in parallel on the same chip.
+  - FPS from RTSS shared memory - the Windows counterpart to tailing a
+    MangoHud log, auto-detected, nothing to configure
+
+- **Temperature helper for Windows.** CPU die temperatures live in registers
+  only kernel-mode code can read; administrator rights do not change that,
+  which is why every tool that shows them ships a signed kernel driver.
+
+  This app deliberately ships **no** such driver. The usual candidate,
+  WinRing0, has published privilege-escalation CVEs (CVE-2020-14979 /
+  CVE-2020-14980 - arbitrary MSR and physical memory access for any local
+  user), is on Microsoft's vulnerable-driver blocklist, and gets flagged by
+  antivirus. A VRChat chatbox has no business installing a ring-0 attack
+  surface on its users' machines.
+
+  Instead the Hardware card has a button that starts a small elevated
+  PowerShell helper reading everything reachable *without* a driver: ACPI
+  thermal zones, which work on most laptops, plus LibreHardwareMonitor's WMI
+  namespace if you have it running. The button also starts LHM elevated when
+  it is installed, and enables its web server first. The helper writes to a
+  small JSON file the unelevated app reads - no sockets, no pipes, no
+  privileged code in the app itself - and exits by itself when the chatbox
+  closes, so a stray elevated process can never outlive it.
+
+- **Microphone on Windows via `sounddevice`.** PyAudio is a compiled
+  extension whose wheels stop at CPython 3.13; on 3.14 `pip install pyaudio`
+  falls back to a source build needing Visual Studio and a PortAudio
+  checkout. `sounddevice` wraps the same PortAudio through CFFI, ships as
+  `py3-none-win_amd64` (no CPython ABI, installs on every 3.x) and carries
+  the PortAudio DLL in its wheel.
+
+  Nothing about the recognition changed. `sr.Recognizer.listen()` only asks
+  its source for four things, so the new module supplies exactly those as an
+  `sr.AudioSource` - the energy threshold, silence detection,
+  `adjust_for_ambient_noise()` and the Google recognizer all run untouched.
+  PyAudio still wins when it is installed, so existing Linux setups stay on
+  their usual path.
+
+- **Windows packaging.** `packaging/windows/` holds a PyInstaller spec
+  (one-folder or one-file, console on or off), a PowerShell build script that
+  sets up its own venv and converts the icon, a double-click `.bat` wrapper,
+  an Inno Setup installer script and a full build guide.
+
+  The spec explicitly collects the MSVC runtime (`VCRUNTIME140.dll`,
+  `MSVCP140.dll` and friends). PyInstaller follows binary dependencies but
+  does not collect DLLs it considers part of the operating system - which is
+  exactly where `MSVCP140.dll`, the C++ runtime Qt6 needs, normally lives. On
+  the build machine everything works; on a fresh Windows box the app died at
+  startup with a missing-DLL dialog. The build log now names every runtime
+  DLL it ships and warns loudly if one is missing.
+
+- **Plugin uninstall button.** Every row in the Plugins list has a 🗑 button.
+  The handler existed already - it had simply never been wired to anything.
+
+- **Clickable links for the API keys** under the Google and DeepL fields, and
+  download links for LibreHardwareMonitor and RTSS on the Hardware card.
+
+### Changed
+
+- **Config location on Windows** is `%APPDATA%\OSC-DreamChatbox`, with a
+  one-time copy from `~/.config/OSC-DreamChatbox` for anyone who ran the app
+  from source before this release. It copies rather than moves, so a
+  half-finished migration cannot destroy the only copy of anyone's settings.
+
+- **"Installed" and "Store" moved** to their own row under the *Plugins*
+  heading, left aligned. They were top-right, which is the first thing a
+  narrow window cuts off - and they decide what the whole page shows.
+
+- **Linux-only fixes are hidden on Windows**, not greyed out. *App Tray Fix*
+  writes a freedesktop `.desktop` entry; Windows takes the icon from the
+  executable. *VRChat Picture Folder Fix* symlinks screenshots out of the
+  Proton prefix; on Windows there is no prefix. A disabled button invites the
+  question "what am I missing?", and the answer is nothing.
+
+- **"Fix OSCQuery" knows per-platform config locations.** Each supported
+  program carries candidate paths for Linux and Windows, and the first one
+  that *exists* is used. The module's rule is unchanged and is what makes
+  guessing safe: only files that already exist are ever written, never
+  created.
+
+- **The FPS row adapts.** MangoHud folder picker and Steam launch options on
+  Linux; on Windows an RTSS hint with a download link and nothing to
+  configure.
+
+- **`core/plugins.py`** no longer computes the platform flags itself - three
+  lines, so there is one source of truth instead of two that can disagree.
+
+- **`config/` is now bundled into the AppImage.** The plugin store catalogue
+  lives there and was missing from the build. *(The AUR `PKGBUILD` has the
+  same gap and is left alone deliberately - fixing it needs a republish.)*
+
+### Fixed
+
+- **A single network error killed the plugin store for the whole session.**
+  `run_async(work, on_done)` only called `on_done` on success, so every
+  caller that sets a "busy" flag beforehand got stuck: one `StoreError`
+  (offline, GitHub rate limit) left `_store_busy` True and the button
+  disabled until the app restarted. The hardware and media pollers had the
+  same shape - one failed poll and that card never updated again. There is
+  now an `on_error` path, and the store resets its state in one place.
+
+- **An exception inside a result callback could take the app down.** PyQt6
+  hands an exception raised in a slot to `sys.excepthook`, whose default
+  aborts the process - so a display bug could have killed a running
+  recording. Callbacks are now isolated.
+
+- **Starting LibreTranslate froze the window for minutes.** The readiness
+  probe ran on a 750 ms timer on the GUI thread and did an HTTP request with
+  a one second timeout. While the server downloads its language models it
+  accepts connections without answering, so the window locked up for about a
+  second every 750 ms for the entire download. The probe now runs on a worker
+  thread.
+
+- **Speech to Text froze the window for up to six seconds** on restart -
+  changing the language or toggling it off and on joined the previous
+  recording thread on the GUI thread, and `r.listen()` only checks its stop
+  flag between phrases. The wait now happens on the new worker thread.
+
+  The same change fixes a race that killed recordings silently: the old
+  session emitted its "stopped" message *after* the new one had started, and
+  the UI read that as "recording ended" and unchecked the button. Sessions
+  are numbered now and a stale one's messages are dropped.
+
+- **Settings could be lost on exit.** `closeEvent` wrote the config last -
+  after a teardown step that waits several seconds for a process to die.
+  Anyone killing the seemingly frozen window lost the whole session's
+  settings. The config is written first now, and each teardown step is
+  isolated so one failure cannot skip the rest.
+
+- **File handle leak** in the LibreTranslate launcher: the log file was
+  opened and the parent's copy never closed - one handle per start, and on
+  Windows an open handle keeps the file locked so it could never be replaced.
+
+- **Plugin install and uninstall are hardened against Windows.** Files
+  extracted from an archive can carry the read-only attribute (`rmtree`
+  refuses them), and Defender or the search indexer can still hold a handle
+  moments after a write. Both now clear the attribute and retry over about a
+  second - a no-op on Linux. An update that failed here could previously have
+  cost the plugin's settings, since the old `configs/` folder had already
+  been moved aside.
+
+- **The GPU backend label** no longer says "AMD (sysfs)" on a Windows machine
+  with a Radeon card. Backends name themselves now.
+
+- **`_silence_stderr()` is a no-op on Windows.** It exists to swallow ALSA
+  spam, which Windows does not produce - and in a windowed `.exe` file
+  descriptor 2 may not be a real handle, so redirecting it would have hidden
+  genuine errors for no gain.
+
+- **PyInstaller build log told the truth about optional packages.**
+  `collect_all()` returns empty lists rather than raising for a package that
+  is not installed, so the spec reported success for everything. It asks the
+  import system first now.
 
 ## [v1.2.6] – 2026-08-01
 

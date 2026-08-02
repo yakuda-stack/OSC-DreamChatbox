@@ -128,6 +128,67 @@ hiddenimports = [
 # optional extras: only bundled when they are actually installed, so a
 # minimal build does not fail on a missing package
 binaries = []
+
+# ------------------------------------------------ MSVC runtime (Windows)
+# The classic "the code execution cannot proceed because VCRUNTIME140.dll
+# was not found" dialog. Two different runtimes are involved:
+#
+#   VCRUNTIME140.dll / VCRUNTIME140_1.dll   the C runtime - CPython itself
+#                                           needs it, and python.org ships
+#                                           a copy next to python.exe
+#   MSVCP140.dll (+ _1/_2, CONCRT140)       the C++ runtime - Qt6 needs it,
+#                                           and it usually only exists in
+#                                           System32 because some installer
+#                                           put the VC++ redistributable
+#                                           there
+#
+# PyInstaller follows binary dependencies, but it deliberately does not
+# collect DLLs it considers part of the operating system - which is exactly
+# where MSVCP140.dll normally lives. On the build machine everything works
+# (the redistributable is installed); on a fresh Windows box the app dies
+# at startup with that dialog.
+#
+# Copying these next to the app is app-local deployment, which Microsoft
+# documents and permits for the VC++ redistributable files.
+#
+# Anything found here is REPORTED, so the build log tells you what you are
+# actually shipping instead of leaving you to find out from a bug report.
+def _msvc_runtime():
+    if os.name != "nt":
+        return []
+    wanted = ["VCRUNTIME140.dll", "VCRUNTIME140_1.dll",
+              "MSVCP140.dll", "MSVCP140_1.dll", "MSVCP140_2.dll",
+              "CONCRT140.dll"]
+    # python.org puts its own copy next to python.exe; System32 holds the
+    # system-wide redistributable. Prefer the python one: it is guaranteed
+    # to match the interpreter we are freezing.
+    search = [Path(sys.executable).parent,
+              Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32"]
+    found, missing = [], []
+    for dll in wanted:
+        for folder in search:
+            candidate = folder / dll
+            if candidate.is_file():
+                found.append((str(candidate), "."))
+                print(f"[spec] MSVC runtime: {dll}  <- {folder}")
+                break
+        else:
+            missing.append(dll)
+    if missing:
+        # _1/_2 variants genuinely do not exist in older toolsets, so this
+        # is information, not an error
+        print(f"[spec] MSVC runtime not found (may be fine): "
+              f"{', '.join(missing)}")
+    if not any(f[0].lower().endswith("msvcp140.dll") for f in found):
+        print("[spec] WARNING: MSVCP140.dll was not found anywhere. Qt6 "
+              "needs it. Install the 'Microsoft Visual C++ 2015-2022 "
+              "Redistributable (x64)' on this build machine and rebuild, "
+              "or your users will need it installed.")
+    return found
+
+
+binaries += _msvc_runtime()
+
 # "winrt" is the PyWinRT namespace package behind the GSMTC media
 # backend; it ships compiled extension modules that the static analysis
 # cannot follow, so it has to be collected wholesale. "winsdk" is the

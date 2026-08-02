@@ -2,11 +2,11 @@
 
 # 🌙 OSC-DreamChatbox
 
-**A simple, clean VRChat OSC chatbox companion for Linux.**
-*The native Linux alternative to [MagicChatbox](https://github.com/BoiHanny/vrcosc-magicchatbox) (VRCOSC) – which is Windows-only.*
+**A simple, clean VRChat OSC chatbox companion for Linux and Windows.**
+*Born as the native Linux alternative to [MagicChatbox](https://github.com/BoiHanny/vrcosc-magicchatbox) (VRCOSC) – now at home on both.*
 
 [![License: GPL--3.0--or--later](https://img.shields.io/badge/License-GPL--3.0--or--later-blue.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/Platform-Linux-green.svg)]()
+[![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20Windows-green.svg)]()
 [![Python](https://img.shields.io/badge/Python-3.10%2B-yellow.svg)]()
 [![Discord](https://img.shields.io/badge/Discord-Join-5865F2.svg)](https://discord.gg/X5TaN4A47h)
 [![Ko-fi](https://img.shields.io/badge/Ko--fi-Support-FF5E5B.svg)](https://ko-fi.com/yakuda_)
@@ -17,7 +17,7 @@
 
 ## ✨ What can it do?
 
-Everything you know from MagicChatbox/VRCOSC on Windows – status rotation, now-playing, hardware stats, speech-to-text, the slim-chatbox trick – built natively for Linux (PyQt6, MPRIS/D-Bus, sysfs).
+Status rotation, now-playing, hardware stats, speech-to-text, live translation, plugins, the slim-chatbox trick – one PyQt6 app that talks to the system services each platform actually has.
 
 *(Personal Status, MediaPlay, Hardware and All-in-one live on the **Apps** page. Plugins have their own page, theming sits under Options.)*
 
@@ -26,7 +26,29 @@ Everything you know from MagicChatbox/VRCOSC on Windows – status rotation, now
 
     As of version 1.2.6, the Linux version of the OSC Dream Chatbox is fully completed, tested, and stable.
     All core features (chatbox sync, caching, STT, live translation, AUR packaging) are fully optimized for Linux systems.
-    
+
+### 🟢 Windows Support: Complete & Stable (v1.3.0)
+
+    As of version 1.3.0 the app runs natively on Windows 10/11 - not through Wine, not as a port,
+    but on the same codebase. Every platform-dependent piece sits behind a switch in core/osinfo.py
+    and has a real backend on both sides.
+
+**How the two platforms get the same features from different places**
+
+| Feature | Linux | Windows |
+|---|---|---|
+| Now playing | MPRIS over D-Bus | GSMTC – the media session Windows uses for its own media keys |
+| CPU / RAM | `/proc`, `/sys` | `GetSystemTimes()`, `GlobalMemoryStatusEx()` |
+| GPU / VRAM | sysfs (AMD), `nvidia-smi` | `nvidia-smi`, otherwise the same GPU performance counters the Task Manager reads |
+| Temperatures | hwmon | `nvidia-smi`; for CPU and AMD/Intel GPU a helper you start from the Hardware card (see below) |
+| FPS | MangoHud log | RTSS shared memory (ships with MSI Afterburner) |
+| Microphone | PyAudio | sounddevice (PyAudio has no wheels past Python 3.13) |
+| Config | `~/.config/OSC-DreamChatbox` | `%APPDATA%\OSC-DreamChatbox` |
+
+Where a platform genuinely cannot do something, the value stays empty and the card says why – nothing is faked.
+
+**About CPU temperatures on Windows:** they live in registers only kernel-mode code can read, so *no* normal program can get them – administrator rights do not change that. Every tool that shows them ships a signed kernel driver. This app does **not** ship one (the usual candidate, WinRing0, has published privilege-escalation CVEs). Instead the Hardware card has a button that starts a small elevated helper reading everything reachable without a driver – ACPI thermal zones, which work on most laptops – and drives [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor) if you have it installed, which does have the driver. On desktop boards you will most likely need LHM; the button links it.
+
 
 ### 📝 Personal Status
 - **10 switchable text templates**, each with its own set of up to **20 texts** – exclusive toggles, enabling one switches the others off
@@ -35,7 +57,7 @@ Everything you know from MagicChatbox/VRCOSC on Windows – status rotation, now
 - Built-in **icon picker** (🔥 🎵 🎮 …) for every text field
 
 ### 🎵 MediaPlay
-- Shows the song you are listening to – **Spotify, YT Music, browsers, VLC, any player** (via MPRIS/D-Bus, no extra setup)
+- Shows the song you are listening to – **Spotify, Apple Music, YT Music, browsers, VLC, any player** (Linux: MPRIS/D-Bus · Windows: the system media session – no extra setup either way)
 - Toggle artist / title (max 24 chars) / time / progress songbar individually
 - Time is shown **without seconds** (hours:minutes, e.g. `0:03/0:04`)
 - **Songbar size slider (30–100 %)** and **time position** – put the time before, after or around the bar so everything fits on **one line**:
@@ -55,9 +77,9 @@ Everything you know from MagicChatbox/VRCOSC on Windows – status rotation, now
 - Custom string with placeholders: `{artist} {title} {time} {time_status} {time_end} {bar} {icon_sound}`
 
 ### 🖥️ Hardware
-- Live **GPU / VRAM / CPU / RAM** stats (AMD via kernel sysfs, NVIDIA via nvidia-smi)
+- Live **GPU / VRAM / CPU / RAM** stats (Linux: sysfs + nvidia-smi · Windows: Win32 API, nvidia-smi and GPU performance counters)
 - Auto-detected or custom GPU/CPU names, temps as `°C` or 🔥
-- **FPS** via MangoHud – Linux has no general way to read a game's frame rate, so the value comes from MangoHud's log (it already runs inside VRChat). Point the card at the log folder and add the launch options shown there
+- **FPS** – neither OS can read a game's frame rate on its own, so it comes from an overlay that already sits inside VRChat. **Linux:** MangoHud's log, point the card at the folder and add the launch options shown there. **Windows:** RTSS (ships with MSI Afterburner) – nothing to configure, the card links the download
 - Custom string with placeholders: `{gpu_name} {gpu_usage} {gpu_temp} {temp_icon} {vram_usage} {cpu_name} {cpu_usage} {cpu_temp} {ram_usage} {ram_type} {fps}`
 
 ### 🧩 All in one (AIO)
@@ -72,7 +94,7 @@ Everything you know from MagicChatbox/VRCOSC on Windows – status rotation, now
 - The catalogue is a list of GitHub links in `config/plugins.json`; **Refresh pulls the current list from GitHub**, so new plugins appear without updating the app
 - Every plugin is usable as `{plugin_id}` in status texts, in the Apps custom strings and in All in one – with its own custom string, if you set one
 - **Per-plugin settings** declared in `plugin.json` (text, switch, number, slider) are rendered automatically – a plugin author gets a settings UI without writing any Qt
-- `is_linux` / `is_windows` flags mark what a plugin can run on; anything incompatible is greyed out rather than hidden, and refused by the loader
+- `is_linux` / `is_windows` flags mark what a plugin can run on; anything incompatible is greyed out rather than hidden, and refused by the loader. Each row has a 🗑 button to uninstall it
 - Crash-safe by design: a broken plugin logs a traceback to the debug console and is skipped, it can never take the chatbox down
 - Bundled: **World Stats** (players in your instance, world name, local clock – `{player_in_world} {group_world} {realtime}`) and **Hello World** as a template
 
@@ -103,14 +125,14 @@ Everything you know from MagicChatbox/VRCOSC on Windows – status rotation, now
 
 ### 🔧 OSCQuery Fix (Options page)
 - One button enables OSCQuery directly in the config of every supported program – other settings stay untouched
-- Currently supported: **OSCLeash** (`~/.config/OSCLeash/Config.json` → `"UseOSCQuery": true`) and **OscGoesBrrr** (`~/.config/OscGoesBrrr/config.json` → `"useOscQuery": true`)
+- Currently supported: **OSCLeash** (→ `"UseOSCQuery": true`) and **OscGoesBrrr** (→ `"useOscQuery": true`). Config locations are per platform (`~/.config/...` vs `%APPDATA%\...`); only files that already exist are touched, never created
 - Compact UI: collapsible "Show supported programs" expander with a scrollable list; click a program to fold its details (path + parameter) in/out
 - Easily extensible: all programs live in a single file, `core/queryfix.py`
 
 ### More
 - Drag & drop card order = line order in VRChat
 - Character counter with limit warning
-- Debug console, update checker, dark UI, everything saved to `~/.config/OSC-DreamChatbox/config.json`
+- Debug console, update checker, dark UI, everything saved to `~/.config/OSC-DreamChatbox/config.json` (Windows: `%APPDATA%\OSC-DreamChatbox\config.json`)
 
 > ℹ️ The former **OSC Routing** and **Addons/OSC Apps** features were removed – external tools (OSCLeash, face tracking, …) handle port discovery via **OSCQuery** nowadays, so the built-in relay and installer were unnecessary ballast.
 
@@ -137,6 +159,42 @@ Everything you know from MagicChatbox/VRCOSC on Windows – status rotation, now
 </table>
 
 ## 🚀 Installation
+
+<details open>
+<summary><b>🪟 Windows 10 / 11</b></summary>
+
+### Installer (recommended)
+Grab `OSC-DreamChatbox-<version>-setup.exe` from the
+**[releases page](https://github.com/yakuda-stack/OSC-DreamChatbox/releases)**
+and run it. It installs per user, so there is no UAC prompt.
+
+Your config lives in `%APPDATA%\OSC-DreamChatbox` and **survives an
+uninstall** – settings, plugins and themes are still there after a
+reinstall.
+
+### From source
+```powershell
+git clone https://github.com/yakuda-stack/OSC-DreamChatbox.git
+cd OSC-DreamChatbox
+py -m venv venv
+.\venv\Scripts\Activate.ps1
+pip install -r requirements-windows.txt
+python osc_dreamchatbox.py
+```
+If PowerShell blocks the activation:
+`Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass`
+
+### Build the .exe yourself
+```powershell
+.\packaging\windows\build-exe.ps1 -NoConsole
+```
+Full details, including the `MSVCP140.dll` trap, in
+**[packaging/windows/README-BUILD.md](packaging/windows/README-BUILD.md)**.
+
+</details>
+
+<details open>
+<summary><b>🐧 Linux</b></summary>
 
 ### Arch Linux / CachyOS (AUR) — recommended
 Available on the **[AUR](https://aur.archlinux.org/packages/osc-dreamchatbox)** – install with any AUR helper:
@@ -168,15 +226,20 @@ python3 -m venv venv
 ./venv/bin/python osc_dreamchatbox.py
 ```
 
+</details>
+
 ### Optional features
-| Feature | Needs |
-|---|---|
-| Speech to Text | `pyaudio` (Arch: `python-pyaudio`, a hard dependency of the AUR package). `SpeechRecognition` installs itself with one button in the Speech to Text card, into `~/.config/OSC-DreamChatbox/extras` – no AUR package needed |
-| DeepL translation | `deepl` (official library, in requirements.txt) |
-| Offline translation | local LibreTranslate: `pip install libretranslate`, then run `libretranslate` |
-| Exact GPU name | `mesa-utils` (glxinfo) |
-| NVIDIA stats | `nvidia-smi` (driver package) |
-| FPS readout | `mangohud`, started with logging (see the Hardware card) |
+| Feature | 🐧 Linux | 🪟 Windows |
+|---|---|---|
+| Speech to Text | `pyaudio` (Arch: `python-pyaudio`) – or simply `pip install sounddevice` | `pip install sounddevice` (**not** `pyaudio`: no wheels past Python 3.13) |
+| | `SpeechRecognition` installs itself with one button in the Speech to Text card, into the app's own `extras` folder | same button |
+| Now playing | nothing – MPRIS is already there | `pip install "winrt-Windows.Media.Control[all]"` (**not** `winsdk`: no wheels past Python 3.12) |
+| DeepL translation | `deepl` (official library) | same |
+| Offline translation | `pip install libretranslate`, then Start/Stop right in the UI | same |
+| Exact GPU name | `mesa-utils` (glxinfo) | not needed – read from the driver/registry |
+| NVIDIA stats | `nvidia-smi` (driver package) | `nvidia-smi` (ships with the driver) |
+| CPU / GPU temperatures | hwmon, already there | [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor) – the Hardware card starts it for you |
+| FPS readout | `mangohud`, started with logging | [RTSS](https://www.guru3d.com/download/rtss-rivatuner-statistics-server-download/) / MSI Afterburner, just running |
 
 ---
 
@@ -186,17 +249,28 @@ python3 -m venv venv
 OSC-DreamChatbox/
 ├── osc_dreamchatbox.py   # entry point (GUI starter)
 ├── core/                 # backend logic
+│   ├── osinfo.py         #   THE platform switch - the only place that
+│   │                     #   asks which OS this is, plus config paths
 │   ├── constants.py      #   app name, version, paths
 │   ├── textutils.py      #   time format, songbar styles, templates
 │   ├── queryfix.py       #   OSCQuery fixer (supported programs list)
 │   ├── oscquery.py       #   native OSCQuery (mDNS + dynamic ports)
 │   ├── translators.py    #   translation backends (Lingva/Google/Libre/DeepL)
-│   ├── mediafetch.py     #   MPRIS/D-Bus media fetcher
-│   ├── hardware.py       #   CPU/RAM/GPU monitoring + FPS (MangoHud log)
+│   ├── mediafetch.py     #   picks the media backend for this OS
+│   ├── hardware.py       #   picks the hardware backend for this OS
 │   ├── speechtotext.py   #   speech recognition + translation
 │   ├── plugins.py        #   plugin discovery, loading, settings
 │   ├── plugin_store.py   #   store: GitHub catalogue, install, updates
-│   └── theming.py        #   UI themes, colours, background images
+│   ├── theming.py        #   UI themes, colours, background images
+│   └── backends/         #   one implementation per platform
+│       ├── hardware_linux.py     /proc, /sys, nvidia-smi, MangoHud
+│       ├── hardware_windows.py   Win32 API, PDH counters, nvidia-smi, RTSS
+│       ├── hardware_null.py      every value None (unsupported platform)
+│       ├── media_linux.py        MPRIS over D-Bus
+│       ├── media_windows.py      GSMTC (system media session)
+│       ├── media_null.py         nothing playing, ever
+│       ├── mic_sounddevice.py    microphone without PyAudio
+│       └── wintemp.py            elevated temperature helper (Windows)
 ├── config/
 │   └── plugins.json      #   store catalogue (GitHub links)
 ├── ui/                   # UI widgets & stylesheet
@@ -210,13 +284,22 @@ OSC-DreamChatbox/
 │   └── ui_main.py
 ├── assets/               # icons & images
 │   └── icon.png          #   window/taskbar icon (loaded from here)
-├── packaging/            # AUR PKGBUILD + .desktop file
-├── install.sh            # one-line installer (this is the one the README links)
+├── packaging/
+│   ├── aur/              #   AUR PKGBUILD + .desktop file
+│   └── windows/          #   Windows build
+│       ├── osc-dreamchatbox.spec   PyInstaller recipe
+│       ├── build-exe.ps1           one-command build
+│       ├── build-exe.bat           double-click wrapper
+│       ├── installer.iss           Inno Setup installer
+│       ├── dreamtemp-helper.ps1    elevated temperature helper
+│       └── README-BUILD.md         full build guide
+├── install.sh            # one-line installer (Linux)
 ├── scripts/              # build scripts
 │   ├── build-appimage.sh   (PyInstaller one-file build)
 │   └── build_appimage.sh   (bundled-source build, static FUSE runtime)
-├── start.sh              # run from a local venv
-├── requirements.txt
+├── start.sh              # run from a local venv (Linux)
+├── requirements.txt          # Linux
+├── requirements-windows.txt  # Windows
 ├── LICENSE               # GPL-3.0
 └── THIRD_PARTY_NOTICES.md   # dependency & service attribution
 ```
@@ -228,6 +311,11 @@ OSC-DreamChatbox/
 **OSC must be enabled in VRChat**: Action Menu (radial) → **Options → OSC → Enabled**
 
 Default target is `127.0.0.1:9000`. VRChat chatbox limit is 144 characters (the slim trick uses 2 of them).
+
+**🪟 Windows, first start:** the firewall will ask whether the app may use
+the network. That is mDNS (UDP 5353) for OSCQuery, which is how VRChat's
+real OSC port is discovered. Say yes – if you decline, everything still
+works, but the app falls back to the fixed port 9000.
 
 ---
 
