@@ -370,6 +370,23 @@ class PluginsPageMixin:
             anchor_box.setEnabled(False)
         outer.addWidget(anchor_box, 0, Qt.AlignmentFlag.AlignVCenter)
 
+        # ---- uninstall, last in the row
+        # Deliberately reachable for UNSUPPORTED plugins too: a plugin that
+        # cannot run here is exactly the one you want to get rid of, and
+        # everything else in its row is disabled.
+        del_btn = QPushButton("\U0001F5D1")
+        del_btn.setObjectName("iconbtn")
+        del_btn.setFixedSize(30, 30)
+        del_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        del_btn.setToolTip(f"Uninstall '{plugin.name}' and delete its "
+                           f"folder\n{plugin.folder}")
+        del_btn.setStyleSheet(
+            "QPushButton:hover { background: #4a2b2b; border-color: #c96b6b;"
+            " color: #ffb4b4; }")
+        del_btn.clicked.connect(
+            lambda _, pid=plugin.pid: self.on_plugin_delete(pid))
+        outer.addWidget(del_btn, 0, Qt.AlignmentFlag.AlignVCenter)
+
         box.addLayout(outer)
 
         # ---------------------------------------------------- settings
@@ -1132,7 +1149,8 @@ class PluginsPageMixin:
         answer = QMessageBox.question(
             self, "Delete plugin?",
             f"Delete '{plugin.name}' for good?\n\n"
-            f"The whole folder is removed:\n{plugin.folder}",
+            f"The whole folder is removed, including the settings you "
+            f"made for this plugin:\n{plugin.folder}",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No)
         if answer != QMessageBox.StandardButton.Yes:

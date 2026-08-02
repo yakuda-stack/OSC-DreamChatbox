@@ -21,6 +21,7 @@ from core.theming import (
 from core.constants import (
     CHATBOX_INPUT, DISCORD_URL, DONATE_URL, GITHUB_REPO, VERSION, VRCHAT_GROUP_URL)
 from core.oscquery import HAS_ZEROCONF
+from core.osinfo import IS_WINDOWS, OS_NAME
 from ui.ui_main import ToggleLabel, ToggleSwitch
 try:
     from pythonosc.udp_client import SimpleUDPClient
@@ -257,6 +258,21 @@ class OptionsPageMixin:
         uc.addLayout(btn_row)
 
         # App Tray Fix sits on its own row directly under "Check for updates"
+        #
+        # Both buttons below fix problems that only exist on Linux:
+        #   App Tray Fix        writes a freedesktop .desktop entry so
+        #                       Wayland/KDE can match the window to an icon.
+        #                       Windows takes the icon from the .exe itself,
+        #                       and the AppUserModelID set in
+        #                       osc_dreamchatbox.py already handles the
+        #                       taskbar grouping.
+        #   Picture Folder Fix  symlinks VRChat's screenshots out of the
+        #                       Proton prefix. On Windows there IS no
+        #                       prefix - VRChat writes straight into
+        #                       %USERPROFILE%\Pictures\VRChat.
+        # So on Windows the whole row is skipped rather than shown greyed
+        # out: a disabled button invites the question "what am I missing?",
+        # and the honest answer is "nothing".
         fix_row = QHBoxLayout()
         self.tray_fix_btn = QPushButton("\U0001F527  App Tray Fix")
         self.tray_fix_btn.setObjectName("linkbtn")
@@ -282,7 +298,13 @@ class OptionsPageMixin:
         fix_row.addWidget(self.vrc_pic_btn)
 
         fix_row.addStretch()
-        uc.addLayout(fix_row)
+        if IS_WINDOWS:
+            # created but never shown: other code (and any future preset)
+            # may still reference the attributes
+            self.tray_fix_btn.setVisible(False)
+            self.vrc_pic_btn.setVisible(False)
+        else:
+            uc.addLayout(fix_row)
 
         self.update_lbl = QLabel(f"Current version: {VERSION}")
         self.update_lbl.setObjectName("dim")
@@ -685,6 +707,13 @@ class OptionsPageMixin:
         user entry with the themed icon). Only when the existing entry is
         old/incomplete – e.g. a previous fix without the icon fix – does it
         delete it and create a fresh one."""
+        if IS_WINDOWS:
+            QMessageBox.information(
+                self, "App Tray Fix",
+                "Not needed on Windows: the taskbar icon comes from the "
+                "executable itself. This fix writes a freedesktop .desktop "
+                "entry, which only Linux desktops use.")
+            return
         if desktop_integration.is_installed():
             QMessageBox.information(
                 self, "App Tray Fix",
@@ -702,6 +731,12 @@ class OptionsPageMixin:
     def run_vrc_picture_fix(self):
         """Symlink the in-prefix VRChat picture folder to the Linux Pictures
         folder – only if it isn't already set up."""
+        if IS_WINDOWS:
+            box(self, "VRC Picture Folder Fix",
+                "Not needed on Windows: VRChat saves its photos straight "
+                "to your Pictures folder. This fix only exists because on "
+                "Linux they end up inside the Proton prefix.")
+            return
         if vrc_pictures.is_fixed():
             QMessageBox.information(
                 self, "VRC Picture Folder Fix",
@@ -780,7 +815,7 @@ class OptionsPageMixin:
         prog = queryfix.PROGRAMS[idx]
         self.qf_details_lbl.setText(
             f"{prog['name']}\n"
-            f"      path:      {prog['path']}\n"
+            f"      path:      {queryfix.display_path(prog)}\n"
             f"      parameter: \"{prog['key']}\": "
             f"{json.dumps(prog['value'])}")
         self.qf_details.show()
