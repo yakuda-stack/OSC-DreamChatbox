@@ -113,6 +113,79 @@ MODULE_PREFIX = "dreamchatbox_plugin_"
 MAX_UNPACKED_BYTES = 64 * 1024 * 1024
 
 
+# --------------------------------------------------------------------
+# filesystem helpers
+# --------------------------------------------------------------------
+# Windows fails at deleting and moving folders in two ways POSIX never
+# does, and both hit exactly here - right after a zip was unpacked:
+#
+#   WinError 5  (access denied) - a file extracted from an archive can
+#                carry the read-only attribute, and rmtree refuses it
+#   WinError 32 (file in use)   - the indexer or an antivirus scanner
+#                still holds a handle on a freshly written file, or the
+#                plugin itself left one open
+#
+# The first needs the attribute cleared, the second just needs a moment.
+# So: clear read-only, then retry a few times over about a second. On
+# Linux both loops are a no-op on the first pass.
+_FS_RETRIES = 6
+_FS_DELAY = 0.2
+
+
+def _clear_readonly(path):
+    try:
+        import os
+        import stat
+        os.chmod(path, stat.S_IWRITE | stat.S_IREAD)
+    except Exception:
+        pass
+
+
+def _rmtree(path):
+    """shutil.rmtree that survives Windows. Raises the last error if it
+    really cannot delete."""
+    import time
+    path = Path(path)
+    last = None
+    for attempt in range(_FS_RETRIES):
+        try:
+            def _on_error(func, failed, exc):
+                _clear_readonly(failed)
+                func(failed)
+            # onexc replaced onerror in 3.12; both exist in 3.12/3.13, so
+            # pick by signature rather than by version number
+            try:
+                shutil.rmtree(str(path), onexc=lambda f, p_, e: _on_error(f, p_, e))
+            except TypeError:
+                shutil.rmtree(str(path), onerror=lambda f, p_, e: _on_error(f, p_, e))
+            return
+        except FileNotFoundError:
+            return
+        except OSError as e:
+            last = e
+            if attempt < _FS_RETRIES - 1:
+                time.sleep(_FS_DELAY)
+    if last is not None:
+        raise last
+
+
+def _move(src, dst):
+    """shutil.move with the same retry treatment."""
+    import time
+    last = None
+    for attempt in range(_FS_RETRIES):
+        try:
+            shutil.move(str(src), str(dst))
+            return
+        except OSError as e:
+            last = e
+            _clear_readonly(src)
+            if attempt < _FS_RETRIES - 1:
+                time.sleep(_FS_DELAY)
+    if last is not None:
+        raise last
+
+
 class PluginError(Exception):
     """Anything that went wrong while installing/reading a plugin."""
 
@@ -876,7 +949,14 @@ class PluginManager:
                                         existing.name if existing else
                                         meta.name)
 
-            with tempfile.TemporaryDirectory(dir=str(self._tmp_base())) as tmp:
+            # "_" prefix: discover() skips folders starting with "." or
+            # "_", so a leftover from a crashed install is never mistaken
+            # for a plugin. ignore_cleanup_errors: on Windows a scanner
+            # holding one file open would otherwise raise AFTER the
+            # install already succeeded.
+            with tempfile.TemporaryDirectory(
+                    dir=str(self._tmp_base()), prefix="_install_",
+                    ignore_cleanup_errors=True) as tmp:
                 zf.extractall(tmp)
                 source = Path(tmp) / root if str(root) != "." else Path(tmp)
                 if not (source / meta.main).exists():
@@ -893,13 +973,13 @@ class PluginManager:
                 saved = None
                 if keep.is_dir():
                     saved = Path(tmp) / "__configs_backup__"
-                    shutil.move(str(keep), str(saved))
+                    _move(keep, saved)
                 if target.exists():
-                    shutil.rmtree(target)
+                    _rmtree(target)
                 target.parent.mkdir(parents=True, exist_ok=True)
-                shutil.move(str(source), str(target))
+                _move(source, target)
                 if saved is not None and not (target / CONFIG_DIRNAME).exists():
-                    shutil.move(str(saved), str(target / CONFIG_DIRNAME))
+                    _move(saved, target / CONFIG_DIRNAME)
 
         self.discover()
         plugin = self.plugins.get(meta.pid)
@@ -927,7 +1007,7 @@ class PluginManager:
         self._unload(plugin)
         try:
             if plugin.folder.exists():
-                shutil.rmtree(plugin.folder)
+                _rmtree(plugin.folder)
         except Exception as e:
             self.log(f"Plugins: could not delete {plugin.folder}: {e}")
             return False

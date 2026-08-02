@@ -21,7 +21,39 @@ from core.translators import (
 from ui.ui_main import DragHandle, ToggleLabel, ToggleSwitch
 
 
+#: where the two paid/keyed backends hand out their API keys. Kept next
+#: to the UI that links them rather than in constants.py, because they are
+#: third-party account pages, not app identity.
+GOOGLE_KEYS_URL = "https://console.cloud.google.com/apis/credentials"
+DEEPL_KEYS_URL = "https://www.deepl.com/your-account/keys"
+
+
 class TextboxPageMixin:
+    @staticmethod
+    def _key_link(text, url, tooltip=""):
+        """Small clickable line under an API key field.
+
+        A rich-text QLabel with setOpenExternalLinks() hands the URL to
+        the desktop's default browser through Qt, which is the same route
+        QDesktopServices takes - so it works on Windows and Linux without
+        a platform branch here.
+        """
+        lbl = QLabel(f'\U0001F517 <a href="{url}" '
+                     f'style="color:#5b8dc9; text-decoration:none;">'
+                     f'{text}</a>')
+        lbl.setTextFormat(Qt.TextFormat.RichText)
+        lbl.setOpenExternalLinks(True)
+        lbl.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextBrowserInteraction)
+        lbl.setCursor(Qt.CursorShape.PointingHandCursor)
+        lbl.setStyleSheet("font-size: 11px;")
+        lbl.setWordWrap(True)
+        if tooltip:
+            lbl.setToolTip(f"{tooltip}\n\n{url}")
+        else:
+            lbl.setToolTip(url)
+        return lbl
+
     def build_textbox_page(self):
         page = QWidget()
         layout = QVBoxLayout(page)
@@ -235,6 +267,10 @@ class TextboxPageMixin:
         self.google_key_input.textChanged.connect(self.on_google_key)
         gkey_row.addWidget(self.google_key_input, 1)
         gr.addLayout(gkey_row)
+        gr.addWidget(self._key_link(
+            "Get a key in the Google Cloud console", GOOGLE_KEYS_URL,
+            "Create a project, enable the Cloud Translation API and "
+            "generate an API key under Credentials."))
         self.google_warn_lbl = QLabel("")
         self.google_warn_lbl.setObjectName("dim")
         self.google_warn_lbl.setWordWrap(True)
@@ -243,7 +279,10 @@ class TextboxPageMixin:
 
         # method 4: DeepL API key (only visible when DeepL is selected)
         self.deepl_row = QWidget()
-        key_row = QHBoxLayout(self.deepl_row)
+        dr = QVBoxLayout(self.deepl_row)
+        dr.setContentsMargins(0, 0, 0, 0)
+        dr.setSpacing(4)
+        key_row = QHBoxLayout()
         key_row.setContentsMargins(0, 0, 0, 0)
         key_row.addWidget(QLabel("DeepL API key:"))
         self.deepl_key_input = QLineEdit()
@@ -251,6 +290,11 @@ class TextboxPageMixin:
         self.deepl_key_input.setPlaceholderText("xxxxxxxx-xxxx-...-xxxx:fx")
         self.deepl_key_input.textChanged.connect(self.on_deepl_key)
         key_row.addWidget(self.deepl_key_input, 1)
+        dr.addLayout(key_row)
+        dr.addWidget(self._key_link(
+            "Get a key in your DeepL account", DEEPL_KEYS_URL,
+            "DeepL API Free gives 500,000 characters a month; the key "
+            "for it ends in \u201c:fx\u201d."))
         sc.addWidget(self.deepl_row)
 
         # method 2: LibreTranslate URL (only visible when selected)

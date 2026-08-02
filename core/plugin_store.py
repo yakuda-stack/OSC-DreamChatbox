@@ -562,7 +562,10 @@ class PluginStore:
     def install(self, entry, manager):
         """Downloads and installs through PluginManager, which keeps all
         the zip validation and preserves configs/ on an update."""
-        with tempfile.TemporaryDirectory() as tmp:
+        # ignore_cleanup_errors: the plugin is installed by the time this
+        # block exits, so a Windows scanner still holding the downloaded
+        # tarball must not turn a finished install into an exception
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             zip_path = self.build_zip(entry, tmp)
             plugin = manager.install_plugin_zip(zip_path, overwrite=True)
         if plugin is not None:

@@ -105,8 +105,15 @@ class PluginsPageMixin:
         self.catalogue_btn.setVisible(False)
         self.catalogue_btn.clicked.connect(self.on_catalogue_update)
         head.addWidget(self.catalogue_btn)
+        layout.addLayout(head)
 
         # ---- Installed / Store switch (exclusive, like the AIO templates)
+        # Own row UNDER the title and left aligned, not on the right of the
+        # title row: right-aligned controls are the first thing a narrow
+        # window cuts off, and these two decide what the whole page shows.
+        # Left of a left-growing layout, they survive any window width.
+        tabs_row = QHBoxLayout()
+        tabs_row.setSpacing(8)
         self.plugin_tab_group = QButtonGroup(self)
         self.plugin_tab_group.setExclusive(True)
         for i, label in enumerate(("\U0001F4E6  Installed", "\U0001F6CD  Store")):
@@ -121,10 +128,12 @@ class PluginsPageMixin:
                 "QPushButton:checked { background: #5b8dc9;"
                 " border-color: #5b8dc9; color: #ffffff; }")
             self.plugin_tab_group.addButton(b, i)
-            head.addWidget(b)
+            tabs_row.addWidget(b)
+        # the stretch goes AFTER the buttons, so they stay packed left
+        tabs_row.addStretch()
         self.plugin_tab_group.button(0).setChecked(True)
         self.plugin_tab_group.idClicked.connect(self.on_plugin_tab)
-        layout.addLayout(head)
+        layout.addLayout(tabs_row)
 
         self.plugin_info_popup = PluginInfoPopup()
         self.store = PluginStore(self.log)
