@@ -144,6 +144,28 @@ def migrate_config_dir(log=None) -> tuple[bool, str]:
     return True, msg
 
 
+# --------------------------------------------------------- subprocess
+#: CREATE_NO_WINDOW - without it every subprocess of a windowed .exe
+#: flashes a black console box over whatever the user is doing
+_CREATE_NO_WINDOW = 0x08000000
+#: CREATE_NEW_PROCESS_GROUP - lets us kill a child and its own children
+_CREATE_NEW_PROCESS_GROUP = 0x00000200
+
+
+def subprocess_flags(new_group=False) -> dict:
+    """kwargs for subprocess.Popen/run that behave on both platforms.
+
+    POSIX gets ``start_new_session`` (the parameter Windows silently
+    ignores), Windows gets the creation flags it actually understands.
+    """
+    if IS_WINDOWS:
+        flags = _CREATE_NO_WINDOW
+        if new_group:
+            flags |= _CREATE_NEW_PROCESS_GROUP
+        return {"creationflags": flags}
+    return {"start_new_session": True} if new_group else {}
+
+
 # ------------------------------------------------------------- helpers
 def describe() -> str:
     """One line for the debug console / bug reports."""

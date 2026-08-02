@@ -21,11 +21,23 @@ winrt-Windows.Media.Control[all]
 # older Python; the app accepts either binding:
 #   winsdk
 
+# --- Speech to Text ---
+SpeechRecognition   # pure python, works on any version
+sounddevice         # microphone input
+#
+# WHY sounddevice AND NOT pyaudio:
+# PyAudio is a compiled extension and its wheels stop at CPython 3.13.
+# On Python 3.14 "pip install pyaudio" falls back to a source build that
+# needs Visual Studio and a PortAudio checkout. sounddevice wraps the
+# same PortAudio through CFFI, ships as py3-none-win_amd64 (no CPython
+# ABI -> installs on every 3.x), and its Windows wheel carries the
+# PortAudio DLL, so nothing has to be installed system-wide.
+# The app accepts BOTH: if pyaudio happens to be installed it wins.
+
 # --- optional, bundled automatically when installed ---
 zeroconf          # OSCQuery auto-discovery
-SpeechRecognition # Speech to Text
 deepl             # DeepL translation backend
 
 # NOT listed on purpose:
 #   setproctitle - Linux process-name cosmetics, the .exe already has a name
-#   pyaudio      - microphone input; add it once Speech to Text is ported
+#   pyaudio      - replaced by sounddevice, see above

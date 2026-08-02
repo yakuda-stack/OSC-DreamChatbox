@@ -477,8 +477,19 @@ class LibreTranslateServer:
         self.ready = False
         self.port = int(port) if port else 5000
         exe = shutil.which("libretranslate")
-        argv = ([exe] if exe
-                else [sys.executable, "-m", "libretranslate.main"])
+        if exe:
+            argv = [exe]
+        else:
+            # Same trap as core/pyextras.py: in a packaged build
+            # sys.executable is the app's own binary, so "-m
+            # libretranslate.main" would launch a second chatbox.
+            from core.pyextras import python_executable
+            py = python_executable()
+            if py is None:
+                self.error = ("no python interpreter found to run "
+                              "libretranslate with")
+                return False
+            argv = [py, "-m", "libretranslate.main"]
         if exe is None and not libretranslate_installed():
             self.error = "libretranslate is not installed"
             return False
@@ -487,10 +498,14 @@ class LibreTranslateServer:
             if self.log_path is not None:
                 self.log_path.parent.mkdir(parents=True, exist_ok=True)
                 out = open(self.log_path, "wb")
+            # start_new_session is POSIX-only; on Windows the equivalent
+            # is CREATE_NEW_PROCESS_GROUP, plus CREATE_NO_WINDOW so the
+            # server does not open a console over the game
+            from core.osinfo import subprocess_flags
             self.proc = subprocess.Popen(
                 argv + ["--port", str(self.port)],
                 stdout=out, stderr=subprocess.STDOUT,
-                start_new_session=True)
+                **subprocess_flags(new_group=True))
             self.log(f"LibreTranslate: server starting on port "
                      f"{self.port} (PID {self.proc.pid})")
             return True
@@ -533,6 +548,28 @@ class LibreTranslateServer:
         return False
 
     def _terminate(self, proc):
+        from core.osinfo import IS_WINDOWS, subprocess_flags
+        if IS_WINDOWS:
+            # LibreTranslate spawns worker processes. proc.terminate()
+            # only kills the launcher and leaves the workers holding the
+            # port, so the next start fails with "address in use".
+            # taskkill /T walks the whole tree.
+            try:
+                subprocess.run(["taskkill", "/F", "/T", "/PID",
+                                str(proc.pid)],
+                               capture_output=True, timeout=10,
+                               **subprocess_flags())
+            except Exception:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+            try:
+                proc.wait(timeout=5)
+            except Exception:
+                pass
+            self.log("LibreTranslate: server stopped")
+            return
         try:
             import os
             import signal

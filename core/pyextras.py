@@ -24,15 +24,24 @@ system packages, no --break-system-packages, nothing pacman owns.
 
 import importlib
 import importlib.util
+import shutil
 import subprocess
 import sys
 
 from core.constants import EXTRAS_DIR
+from core.osinfo import IS_FROZEN, IS_WINDOWS, subprocess_flags
 
 # name -> pip requirement. Deliberately no extras: SpeechRecognition's
 # backends are optional and we only use the plain HTTP recognizers.
 KNOWN = {
     "speech_recognition": "SpeechRecognition",
+    # The microphone driver. PyAudio would be the obvious choice, but it
+    # is a compiled extension whose wheels stop at CPython 3.13 - on
+    # newer pythons pip falls back to a source build that needs a C
+    # compiler and PortAudio headers. sounddevice is a CFFI wrapper
+    # around the same library and ships as a plain wheel (with the
+    # PortAudio DLL included on Windows), so it installs anywhere.
+    "sounddevice": "sounddevice",
 }
 
 
@@ -59,10 +68,35 @@ def installed_here(module):
     return str(EXTRAS_DIR) in origin
 
 
+def python_executable():
+    """A real python interpreter we may run ``-m pip`` with, or None.
+
+    THE TRAP: inside a PyInstaller build ``sys.executable`` is the app's
+    own .exe, not python. ``[sys.executable, "-m", "pip", ...]`` would
+    therefore start a SECOND copy of the chatbox instead of installing
+    anything - and the extra arguments would be ignored, so it would look
+    like a hang rather than an error. Frozen builds must go looking for
+    an interpreter on the system instead.
+    """
+    if not IS_FROZEN:
+        return sys.executable
+    names = (["python.exe", "python3.exe", "py.exe"] if IS_WINDOWS
+             else ["python3", "python"])
+    for name in names:
+        found = shutil.which(name)
+        if found:
+            return found
+    return None
+
+
 def pip_available():
+    exe = python_executable()
+    if exe is None:
+        return False
     try:
-        subprocess.run([sys.executable, "-m", "pip", "--version"],
-                       capture_output=True, timeout=20, check=True)
+        subprocess.run([exe, "-m", "pip", "--version"],
+                       capture_output=True, timeout=20, check=True,
+                       **subprocess_flags())
         return True
     except Exception:
         return False
@@ -77,17 +111,23 @@ def install(module, log=None):
     requirement = KNOWN.get(module)
     if requirement is None:
         return False, f"'{module}' is not a known extra"
+    exe = python_executable()
+    if exe is None:
+        return False, ("This is a packaged build with no python of its "
+                       "own, and no python was found on the system. "
+                       "Install Python from python.org (tick \"Add to "
+                       "PATH\") and try again, or run the app from source.")
     if not pip_available():
         return False, ("pip is not available for this python. "
                        "Install python-pip and try again.")
     EXTRAS_DIR.mkdir(parents=True, exist_ok=True)
-    cmd = [sys.executable, "-m", "pip", "install", "--upgrade",
+    cmd = [exe, "-m", "pip", "install", "--upgrade",
            "--target", str(EXTRAS_DIR), requirement]
     if callable(log):
         log(f"Extras: {' '.join(cmd[-4:])}")
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True,
-                              timeout=300)
+                              timeout=300, **subprocess_flags())
     except subprocess.TimeoutExpired:
         return False, "pip took too long (over 5 minutes) and was stopped."
     except Exception as e:

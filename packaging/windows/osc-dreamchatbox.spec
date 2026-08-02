@@ -115,6 +115,9 @@ hiddenimports = [
     "core.backends.hardware_windows",
     "core.backends.wintemp",
     "core.backends.media_windows",
+    "core.backends.mic_sounddevice",
+    # sounddevice talks to PortAudio through CFFI
+    "_cffi_backend",
     # ctypes/winreg/mmap back the Windows hardware sources; winreg in
     # particular is easy for the analysis to miss behind a local import
     "winreg",
@@ -131,7 +134,13 @@ binaries = []
 # legacy binding for Python <= 3.12 - whichever is installed gets bundled.
 import importlib.util
 
-for _opt in ("speech_recognition", "deepl", "winrt", "winsdk"):
+for _opt in ("speech_recognition", "deepl", "winrt", "winsdk",
+             # sounddevice itself is a single MODULE (sounddevice.py), so
+             # collect_all finds no data in it - PyInstaller even warns
+             # about that. The PortAudio DLL lives in the separate
+             # _sounddevice_data PACKAGE, which has to be collected by
+             # name or the frozen app has the wrapper without the library.
+             "sounddevice", "_sounddevice_data"):
     # collect_all() happily returns empty lists for a package that is not
     # there, so it would report success for everything. Ask the import
     # system first, otherwise the build log lies about what went in.

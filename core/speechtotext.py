@@ -20,6 +20,7 @@ import queue
 import threading
 from contextlib import contextmanager
 
+from core.osinfo import IS_WINDOWS
 from core.translators import (METHOD_LINGVA,
                               translate_with_fallback)
 
@@ -27,7 +28,15 @@ from core.translators import (METHOD_LINGVA,
 @contextmanager
 def _silence_stderr():
     """Suppresses the ALSA/JACK error spam that PyAudio prints to stderr
-    when opening the microphone."""
+    when opening the microphone.
+
+    Linux only: that spam comes from ALSA, which Windows does not have,
+    and in a windowed .exe file descriptor 2 may not be a real handle at
+    all - redirecting it there would hide genuine errors for no gain.
+    """
+    if IS_WINDOWS:
+        yield
+        return
     try:
         devnull = os.open(os.devnull, os.O_WRONLY)
         old_stderr = os.dup(2)
@@ -90,6 +99,46 @@ try:
 except Exception:      # a broken install can raise instead of returning None
     HAS_PYAUDIO = False
 
+# Second microphone driver: sounddevice wraps the same PortAudio through
+# CFFI instead of a compiled extension, so it installs on Python versions
+# PyAudio has no wheels for (3.13, 3.14, ...). PyAudio still wins when it
+# is there, which keeps every existing Linux install on its usual path.
+from core.backends import mic_sounddevice
+
+
+def has_sounddevice():
+    """Probed lazily - see mic_sounddevice.available() for why a plain
+    find_spec() would report a driver that cannot actually open."""
+    return mic_sounddevice.available()
+
+
+def reload_mic_driver():
+    """Re-probe after the in-app installer ran, so a freshly installed
+    driver becomes usable without restarting the app - the same reason
+    reload_sr() exists."""
+    global HAS_PYAUDIO
+    try:
+        import importlib
+        importlib.invalidate_caches()
+        HAS_PYAUDIO = importlib.util.find_spec("pyaudio") is not None
+    except Exception:
+        HAS_PYAUDIO = False
+    mic_sounddevice._PROBE = None      # drop the cached probe result
+    return mic_driver()
+
+
+def mic_driver():
+    """'pyaudio' | 'sounddevice' | '' - which one will actually be used."""
+    if HAS_PYAUDIO:
+        return "pyaudio"
+    if has_sounddevice():
+        return "sounddevice"
+    return ""
+
+
+def has_microphone_driver():
+    return bool(mic_driver())
+
 
 def missing_dependency():
     """What exactly is missing, as a sentence the user can act on."""
@@ -99,11 +148,19 @@ def missing_dependency():
         # command line that may not work.
         return ("SpeechRecognition is not installed \u2013 use the "
                 "\u201cInstall SpeechRecognition\u201d button below.")
-    if not HAS_PYAUDIO:
+    if not has_microphone_driver():
+        if IS_WINDOWS:
+            # PyAudio has no wheels beyond CPython 3.13, so naming it
+            # first would send people into a source build that needs
+            # Visual Studio. sounddevice is a plain wheel on every 3.x.
+            return ("No microphone driver - run:  pip install sounddevice "
+                    "(works on every Python version; PyAudio has no "
+                    "wheels for 3.13+)")
         return ("pyaudio is missing - without it no microphone can be "
                 "opened. Arch: sudo pacman -S python-pyaudio  |  "
                 "Debian/Mint: sudo apt install portaudio19-dev && "
-                "./venv/bin/pip install pyaudio")
+                "./venv/bin/pip install pyaudio  |  or simply: "
+                "pip install sounddevice")
     return ""
 
 def list_microphones(log=None):
@@ -114,18 +171,20 @@ def list_microphones(log=None):
     only ever says "System default" is otherwise indistinguishable from
     a machine that genuinely has one microphone.
     """
-    if not HAS_SR or not HAS_PYAUDIO:
+    if not HAS_SR or not has_microphone_driver():
         if callable(log):
             log(f"Speech to Text: {missing_dependency()}")
         return []
-    try:
-        with _silence_stderr():
-            names = sr.Microphone.list_microphone_names()
-        return [(n, i) for i, n in enumerate(names) if n]
-    except Exception as e:
-        if callable(log):
-            log(f"Speech to Text: microphones could not be listed ({e})")
-        return []
+    if HAS_PYAUDIO:
+        try:
+            with _silence_stderr():
+                names = sr.Microphone.list_microphone_names()
+            return [(n, i) for i, n in enumerate(names) if n]
+        except Exception as e:
+            if callable(log):
+                log(f"Speech to Text: microphones could not be listed ({e})")
+            return []
+    return mic_sounddevice.list_devices(log)
 
 
 LANGUAGES = [
@@ -186,8 +245,9 @@ class SpeechWorker:
     @staticmethod
     def available():
         """Both parts have to be there: SpeechRecognition for the
-        recognition and pyaudio to open the microphone at all."""
-        return HAS_SR and HAS_PYAUDIO
+        recognition and a microphone driver (pyaudio or sounddevice) to
+        open the input device at all."""
+        return HAS_SR and has_microphone_driver()
 
     @property
     def running(self):
@@ -230,16 +290,29 @@ class SpeechWorker:
             with _silence_stderr():
                 r = sr.Recognizer()
                 r.dynamic_energy_threshold = True
-                mic = (sr.Microphone(device_index=self.mic_index)
-                       if self.mic_index >= 0 else sr.Microphone())
+                if HAS_PYAUDIO:
+                    mic = (sr.Microphone(device_index=self.mic_index)
+                           if self.mic_index >= 0 else sr.Microphone())
+                else:
+                    mic = mic_sounddevice.make_microphone(sr, self.mic_index)
         except Exception as e:
-            self.messages.put((
-                "error",
-                f"Microphone not available ({e}). NOTE: the app runs "
-                "inside its own venv \u2013 a pacman/system install of "
-                "pyaudio is NOT visible there. Install it into the "
-                "venv instead:  ./venv/bin/pip install pyaudio  "
-                "(needs portaudio: pacman -S portaudio)."))
+            if IS_WINDOWS:
+                self.messages.put((
+                    "error",
+                    f"Microphone not available ({e}). Check Windows "
+                    "Settings \u203a Privacy & security \u203a Microphone: "
+                    "\u201cLet desktop apps access your microphone\u201d has "
+                    "to be on, otherwise the device opens but stays "
+                    "silent. If no driver is installed at all:  "
+                    "pip install sounddevice"))
+            else:
+                self.messages.put((
+                    "error",
+                    f"Microphone not available ({e}). NOTE: the app runs "
+                    "inside its own venv \u2013 a pacman/system install of "
+                    "pyaudio is NOT visible there. Install it into the "
+                    "venv instead:  ./venv/bin/pip install pyaudio  "
+                    "(needs portaudio: pacman -S portaudio)."))
             return
         try:
             with _silence_stderr(), mic as source:

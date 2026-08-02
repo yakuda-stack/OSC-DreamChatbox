@@ -12,7 +12,8 @@ from PyQt6.QtWidgets import (
 from core.constants import CHATBOX_INPUT, CHATBOX_LIMIT, SLIM_SUFFIX
 from core.speechtotext import (
     LANGUAGES, OUTPUT_LANGUAGES, SpeechWorker, has_sr, list_microphones,
-    missing_dependency, reload_sr)
+    missing_dependency, reload_sr,
+    has_microphone_driver, reload_mic_driver)
 from core import pyextras
 from core.constants import EXTRAS_DIR
 from core.translators import (
@@ -341,6 +342,7 @@ class TextboxPageMixin:
         self.stt_install_btn.setToolTip(
             f"Installs it with pip into {EXTRAS_DIR} - your system packages "
             f"are not touched")
+        self._stt_install_target = "speech_recognition"
         self.stt_install_btn.clicked.connect(self.on_install_speech)
         self.stt_install_btn.setVisible(False)
         sc.addWidget(self.stt_install_btn)
@@ -727,10 +729,22 @@ class TextboxPageMixin:
         self.mic_combo.setEnabled(ok)
         self.stt_button.setToolTip("" if ok else missing_dependency())
         self.mic_combo.setToolTip("" if ok else missing_dependency())
-        # the installer only helps for the python half; pyaudio is a
-        # compiled module and has to come from the distribution
-        needs_sr = not has_sr()
-        self.stt_install_btn.setVisible(needs_sr)
+        # Two things can be missing, and the button now covers both:
+        # SpeechRecognition (pure python) and the microphone driver.
+        # On Linux the driver traditionally comes from the distribution
+        # (python-pyaudio), so only offer to install one when there is
+        # none at all - sounddevice is a plain wheel and works anywhere.
+        if not has_sr():
+            self._stt_install_target = "speech_recognition"
+            self.stt_install_btn.setText("\u2B07  Install SpeechRecognition")
+            self.stt_install_btn.setVisible(True)
+        elif not has_microphone_driver():
+            self._stt_install_target = "sounddevice"
+            self.stt_install_btn.setText(
+                "\u2B07  Install microphone driver (sounddevice)")
+            self.stt_install_btn.setVisible(True)
+        else:
+            self.stt_install_btn.setVisible(False)
         if ok:
             self.stt_status_lbl.setText("")
             self.stt_status_lbl.setStyleSheet("")
@@ -744,24 +758,33 @@ class TextboxPageMixin:
         freeze the window."""
         self.stt_install_btn.setEnabled(False)
         self.stt_install_btn.setText("Installing \u2026")
+        target = getattr(self, "_stt_install_target", "speech_recognition")
 
         def work():
-            return pyextras.install("speech_recognition", self.log)
+            return pyextras.install(target, self.log)
 
         self.run_async(work, self._on_speech_installed, interval=250)
 
     def _on_speech_installed(self, result):
         ok, message = result
+        target = getattr(self, "_stt_install_target", "speech_recognition")
+        pretty = ("SpeechRecognition" if target == "speech_recognition"
+                  else "The microphone driver")
         self.stt_install_btn.setEnabled(True)
-        self.stt_install_btn.setText("\u2B07  Install SpeechRecognition")
         if not ok:
             self.log(f"Speech to Text: install failed - {message}")
             QMessageBox.warning(
                 self, "Installation failed",
-                f"SpeechRecognition could not be installed:\n\n{message}")
+                f"{pretty} could not be installed:\n\n{message}")
+            self._sync_stt_availability()      # restores the button text
             return
         self.log(f"Speech to Text: {message}")
-        reload_sr()
+        if target == "speech_recognition":
+            reload_sr()
+        else:
+            # the probe result is cached, so a freshly installed driver
+            # would otherwise stay invisible until the next app start
+            reload_mic_driver()
         self._fill_mic_combo()
         if self._sync_stt_availability():
             QMessageBox.information(
@@ -771,8 +794,8 @@ class TextboxPageMixin:
         else:
             QMessageBox.information(
                 self, "One more step",
-                f"SpeechRecognition is installed, but Speech to Text still "
-                f"needs pyaudio:\n\n{missing_dependency()}")
+                f"{pretty} is installed, but Speech to Text still needs "
+                f"something:\n\n{missing_dependency()}")
 
     def on_stt_toggled(self, on):
         if on:
