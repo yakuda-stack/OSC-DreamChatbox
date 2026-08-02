@@ -17,6 +17,8 @@ from core.osinfo import IS_WINDOWS
 # download links for the two optional Windows helpers; harmless to
 # import on Linux (the module is pure stdlib) but only used there
 from core.backends.wintemp import LHM_DOWNLOAD_URL, RTSS_DOWNLOAD_URL
+from core.mediafetch import (
+    backend_note as media_backend_note, source_label as media_source_label)
 from core.textutils import (
     CUSTOM_STYLE_INDEX, DEFAULT_CUSTOM_BAR, SONGBAR_STYLES, TIME_POSITIONS, TIME_POS_LINE, apply_template, bar_length, compose_bar_line, make_songbar)
 from pathlib import Path
@@ -193,7 +195,8 @@ class AppsPageMixin:
         m_layout.addLayout(mhead)
 
         mdesc = QLabel("Shows the song you are currently listening to "
-                       "(Spotify, YT Music, browser, any media player – via MPRIS).")
+                       "(Spotify, YT Music, browser, any media player – "
+                       "via " + media_source_label() + ").")
         mdesc.setObjectName("dim")
         mdesc.setWordWrap(True)
         m_layout.addWidget(mdesc)
@@ -1339,9 +1342,11 @@ class AppsPageMixin:
         return text.split("\n") if text else []
 
     def poll_media(self):
-        # the D-Bus round-trips can block for a while (many players / slow
-        # players), so run them off the GUI thread via run_async. Skip if a
-        # previous fetch is still in flight to avoid piling up worker threads.
+        # Linux: D-Bus round-trips can block for a while (many players /
+        # slow players). Windows: fetch() only copies a snapshot the GSMTC
+        # poller thread already produced, so it is instant there.
+        # Either way this stays off the GUI thread via run_async, and a
+        # fetch still in flight is skipped so worker threads cannot pile up.
         if getattr(self, "_media_busy", False):
             return
         self._media_busy = True
@@ -1364,7 +1369,18 @@ class AppsPageMixin:
                 self.lyrics.prefetch(info["artist"], info["title"],
                                      info["length"])
         else:
-            self.media_status_lbl.setText("No media player detected.")
+            # A missing WinRT binding looks exactly like "nothing playing"
+            # unless we say so - the backends expose the reason.
+            note = getattr(self.media, "status_note", None)
+            reason = ""
+            try:
+                reason = note() if callable(note) else ""
+            except Exception:
+                reason = ""
+            reason = reason or media_backend_note()
+            self.media_status_lbl.setText(
+                f"No media player detected. {reason}".strip()
+                if reason else "No media player detected.")
         self.update_preview()
 
     def _media_values(self, info):

@@ -114,6 +114,7 @@ hiddenimports = [
     "core.backends.media_null",
     "core.backends.hardware_windows",
     "core.backends.wintemp",
+    "core.backends.media_windows",
     # ctypes/winreg/mmap back the Windows hardware sources; winreg in
     # particular is easy for the analysis to miss behind a local import
     "winreg",
@@ -124,16 +125,29 @@ hiddenimports = [
 # optional extras: only bundled when they are actually installed, so a
 # minimal build does not fail on a missing package
 binaries = []
-for _opt in ("speech_recognition", "deepl"):
+# "winrt" is the PyWinRT namespace package behind the GSMTC media
+# backend; it ships compiled extension modules that the static analysis
+# cannot follow, so it has to be collected wholesale. "winsdk" is the
+# legacy binding for Python <= 3.12 - whichever is installed gets bundled.
+import importlib.util
+
+for _opt in ("speech_recognition", "deepl", "winrt", "winsdk"):
+    # collect_all() happily returns empty lists for a package that is not
+    # there, so it would report success for everything. Ask the import
+    # system first, otherwise the build log lies about what went in.
+    if importlib.util.find_spec(_opt) is None:
+        print(f"[spec] optional package not installed, skipping: {_opt}")
+        continue
     try:
         from PyInstaller.utils.hooks import collect_all
         _d, _b, _h = collect_all(_opt)
         datas += _d
         binaries += _b
         hiddenimports += _h
-        print(f"[spec] bundling optional package: {_opt}")
-    except Exception:
-        print(f"[spec] optional package not installed, skipping: {_opt}")
+        print(f"[spec] bundling optional package: {_opt} "
+              f"({len(_d)} data, {len(_b)} binaries)")
+    except Exception as _err:
+        print(f"[spec] could not bundle {_opt}: {_err}")
 
 # ------------------------------------------------------------- excludes
 excludes = [
