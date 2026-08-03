@@ -15,7 +15,7 @@ from core.osinfo import (  # noqa: F401  (IS_WINDOWS/OS_NAME re-exported)
     IS_WINDOWS, OS_NAME, config_dir, legacy_config_dir, resource_root)
 
 APP_NAME = "OSC-DreamChatbox"
-VERSION = "v1.3.0"
+VERSION = "v1.3.1"
 GITHUB_REPO = "yakuda-stack/OSC-DreamChatbox"
 DISCORD_URL = "https://discord.gg/X5TaN4A47h"
 DONATE_URL = "https://ko-fi.com/yakuda_"
@@ -61,6 +61,19 @@ CHATBOX_INPUT = "/chatbox/input"
 # time it flips, so the UI and the config validator both enforce it
 MIN_STATUS_CYCLE_SEC = 10
 CHATBOX_LIMIT = 144  # VRChat chatbox character limit
+
+# ------------------------------------------------------- OSC rate limit
+# VRChat throttles the chatbox: roughly 5 messages inside a 5 second
+# window, and going over that earns a ~30 second cooldown in which
+# NOTHING is shown at all. Both numbers are enforced in
+# ui/mainwindow.py (_osc_send_delay) as a rolling window, so an
+# instant send after a text change can never spend the whole budget.
+OSC_RATE_WINDOW_SEC = 5.0
+OSC_RATE_MAX_SENDS = 5
+# on top of the window: never fire two sends back to back. 1.5 s is the
+# interval VRChat itself uses for chatbox updates, so it is the safe
+# floor everybody else (VRCOSC etc.) settled on as well.
+OSC_MIN_SEND_GAP_SEC = 1.5
 
 TITLE_MAX_LEN = 24   # max characters of the song title shown
 SONGBAR_LEN = 13     # number of segments in the song progress bar

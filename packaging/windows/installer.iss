@@ -24,7 +24,7 @@
 #define AppURL         "https://github.com/yakuda-stack/OSC-DreamChatbox"
 #define AppExe         "OSC-DreamChatbox.exe"
 ; keep in sync with core/constants.py -> VERSION
-#define AppVersion     "1.3.0"
+#define AppVersion     "1.3.1"
 ; where build-exe.ps1 leaves the one-folder build
 #define SourceDir      "..\..\dist\OSC-DreamChatbox"
 

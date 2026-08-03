@@ -15,7 +15,7 @@ from PyQt6.QtCore import QTimer, Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QFrame, QHBoxLayout, QLabel, QMainWindow, QPushButton, QScrollArea, QStackedWidget, QVBoxLayout, QWidget)
 from core.constants import (
-    APP_NAME, CHATBOX_INPUT, CHATBOX_LIMIT, SLIM_SUFFIX, VERSION)
+    APP_NAME, CHATBOX_INPUT, CHATBOX_LIMIT, OSC_MIN_SEND_GAP_SEC, OSC_RATE_MAX_SENDS, OSC_RATE_WINDOW_SEC, SLIM_SUFFIX, VERSION)
 from core.hardware import HardwareMonitor
 from core.lyrics import LyricsFetcher
 from core.mediafetch import MediaFetcher
@@ -70,6 +70,11 @@ class MainWindow(ConfigMixin, AppsPageMixin, TextboxPageMixin,
         self.lyrics = LyricsFetcher(self.log)
         self.manual_pause_until = 0.0
         self.last_manual_text = ""
+        # OSC rate limiting (see _osc_send_delay): timestamps of the
+        # sends inside the current window, and the payload that is
+        # actually on screen in VRChat right now.
+        self._send_times = []
+        self._last_sent_payload = None
         self.aio_index = 0
         self.stt = SpeechWorker()
         self.stt_recording = False
@@ -92,6 +97,10 @@ class MainWindow(ConfigMixin, AppsPageMixin, TextboxPageMixin,
         self._save_timer.timeout.connect(self._write_config)
         self.send_timer = QTimer(self)
         self.send_timer.timeout.connect(self.send_now)
+        # fires once when a send had to be postponed for the rate limit
+        self.pending_send_timer = QTimer(self)
+        self.pending_send_timer.setSingleShot(True)
+        self.pending_send_timer.timeout.connect(self.send_now)
         self.media_timer = QTimer(self)
         self.media_timer.timeout.connect(self.poll_media)
         self.rotate_timer = QTimer(self)
@@ -352,6 +361,15 @@ class MainWindow(ConfigMixin, AppsPageMixin, TextboxPageMixin,
         self.chk_lyrics.setChecked(self.cfg.get("media_show_lyrics", False))
         self.chk_lyrics_local.setChecked(
             self.cfg.get("media_lyrics_local", False))
+        prefix_on = bool(self.cfg.get("media_lyrics_prefix_on", True))
+        self.chk_lyrics_prefix.blockSignals(True)
+        self.chk_lyrics_prefix.setChecked(prefix_on)
+        self.chk_lyrics_prefix.blockSignals(False)
+        self.lyrics_prefix_input.blockSignals(True)
+        self.lyrics_prefix_input.setText(
+            str(self.cfg.get("media_lyrics_prefix", "\u266a"))[:4])
+        self.lyrics_prefix_input.blockSignals(False)
+        self.lyrics_prefix_input.setEnabled(prefix_on)
         self.chk_bar.setChecked(self.cfg["media_show_bar"])
         # local lyrics folder row + fetcher state
         self._sync_lyrics_local()
@@ -418,6 +436,15 @@ class MainWindow(ConfigMixin, AppsPageMixin, TextboxPageMixin,
         self.deepl_key_input.setText(self.cfg["stt_deepl_key"])
         self.google_key_input.setText(self.cfg.get("stt_google_key", ""))
         self.libre_url_input.setText(self.cfg.get("stt_libre_url", ""))
+        self.libre_online_url_input.blockSignals(True)
+        self.libre_online_url_input.setText(
+            self.cfg.get("stt_libre_online_url", ""))
+        self.libre_online_url_input.blockSignals(False)
+        self.libre_online_key_input.blockSignals(True)
+        self.libre_online_key_input.setText(
+            self.cfg.get("stt_libre_online_key", ""))
+        self.libre_online_key_input.blockSignals(False)
+        self._sync_libre_online_ui()
         pos = self.mic_combo.findData(self.cfg.get("stt_mic", ""))
         self.mic_combo.blockSignals(True)
         self.mic_combo.setCurrentIndex(pos if pos >= 0 else 0)
@@ -454,6 +481,10 @@ class MainWindow(ConfigMixin, AppsPageMixin, TextboxPageMixin,
         self.hw_poll_spin.setValue(self.cfg["hw_poll_sec"])
         self.toggle_send.setChecked(self.cfg["send_to_vrchat"])
         self.interval_spin.setValue(self.cfg["interval_sec"])
+        self.toggle_instant.blockSignals(True)
+        self.toggle_instant.setChecked(
+            bool(self.cfg.get("osc_instant_send", True)))
+        self.toggle_instant.blockSignals(False)
         self.toggle_slim.setChecked(self.cfg["slim_chatbox"])
         self.toggle_oscquery.blockSignals(True)
         self.toggle_oscquery.setChecked(
@@ -538,11 +569,67 @@ class MainWindow(ConfigMixin, AppsPageMixin, TextboxPageMixin,
         return self.plugins.filter_text("\n".join(lines))
 
     def sending_live(self):
-        """True when a payload would actually reach VRChat right now."""
-        return bool(self.cfg.get("send_active")
+        """True when a payload would actually reach VRChat right now.
+
+        This used to read a key called "send_active", which has not
+        existed in the config since the toggle was renamed to
+        "send_to_vrchat" - so it was False for everybody, always.
+        Every instant send behind it (a rotated text, a switched
+        template) silently did nothing and VRChat only caught up on the
+        next interval tick, up to `interval_sec` later. That is exactly
+        the "VRChat doesn't get the updates as fast as the app does"
+        report from Discord.
+        """
+        return bool(self.cfg.get("send_to_vrchat")
                     and self.osc_client is not None
                     and not self.stt_recording
                     and time.time() >= self.manual_pause_until)
+
+    def _osc_send_delay(self, now=None):
+        """Seconds to wait before the next chatbox message may go out.
+        0.0 means "right now".
+
+        VRChat allows about 5 chatbox messages inside a 5 second window;
+        going over that earns a ~30 second cooldown during which nothing
+        is displayed at all. So a burst is not merely wasteful, it makes
+        the chatbox go blank - much worse than being a second late.
+
+        Two rules, whichever is stricter wins:
+          * a minimum gap between two consecutive sends, and
+          * at most OSC_RATE_MAX_SENDS inside the rolling window.
+        """
+        now = time.time() if now is None else now
+        # drop everything that fell out of the window
+        self._send_times = [t for t in self._send_times
+                            if now - t < OSC_RATE_WINDOW_SEC]
+        delay = 0.0
+        if self._send_times:
+            gap = OSC_MIN_SEND_GAP_SEC - (now - self._send_times[-1])
+            delay = max(delay, gap)
+        if len(self._send_times) >= OSC_RATE_MAX_SENDS:
+            # wait until the oldest send leaves the window
+            oldest = self._send_times[-OSC_RATE_MAX_SENDS]
+            delay = max(delay, OSC_RATE_WINDOW_SEC - (now - oldest))
+        return max(0.0, delay)
+
+    def request_send(self):
+        """Asks for the current payload to reach VRChat as soon as the
+        rate limit allows.
+
+        Called whenever the text may have changed. Repeat calls inside
+        the waiting period COALESCE into the single pending send instead
+        of queueing up, so typing in a status field costs one message,
+        not one per keystroke.
+        """
+        if not self.cfg.get("osc_instant_send", True):
+            return
+        if not self.sending_live():
+            return
+        delay = self._osc_send_delay()
+        if delay <= 0:
+            self.send_after_change()
+        elif not self.pending_send_timer.isActive():
+            self.pending_send_timer.start(int(delay * 1000) + 20)
 
     def send_after_change(self):
         """Sends immediately because the text changed, and restarts the
@@ -563,6 +650,13 @@ class MainWindow(ConfigMixin, AppsPageMixin, TextboxPageMixin,
             return  # speech to text is recording - sending is blocked
         if time.time() < self.manual_pause_until:
             return  # a manual textbox message is currently shown
+        delay = self._osc_send_delay()
+        if delay > 0:
+            # too soon for VRChat - postpone instead of dropping, so the
+            # text still arrives, just at the earliest legal moment
+            if not self.pending_send_timer.isActive():
+                self.pending_send_timer.start(int(delay * 1000) + 20)
+            return
         # take over a pending text switch, so what we send is exactly what
         # the preview shows afterwards
         self.commit_status()
@@ -580,6 +674,9 @@ class MainWindow(ConfigMixin, AppsPageMixin, TextboxPageMixin,
         try:
             # /chatbox/input  [text, send immediately (no keyboard), no sound]
             self.osc_client.send_message(CHATBOX_INPUT, [payload, True, False])
+            # only a send that actually went out counts against the limit
+            self._send_times.append(time.time())
+            self._last_sent_payload = payload
             slim = " [+SLIM]" if payload != text else ""
             self.log(f"-> OSC {CHATBOX_INPUT} {text.count(chr(10)) + 1} line(s), "
                      f"{len(payload)} chars{slim} "
@@ -591,11 +688,21 @@ class MainWindow(ConfigMixin, AppsPageMixin, TextboxPageMixin,
         self.update_preview()
 
     def update_preview(self):
-        if time.time() < self.manual_pause_until and self.last_manual_text:
+        paused = (time.time() < self.manual_pause_until
+                  and bool(self.last_manual_text))
+        if paused:
             text = self.last_manual_text
         else:
             text = self.build_payload()
         self.preview_label.setText(text if text else "[Status Text goes here]")
+        # Everything that changes the output ends up here, so this is the
+        # one place that can notice "the app shows something VRChat does
+        # not" - which was the whole complaint. Comparing against the
+        # payload we last put on the wire also stops a feedback loop:
+        # send_now() calls update_preview() again, and by then the two
+        # match, so nothing is requested a second time.
+        if not paused and text and not self._matches_last_sent(text):
+            self.request_send()
         n = len(text) + (len(SLIM_SUFFIX) if self.cfg["slim_chatbox"] else 0)
         if not text:
             self.char_count_lbl.setText("")
@@ -605,6 +712,18 @@ class MainWindow(ConfigMixin, AppsPageMixin, TextboxPageMixin,
         else:
             self.char_count_lbl.setText(f"{n}/{CHATBOX_LIMIT}")
             self.char_count_lbl.setStyleSheet("")
+
+    def _matches_last_sent(self, text):
+        """True when `text` is what VRChat is already showing. The stored
+        payload carries the slim suffix and the length cut, so the
+        comparison has to go through the same treatment."""
+        if self._last_sent_payload is None:
+            return False
+        if self.cfg["slim_chatbox"]:
+            payload = text[:CHATBOX_LIMIT - len(SLIM_SUFFIX)] + SLIM_SUFFIX
+        else:
+            payload = text[:CHATBOX_LIMIT]
+        return payload == self._last_sent_payload
 
     def _fmt_media_time(self, seconds):
         """Media time formatting following the "Time with seconds"

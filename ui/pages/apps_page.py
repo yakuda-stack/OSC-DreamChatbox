@@ -257,6 +257,31 @@ class AppsPageMixin:
         tmax.addWidget(self.title_max_lbl)
         tmax.addStretch()
 
+        # prefix row for the lyrics line (community request: the little
+        # symbol in front of the lyrics was not switchable). Checkbox +
+        # a tiny field for whatever character you want instead.
+        self.lyrics_prefix_row = QWidget()
+        lp_row = QHBoxLayout(self.lyrics_prefix_row)
+        lp_row.setContentsMargins(24, 0, 0, 0)
+        lp_row.setSpacing(6)
+        self.chk_lyrics_prefix = QCheckBox("Symbol before the lyrics line:")
+        self.chk_lyrics_prefix.toggled.connect(self.on_lyrics_prefix_on)
+        lp_row.addWidget(self.chk_lyrics_prefix)
+        self.lyrics_prefix_input = QLineEdit()
+        self.lyrics_prefix_input.setMaxLength(4)
+        self.lyrics_prefix_input.setFixedWidth(56)
+        self.lyrics_prefix_input.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lyrics_prefix_input.setPlaceholderText("\u266a")
+        self.lyrics_prefix_input.setToolTip(
+            "Any character or emoji, e.g. \u266a \U0001F3B5 > | - "
+            "Leave it empty for no symbol at all.")
+        self.lyrics_prefix_input.textChanged.connect(self.on_lyrics_prefix)
+        lp_row.addWidget(self.lyrics_prefix_input)
+        lp_hint = QLabel("(off = lyrics line starts with the text itself)")
+        lp_hint.setObjectName("dim")
+        lp_row.addWidget(lp_hint)
+        lp_row.addStretch()
+
         # folder row for the local .lrc files (shown only in local mode)
         self.lrc_dir_row = QWidget()
         lrc_row = QHBoxLayout(self.lrc_dir_row)
@@ -284,6 +309,7 @@ class AppsPageMixin:
         mc.addWidget(self.chk_time)
         mc.addWidget(self.chk_time_seconds)
         mc.addWidget(self.chk_lyrics)
+        mc.addWidget(self.lyrics_prefix_row)
         mc.addWidget(self.chk_lyrics_local)
         mc.addWidget(self.lrc_dir_row)
         mc.addWidget(self.chk_bar)
@@ -423,7 +449,8 @@ class AppsPageMixin:
         mc.addLayout(m_custom_row)
         m_ph = QLabel("Placeholders: {artist} {title} {time} {time_status} "
                       "{time_end} {position} {length} "
-                      "{bar} {lyrics} {player} {icon_sound}  \u2013  use \\n "
+                      "{bar} {lyrics} {lyrics_prefix} {player} "
+                      "{icon_sound}  \u2013  use \\n "
                       "for a line break. Values follow the checkboxes above "
                       "({lyrics} needs the Lyrics checkbox).")
         m_ph.setObjectName("dim")
@@ -821,7 +848,8 @@ class AppsPageMixin:
                       "{cpu_name} {cpu_usage} {cpu_temp} {ram_usage} {ram_type} "
                       "{icon_flame}) and all MediaPlay placeholders ({artist} "
                       "{title} {time} {time_status} {time_end} {bar} "
-                      "{lyrics} {icon_sound} \u2026), plus the live info "
+                      "{lyrics} {lyrics_prefix} {icon_sound} \u2026), "
+                      "plus the live info "
                       "{player_in_world} {group_world} {realtime} "
                       "{instance_type}, plus every active plugin as "
                       "{plugin_id} (see the Plugins page). Use \\n for a "
@@ -976,7 +1004,7 @@ class AppsPageMixin:
         self.pending_status_index = nxt
         if self.sending_live():
             self.send_after_change()
-        elif not self.cfg.get("send_active"):
+        elif not self.cfg.get("send_to_vrchat"):
             # SendToVRChat is off, so nothing is going out at all and the
             # preview is a plain preview again - let it rotate
             self.commit_status()
@@ -1120,6 +1148,7 @@ class AppsPageMixin:
 
         self.title_max_row.setVisible(title_on)
         self.chk_time_seconds.setVisible(time_on)
+        self.lyrics_prefix_row.setVisible(lyrics_on)
         self.chk_lyrics_local.setVisible(lyrics_on)
         self.songbar_box.setVisible(bar_on)
         is_custom = self.bar_style_combo.currentIndex() == CUSTOM_STYLE_INDEX
@@ -1133,6 +1162,26 @@ class AppsPageMixin:
         if key == "media_lyrics_local":
             self._sync_lyrics_local()
         self._sync_media_dependents()
+        self.update_preview()
+
+    def _lyrics_prefix(self):
+        """The symbol that goes in front of the lyrics line, or "" when
+        it is switched off / cleared. One place decides it, so the
+        standard output, the {lyrics_prefix} placeholder and the preview
+        can never disagree."""
+        if not self.cfg.get("media_lyrics_prefix_on", True):
+            return ""
+        return str(self.cfg.get("media_lyrics_prefix", "\u266a"))[:4].strip()
+
+    def on_lyrics_prefix_on(self, on):
+        self.cfg["media_lyrics_prefix_on"] = bool(on)
+        self.lyrics_prefix_input.setEnabled(bool(on))
+        self.save_config()
+        self.update_preview()
+
+    def on_lyrics_prefix(self, text):
+        self.cfg["media_lyrics_prefix"] = text[:4]
+        self.save_config_later()
         self.update_preview()
 
     def _title_max(self):
@@ -1430,6 +1479,9 @@ class AppsPageMixin:
             "bar": (bar or None) if c["media_show_bar"] else None,
             "player": info["player"],
             "icon_sound": "\U0001F3B5",
+            # so a custom / AIO template can follow the same setting
+            # instead of hard-coding the symbol into the string
+            "lyrics_prefix": self._lyrics_prefix() or None,
         }
 
     def build_media_lines(self):
@@ -1473,7 +1525,8 @@ class AppsPageMixin:
             lyr = self.lyrics.current_line(info["artist"], info["title"],
                                            info["length"], info["position"])
             if lyr:
-                lines.append(f"\u266a {lyr}")
+                pre = self._lyrics_prefix()
+                lines.append(f"{pre} {lyr}" if pre else lyr)
         if show_bar:
             frac = min(1.0, max(0.0, info["position"] / info["length"]))
             bar = make_songbar(frac, self.cfg["media_bar_style"],

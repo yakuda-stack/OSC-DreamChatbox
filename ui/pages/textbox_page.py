@@ -17,7 +17,7 @@ from core.speechtotext import (
 from core import pyextras
 from core.constants import EXTRAS_DIR
 from core.translators import (
-    DEFAULT_LIBRE_URL, METHODS as TR_METHODS, METHOD_DEEPL, METHOD_GOOGLE, METHOD_LIBRE, METHOD_LINGVA, get_translator, libretranslate_installed, translate_with_fallback)
+    DEFAULT_LIBRE_ONLINE_URL, DEFAULT_LIBRE_URL, LIBRE_ONLINE_CUSTOM, LIBRE_ONLINE_SERVERS, METHODS as TR_METHODS, METHOD_DEEPL, METHOD_GOOGLE, METHOD_LIBRE, METHOD_LIBRE_ONLINE, METHOD_LINGVA, get_translator, libretranslate_installed, translate_with_fallback)
 from ui.ui_main import DragHandle, ToggleLabel, ToggleSwitch
 
 
@@ -318,6 +318,51 @@ class TextboxPageMixin:
         lr.addWidget(self.libre_install_btn)
         sc.addWidget(self.libre_row)
 
+        # method 3b: hosted LibreTranslate. Server picker (preset or a
+        # URL you paste yourself) plus an optional API key, because most
+        # public instances want one for anything beyond a trickle.
+        self.libre_online_row = QWidget()
+        lo = QVBoxLayout(self.libre_online_row)
+        lo.setContentsMargins(0, 0, 0, 0)
+        lo.setSpacing(4)
+        lo_srv = QHBoxLayout()
+        lo_srv.setContentsMargins(0, 0, 0, 0)
+        lo_srv.addWidget(QLabel("Server:"))
+        self.libre_online_combo = QComboBox()
+        for label, val in LIBRE_ONLINE_SERVERS:
+            self.libre_online_combo.addItem(label, val)
+        self.libre_online_combo.currentIndexChanged.connect(
+            self.on_libre_online_server)
+        lo_srv.addWidget(self.libre_online_combo, 1)
+        lo.addLayout(lo_srv)
+        # only shown for "Custom server ..."
+        self.libre_online_url_row = QWidget()
+        lo_url = QHBoxLayout(self.libre_online_url_row)
+        lo_url.setContentsMargins(0, 0, 0, 0)
+        lo_url.addWidget(QLabel("URL:"))
+        self.libre_online_url_input = QLineEdit()
+        self.libre_online_url_input.setPlaceholderText(
+            DEFAULT_LIBRE_ONLINE_URL)
+        self.libre_online_url_input.setToolTip(
+            "Any LibreTranslate server, e.g. https://your-instance.tld "
+            "\u2013 https:// is added automatically if you leave it out.")
+        self.libre_online_url_input.textChanged.connect(
+            self.on_libre_online_url)
+        lo_url.addWidget(self.libre_online_url_input, 1)
+        lo.addWidget(self.libre_online_url_row)
+        lo_key = QHBoxLayout()
+        lo_key.setContentsMargins(0, 0, 0, 0)
+        lo_key.addWidget(QLabel("API key:"))
+        self.libre_online_key_input = QLineEdit()
+        self.libre_online_key_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self.libre_online_key_input.setPlaceholderText(
+            "optional \u2013 only needed if the instance asks for one")
+        self.libre_online_key_input.textChanged.connect(
+            self.on_libre_online_key)
+        lo_key.addWidget(self.libre_online_key_input, 1)
+        lo.addLayout(lo_key)
+        sc.addWidget(self.libre_online_row)
+
         self.tr_method_hint = QLabel("")
         self.tr_method_hint.setObjectName("dim")
         self.tr_method_hint.setWordWrap(True)
@@ -552,6 +597,9 @@ class TextboxPageMixin:
         self.deepl_row.setVisible(method == METHOD_DEEPL)
         self.google_row.setVisible(method == METHOD_GOOGLE)
         self.libre_row.setVisible(method == METHOD_LIBRE)
+        self.libre_online_row.setVisible(method == METHOD_LIBRE_ONLINE)
+        if method == METHOD_LIBRE_ONLINE:
+            self._sync_libre_online_ui()
         if method == METHOD_GOOGLE:
             self._update_google_warning()
         if method == METHOD_LIBRE:
@@ -589,6 +637,14 @@ class TextboxPageMixin:
                 "Start/Stop button appears here (default "
                 "http://127.0.0.1:5000). If it is not reachable, "
                 "Lingva is used as fallback."),
+            METHOD_LIBRE_ONLINE: (
+                "LibreTranslate on somebody else's server \u2013 nothing "
+                "to install, works on Windows and Linux alike. Preset is "
+                f"{DEFAULT_LIBRE_ONLINE_URL}; pick \u201cCustom "
+                "server\u201d to point it at any other instance. Public "
+                "servers rate-limit keyless requests, so add an API key "
+                "if you have one. If the server is unreachable, Lingva "
+                "is used as fallback."),
             METHOD_DEEPL: (
                 "Official DeepL API \u2013 free key at deepl.com (API "
                 "Free plan, 500k chars/month); keys ending in ':fx' are "
@@ -640,10 +696,13 @@ class TextboxPageMixin:
         self.tr_method_hint.setText(
             f"\U0001F9EA Testing '{method}' \u2026")
         def work():
-            tr = get_translator(method,
-                                deepl_key=self.cfg["stt_deepl_key"],
-                                libre_url=self.cfg["stt_libre_url"],
-                                google_key=self.cfg.get("stt_google_key", ""))
+            tr = get_translator(
+                method,
+                deepl_key=self.cfg["stt_deepl_key"],
+                libre_url=self.cfg["stt_libre_url"],
+                google_key=self.cfg.get("stt_google_key", ""),
+                libre_online_url=self.cfg.get("stt_libre_online_url", ""),
+                libre_online_key=self.cfg.get("stt_libre_online_key", ""))
             out = tr.translate("wie geht es dir", "de", "en")
             return (tr.name, out, tr.last_error)
         self.run_async(work, self._poll_tr_test, interval=300)
@@ -744,6 +803,52 @@ class TextboxPageMixin:
             self._update_tr_method_ui()
             self.tr_method_hint.setText(
                 f"\u274C LibreTranslate: {msg}")
+
+    def _sync_libre_online_ui(self):
+        """Keeps the server dropdown, the custom URL row and the config
+        in agreement. The configured value IS the source of truth: an
+        empty string means the preset, anything matching a listed server
+        selects it, and everything else is a custom URL."""
+        url = (self.cfg.get("stt_libre_online_url") or "").strip()
+        known = [v for _lbl, v in LIBRE_ONLINE_SERVERS
+                 if v != LIBRE_ONLINE_CUSTOM]
+        idx = (known.index(url) if url in known
+               else self.libre_online_combo.count() - 1)
+        self.libre_online_combo.blockSignals(True)
+        self.libre_online_combo.setCurrentIndex(idx)
+        self.libre_online_combo.blockSignals(False)
+        custom = self.libre_online_combo.itemData(idx) == LIBRE_ONLINE_CUSTOM
+        self.libre_online_url_row.setVisible(custom)
+        if self.libre_online_url_input.text().strip() != url and custom:
+            self.libre_online_url_input.blockSignals(True)
+            self.libre_online_url_input.setText(url)
+            self.libre_online_url_input.blockSignals(False)
+
+    def on_libre_online_server(self, idx):
+        val = self.libre_online_combo.itemData(idx)
+        if val == LIBRE_ONLINE_CUSTOM:
+            # keep whatever is typed in the field; empty is fine, the
+            # translator falls back to the preset until something is
+            self.cfg["stt_libre_online_url"] = \
+                self.libre_online_url_input.text().strip()
+        else:
+            self.cfg["stt_libre_online_url"] = val or ""
+        self.save_config()
+        self.stt.libre_online_url = self.cfg["stt_libre_online_url"]
+        self._sync_libre_online_ui()
+        self.log("LibreTranslate Online: server = "
+                 + (self.cfg["stt_libre_online_url"]
+                    or f"{DEFAULT_LIBRE_ONLINE_URL} (preset)"))
+
+    def on_libre_online_url(self, text):
+        self.cfg["stt_libre_online_url"] = text.strip()
+        self.save_config_later()
+        self.stt.libre_online_url = text.strip()  # applies live
+
+    def on_libre_online_key(self, text):
+        self.cfg["stt_libre_online_key"] = text.strip()
+        self.save_config_later()
+        self.stt.libre_online_key = text.strip()  # applies live
 
     def on_libre_url(self, text):
         self.cfg["stt_libre_url"] = text.strip()
@@ -870,12 +975,15 @@ class TextboxPageMixin:
             self.stt_status_lbl.setText("Starting microphone \u2026")
             self.log(f"Speech to Text: recording started "
                      f"({self.cfg['stt_language']}) \u2013 apps are blocked")
-            self.stt.start(self.cfg["stt_language"], self.cfg["stt_output"],
-                           self.cfg["stt_method"],
-                           self.cfg["stt_deepl_key"],
-                           self.cfg["stt_libre_url"],
-                           self._mic_index(),
-                           google_key=self.cfg.get("stt_google_key", ""))
+            self.stt.start(
+                self.cfg["stt_language"], self.cfg["stt_output"],
+                self.cfg["stt_method"],
+                self.cfg["stt_deepl_key"],
+                self.cfg["stt_libre_url"],
+                self._mic_index(),
+                google_key=self.cfg.get("stt_google_key", ""),
+                libre_online_url=self.cfg.get("stt_libre_online_url", ""),
+                libre_online_key=self.cfg.get("stt_libre_online_key", ""))
             self.stt_timer.start(200)
         else:
             self.stt.stop()
@@ -950,7 +1058,9 @@ class TextboxPageMixin:
                 self.cfg["stt_method"], text, src, tgt,
                 deepl_key=self.cfg["stt_deepl_key"],
                 libre_url=self.cfg["stt_libre_url"],
-                google_key=self.cfg.get("stt_google_key", ""))
+                google_key=self.cfg.get("stt_google_key", ""),
+                libre_online_url=self.cfg.get("stt_libre_online_url", ""),
+                libre_online_key=self.cfg.get("stt_libre_online_key", ""))
             return (text, tr)
         self.run_async(work, self._poll_ttt, interval=200)
 

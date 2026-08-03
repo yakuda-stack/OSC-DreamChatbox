@@ -243,9 +243,12 @@ class SpeechWorker:
         self._session = 0
         self.language = "en-US"
         self.translate_to = ""  # e.g. "en" - empty = no translation
-        self.method = METHOD_LINGVA   # "lingva" | "libre" | "deepl"
+        # "lingva" | "google" | "libre" | "libre_online" | "deepl"
+        self.method = METHOD_LINGVA
         self.deepl_key = ""
         self.libre_url = ""
+        self.libre_online_url = ""   # "" = the preset public instance
+        self.libre_online_key = ""   # optional, some instances need one
         self.google_key = ""  # optional Google Cloud Translation key
         self.mic_index = -1   # -1 = system default microphone
 
@@ -262,7 +265,7 @@ class SpeechWorker:
 
     def start(self, language, translate_to="", method=METHOD_LINGVA,
               deepl_key="", libre_url="", mic_index=-1,
-              google_key=""):
+              google_key="", libre_online_url="", libre_online_key=""):
         # A previous recording thread has to finish before the new one
         # opens the microphone. It used to be joined RIGHT HERE - on the
         # GUI thread, for up to 6 seconds, because r.listen() only checks
@@ -283,6 +286,8 @@ class SpeechWorker:
         self.method = method or METHOD_LINGVA
         self.deepl_key = deepl_key or ""
         self.libre_url = libre_url or ""
+        self.libre_online_url = libre_online_url or ""
+        self.libre_online_key = libre_online_key or ""
         self.google_key = google_key or ""
         self.mic_index = mic_index if mic_index is not None else -1
         # a fresh Event per session: clearing the shared one would also
@@ -365,6 +370,8 @@ class SpeechWorker:
                                     deepl_key=self.deepl_key,
                                     libre_url=self.libre_url,
                                     google_key=self.google_key,
+                                    libre_online_url=self.libre_online_url,
+                                    libre_online_key=self.libre_online_key,
                                     log=lambda m: emit("status", m))
                                 if tr:
                                     emit("status",

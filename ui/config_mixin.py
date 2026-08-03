@@ -14,17 +14,42 @@ from core.textutils import DEFAULT_CUSTOM_BAR, TIME_POS_LINE
 from core.translators import METHOD_LINGVA
 
 
+#: What the four rotation slots contain on a FIRST START only - i.e.
+#: when neither the current nor the legacy config file exists yet. They
+#: are ordinary texts afterwards: clear one and it stays cleared, this
+#: is a starting point, not a value the app keeps restoring.
+#: All four stay well under CHATBOX_LIMIT (144) even with the slim
+#: suffix, and deliberately avoid markdown - VRChat's chatbox is plain
+#: text, so "[label](url)" would show up with the brackets and burn
+#: characters for nothing.
+FIRST_RUN_STATUS_TEXTS = [
+    "Thanks for your support! \U0001F496",
+    "I'm using OSC Dream Chatbox \U0001F680 "
+    "(Features requested on Discord/Github!)",
+    "\u2615 Support on Ko-fi: ko-fi.com/yakuda_",
+    "\U0001F4BB GitHub Repo: github.com/yakuda-stack",
+]
+
+
 class ConfigMixin:
     def load_config(self):
+        # first start = no config anywhere. Only then are the default
+        # prompts seeded; an existing config always wins.
+        first_run = not CONFIG_FILE.exists() and not OLD_CONFIG_FILE.exists()
+        seed = FIRST_RUN_STATUS_TEXTS if first_run else []
         defaults = {
             "status_text": "",
-            "status_texts": [""] * 20,   # mirror of the ACTIVE template
-            "status_count": 1,
+            # mirror of the ACTIVE template; pre-filled on first start
+            "status_texts": list(seed) + [""] * (20 - len(seed)),
+            "status_count": max(1, len(seed)),
             "status_cycle_sec": 10,
             # 10 switchable text templates, each with its own 1-20 texts
             "status_templates": [
-                {"name": f"Template {i + 1}", "texts": [""] * 20,
-                 "count": 1} for i in range(10)
+                {"name": f"Template {i + 1}",
+                 "texts": (list(seed) + [""] * (20 - len(seed))
+                           if i == 0 else [""] * 20),
+                 "count": max(1, len(seed)) if i == 0 else 1}
+                for i in range(10)
             ],
             "status_template_active": 0,
             "status_active": True,
@@ -39,6 +64,11 @@ class ConfigMixin:
                                          # (off = zero network requests)
             "media_lyrics_local": False,  # use your own local .lrc files
             "media_lyrics_dir": str(LYRICS_DIR),  # folder with .lrc files
+            # the little symbol in front of the lyrics line. Toggle it
+            # off or replace it with anything you like (community
+            # request); "" behaves the same as switching it off.
+            "media_lyrics_prefix_on": True,
+            "media_lyrics_prefix": "\u266a",
             "media_show_bar": True,
             "oscquery_enabled": True,   # natives OSCQuery (mDNS)
             "media_bar_style": 2,   # 0-5 presets, 6 = custom
@@ -64,6 +94,9 @@ class ConfigMixin:
             "stt_deepl_key": "",
             "stt_google_key": "",   # optional Google Cloud Translation key
             "stt_libre_url": "",
+            # hosted LibreTranslate: "" = the preset public instance
+            "stt_libre_online_url": "",
+            "stt_libre_online_key": "",
             "stt_block_saved": [],
             "stt_mode": "stt",       # "stt" (speech->text) | "ttt" (text->text)
             "stt_show_both": False,  # send "source -> translation" in chat
@@ -113,6 +146,10 @@ class ConfigMixin:
             "hw_cpu_temp": True,
             "send_to_vrchat": False,
             "interval_sec": 5,
+            # push a changed text to VRChat right away instead of waiting
+            # for the next interval tick. Always inside VRChat's chatbox
+            # rate limit - see ui/mainwindow.py.
+            "osc_instant_send": True,
             "slim_chatbox": True,   # slim bar instead of big box, default ON
             "osc_ip": "127.0.0.1",
             "osc_port": 9000,
@@ -132,8 +169,11 @@ class ConfigMixin:
         # migrate the old single status text into the text list
         texts = defaults.get("status_texts")
         if not isinstance(texts, list):
-            texts = [""] * 10
-        texts = [str(t) for t in texts][:10] + [""] * max(0, 10 - len(texts))
+            texts = [""] * 20
+        # 20 slots, not 10: normalising through a 10 wide window silently
+        # dropped slots 11-20 and only the template copy below put them
+        # back - which fails the moment the active template is empty.
+        texts = [str(t) for t in texts][:20] + [""] * max(0, 20 - len(texts))
         if defaults.get("status_text") and not any(t.strip() for t in texts):
             texts[0] = defaults["status_text"]
         defaults["status_texts"] = texts
@@ -204,6 +244,20 @@ class ConfigMixin:
                 defaults.get("theme_opacity", 0.82))))
         except (TypeError, ValueError):
             defaults["theme_opacity"] = 0.82
+        # lyrics prefix: a single short string, never None. Longer than
+        # 4 characters is almost certainly a paste accident and would eat
+        # into the 144 char budget on every single line.
+        prefix = defaults.get("media_lyrics_prefix", "\u266a")
+        if not isinstance(prefix, str):
+            prefix = "\u266a"
+        defaults["media_lyrics_prefix"] = prefix[:4]
+        defaults["media_lyrics_prefix_on"] = bool(
+            defaults.get("media_lyrics_prefix_on", True))
+        for key in ("stt_libre_online_url", "stt_libre_online_key"):
+            val = defaults.get(key, "")
+            defaults[key] = val.strip() if isinstance(val, str) else ""
+        defaults["osc_instant_send"] = bool(
+            defaults.get("osc_instant_send", True))
         # older configs may still carry a 2 s cycle from before the
         # 10 s minimum - lift those instead of leaving an out-of-range
         # value that the spin box cannot even display

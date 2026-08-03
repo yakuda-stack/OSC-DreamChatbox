@@ -9,6 +9,7 @@ import json
 import os
 import shutil
 import sys
+import time
 from pathlib import Path
 from PyQt6.QtCore import QUrl, Qt
 from PyQt6.QtGui import QColor, QDesktopServices, QPainter, QPixmap
@@ -19,7 +20,7 @@ from core.theming import (
     TOKEN_LABELS, import_background, list_backgrounds, remove_background,
     resolve_tokens, theme_ids, theme_name)
 from core.constants import (
-    CHATBOX_INPUT, DISCORD_URL, DONATE_URL, GITHUB_REPO, VERSION, VRCHAT_GROUP_URL)
+    CHATBOX_INPUT, DISCORD_URL, DONATE_URL, GITHUB_REPO, OSC_MIN_SEND_GAP_SEC, OSC_RATE_MAX_SENDS, OSC_RATE_WINDOW_SEC, VERSION, VRCHAT_GROUP_URL)
 from core.oscquery import HAS_ZEROCONF
 from core.osinfo import IS_WINDOWS, OS_NAME
 from ui.ui_main import ToggleLabel, ToggleSwitch
@@ -183,6 +184,30 @@ class OptionsPageMixin:
         interval_row.addWidget(QLabel("sec"))
         interval_row.addStretch()
         c.addLayout(interval_row)
+
+        # Instant send: push a changed text straight to VRChat instead of
+        # waiting for the next tick above. Community request - the app
+        # preview updated instantly while VRChat lagged behind by a whole
+        # interval. Always stays inside VRChat's chatbox rate limit.
+        instant_row = QHBoxLayout()
+        self.toggle_instant = ToggleSwitch()
+        self.toggle_instant.toggled.connect(self.on_instant_send_toggled)
+        instant_row.addWidget(self.toggle_instant)
+        instant_row.addWidget(ToggleLabel("Send changes instantly",
+                                          self.toggle_instant))
+        instant_row.addStretch()
+        c.addLayout(instant_row)
+        instant_hint = QLabel(
+            "A changed text goes to VRChat right away instead of waiting "
+            "for the interval above. Stays within VRChat's chatbox limit "
+            f"({OSC_RATE_MAX_SENDS} messages per "
+            f"{int(OSC_RATE_WINDOW_SEC)} s, min "
+            f"{OSC_MIN_SEND_GAP_SEC:g} s apart) - going over it makes "
+            "VRChat hide the chatbox for about 30 seconds, so extra "
+            "sends are delayed, never dropped.")
+        instant_hint.setObjectName("dim")
+        instant_hint.setWordWrap(True)
+        c.addWidget(instant_hint)
 
         line2 = QFrame(); line2.setFrameShape(QFrame.Shape.HLine); line2.setObjectName("hline")
         c.addWidget(line2)
@@ -732,7 +757,12 @@ class OptionsPageMixin:
         """Symlink the in-prefix VRChat picture folder to the Linux Pictures
         folder – only if it isn't already set up."""
         if IS_WINDOWS:
-            box(self, "VRC Picture Folder Fix",
+            # `box` is only bound at the END of this method - calling it
+            # here raised NameError, and PyQt6 routes an exception out of
+            # a slot to sys.excepthook, which kills the process. So this
+            # button closed the whole app on Windows.
+            QMessageBox.information(
+                self, "VRC Picture Folder Fix",
                 "Not needed on Windows: VRChat saves its photos straight "
                 "to your Pictures folder. This fix only exists because on "
                 "Linux they end up inside the Proton prefix.")
@@ -772,6 +802,12 @@ class OptionsPageMixin:
             return
         try:
             self.osc_client.send_message(CHATBOX_INPUT, ["", True, False])
+            # counts against VRChat's chatbox budget like any other
+            # message, and there is nothing on screen afterwards - so the
+            # next payload is always "different" and goes out at once
+            self._send_times.append(time.time())
+            self._last_sent_payload = None
+            self.pending_send_timer.stop()
             self.log(f"-> OSC {CHATBOX_INPUT} cleared (empty message)")
         except Exception as e:
             self.log(f"ERROR while clearing chatbox: {e}")
@@ -784,6 +820,13 @@ class OptionsPageMixin:
             self.log("Debug mode ON – console opened")
         else:
             self.debug_console.hide()
+
+    def on_instant_send_toggled(self, on):
+        self.cfg["osc_instant_send"] = bool(on)
+        self.save_config()
+        self.log(f"Instant send: {'ON' if on else 'OFF'}")
+        if on:
+            self.request_send()
 
     def on_interval_changed(self, val):
         self.cfg["interval_sec"] = val

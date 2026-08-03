@@ -15,6 +15,11 @@ Four selectable methods, all behind ONE unified interface:
    LibreTranslate instance (default http://localhost:5000) for 100%
    offline translation on the user's own machine
    (install manually: pip install libretranslate).
+3b. LibreOnlineTranslator (optional/hosted) – the SAME LibreTranslate
+   API, but on somebody else's server. Nothing to install: either the
+   preset public instance (https://de.libretranslate.com) or any URL
+   the user pastes in, with an optional API key for instances that
+   require one. Open source end to end, unlike Google/DeepL.
 4. DeepLTranslator   (optional/power user) – official DeepL API via
    the `deepl` Python library (raw-HTTP fallback if the library is
    not installed). Clean error handling for quota/auth problems.
@@ -48,17 +53,33 @@ except ImportError:
 METHOD_LINGVA = "lingva"
 METHOD_GOOGLE = "google"
 METHOD_LIBRE = "libre"
+METHOD_LIBRE_ONLINE = "libre_online"
 METHOD_DEEPL = "deepl"
 
 METHODS = [
     ("Lingva Translate (anonymous proxy, no key)", METHOD_LINGVA),
     ("Google Translate (direct / fastest, key optional)", METHOD_GOOGLE),
     ("LibreTranslate (local instance, offline)", METHOD_LIBRE),
+    ("LibreTranslate Online (hosted server, no install)",
+     METHOD_LIBRE_ONLINE),
     ("DeepL API (best quality, own API key)", METHOD_DEEPL),
 ]
 
 DEFAULT_LINGVA_URL = "https://lingva.adminforge.de"
 DEFAULT_LIBRE_URL = "http://127.0.0.1:5000"
+
+# hosted LibreTranslate instances offered in the dropdown. The empty
+# string is what an untouched config carries, so index 0 IS the preset.
+# Anything the user types instead is kept verbatim (see SERVER_CUSTOM).
+DEFAULT_LIBRE_ONLINE_URL = "https://de.libretranslate.com"
+#: marker value of the "Custom server …" entry - never a real URL
+LIBRE_ONLINE_CUSTOM = "__custom__"
+LIBRE_ONLINE_SERVERS = [
+    (f"{DEFAULT_LIBRE_ONLINE_URL}  (preset)", ""),
+    ("https://libretranslate.com  (official, API key required)",
+     "https://libretranslate.com"),
+    ("Custom server \u2026", LIBRE_ONLINE_CUSTOM),
+]
 
 _TIMEOUT = 8
 
@@ -224,11 +245,16 @@ class LibreTranslator(Translator):
     -> {"translatedText": "..."}   source may be "auto"."""
 
     name = "LibreTranslate"
+    #: what a scheme-less URL gets prefixed with. Local instances are
+    #: plain http, hosted ones are https - see LibreOnlineTranslator.
+    default_url = DEFAULT_LIBRE_URL
+    default_scheme = "http"
 
-    def __init__(self, url: str = DEFAULT_LIBRE_URL, api_key: str = ""):
-        url = (url or DEFAULT_LIBRE_URL).strip().rstrip("/")
+    def __init__(self, url: str = "", api_key: str = ""):
+        url = (url or self.default_url).strip().rstrip("/")
         if url and "://" not in url:
-            url = "http://" + url   # user typed "localhost:5000"
+            # user typed "localhost:5000" / "de.libretranslate.com"
+            url = f"{self.default_scheme}://" + url
         self.url = url
         self.api_key = api_key or ""
 
@@ -288,6 +314,43 @@ class LibreTranslator(Translator):
         except Exception as e:
             self.last_error = f"LibreTranslate: {e}"
             return None
+
+
+# ----------------------------------------------------------------------------
+# 3b) LibreTranslate – hosted instance (nothing to install)
+# ----------------------------------------------------------------------------
+class LibreOnlineTranslator(LibreTranslator):
+    """Same protocol as LibreTranslator, pointed at somebody else's
+    server instead of localhost.
+
+    Only three things actually differ, and all three are one-liners:
+    the default URL, the scheme a bare hostname gets (https, not http -
+    sending an API key over plain http would leak it), and the error
+    wording, because "is the local instance running?" is nonsense advice
+    for a public server that is simply down or rate-limiting you."""
+
+    name = "LibreTranslate Online"
+    default_url = DEFAULT_LIBRE_ONLINE_URL
+    default_scheme = "https"
+
+    def translate(self, text, source_lang, target_lang):
+        out = super().translate(text, source_lang, target_lang)
+        if out is None and self.last_error:
+            # rewrite the two messages the parent phrases for localhost
+            if "not reachable" in self.last_error:
+                self.last_error = (
+                    f"LibreTranslate Online: {self.url} did not answer. "
+                    "The public instance may be down or blocking you - "
+                    "try another server, or run a local one.")
+            else:
+                self.last_error = self.last_error.replace(
+                    "LibreTranslate:", "LibreTranslate Online:", 1)
+                if "slow down" in self.last_error.lower() or \
+                        "limit" in self.last_error.lower():
+                    self.last_error += (" (public instances rate-limit "
+                                        "keyless requests - an API key "
+                                        "usually lifts it)")
+        return out
 
 
 # ----------------------------------------------------------------------------
@@ -397,12 +460,16 @@ def get_translator(method: str, deepl_key: str = "",
                    libre_url: str = "",
                    lingva_url: str = "",
                    google_endpoint: str = "",
-                   google_key: str = "") -> Translator:
+                   google_key: str = "",
+                   libre_online_url: str = "",
+                   libre_online_key: str = "") -> Translator:
     """Builds the translator for the configured method."""
     if method == METHOD_DEEPL:
         return DeepLTranslator(deepl_key)
     if method == METHOD_LIBRE:
         return LibreTranslator(libre_url or DEFAULT_LIBRE_URL)
+    if method == METHOD_LIBRE_ONLINE:
+        return LibreOnlineTranslator(libre_online_url, libre_online_key)
     if method == METHOD_GOOGLE:
         return GoogleTranslator(google_endpoint, google_key)
     return LingvaTranslator(lingva_url or DEFAULT_LINGVA_URL)
@@ -411,6 +478,7 @@ def get_translator(method: str, deepl_key: str = "",
 def translate_with_fallback(method, text, source_lang, target_lang,
                             deepl_key="", libre_url="", lingva_url="",
                             google_endpoint="", google_key="",
+                            libre_online_url="", libre_online_key="",
                             log=lambda s: None):
     """Translates with the chosen method; on ANY failure the chain
     automatically continues with Lingva (primary fallback) and then
@@ -418,7 +486,8 @@ def translate_with_fallback(method, text, source_lang, target_lang,
     most once. Returns the translated text or None if everything
     failed – never raises."""
     chain = [get_translator(method, deepl_key, libre_url, lingva_url,
-                            google_endpoint, google_key)]
+                            google_endpoint, google_key,
+                            libre_online_url, libre_online_key)]
     if method != METHOD_LINGVA:
         chain.append(LingvaTranslator(lingva_url or DEFAULT_LINGVA_URL))
     if method != METHOD_GOOGLE:

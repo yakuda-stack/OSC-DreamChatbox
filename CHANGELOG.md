@@ -6,6 +6,82 @@ All notable changes to OSC-DreamChatbox are documented here.
 
 🟢 Linux Support: Complete & Stable (v1.2.6)
 
+## [v1.3.1] – 2026-08-03
+
+**Community release.** Two feature requests from the Discord, the hosted
+LibreTranslate backend, and the reason VRChat was always a few seconds behind
+the app. Everything in here works identically on Windows and Linux.
+
+### Added
+
+- **First-start default prompts.** A fresh install now comes with four filled
+  rotation slots instead of an empty Personal Status card, so the app does
+  something visible the moment you switch SendToVRChat on: a thank-you line,
+  a "what am I running" line, the Ko-fi link and the GitHub link. They are
+  seeded **only** when no config exists yet - they are ordinary texts from
+  then on, so clearing or rewriting one sticks, and no existing install is
+  touched. Plain text on purpose: VRChat's chatbox does not render markdown,
+  so `[label](url)` would show the brackets and waste characters.
+
+- **LibreTranslate Online - a hosted instance, nothing to install.** The
+  fifth entry in the translation-service dropdown. It speaks the same API as
+  the existing local option, just on somebody else's server, so it needs no
+  `pip install libretranslate` and no local process. Pick the preset
+  (`https://de.libretranslate.com`), the official `libretranslate.com`, or
+  **Custom server** and paste any URL; a bare hostname gets `https://`
+  prefixed automatically. There is an optional **API key** field, because
+  public instances rate-limit keyless requests. Available in both **Speech to
+  Text and Text to Text** - they share one translation pipeline, so the
+  setting applies to both at once, and the 🧪 Test button works with it like
+  with every other service. If the server is unreachable, the existing
+  fallback chain (Lingva → Google) still catches it.
+
+- **Lyrics symbol is now switchable** *(requested by Rachelle Bellwether on
+  Discord)*. The `♪` in front of the synced lyrics line used to be
+  hard-coded. Under **Apps → MediaPlay → Lyrics** there is now a checkbox
+  plus a small field: turn it off entirely, or put any character or emoji
+  there instead. An empty field behaves like switching it off. Custom and
+  AIO templates get a matching `{lyrics_prefix}` placeholder so they can
+  follow the same setting instead of hard-coding the symbol.
+
+- **Instant send** (Options → Send to OSC). A changed text now reaches VRChat
+  right away instead of waiting for the next interval tick. It is on by
+  default and can be switched off.
+
+### Fixed
+
+- **VRChat lagged behind the app by up to a whole send interval**
+  *(reported by Rachelle Bellwether on Discord: "vr chat doesn't get the
+  updates as fast as the app does")*. `sending_live()` checked a config key
+  called `send_active`, which stopped existing when the toggle was renamed to
+  `send_to_vrchat` - so it was `False` for everybody, always. Every
+  instant-send path behind it did nothing at all, and a rotated status text
+  or a switched template only showed up on the next scheduled tick, up to
+  `interval_sec` later. The preview updated immediately, which is exactly why
+  it looked like VRChat was the slow one.
+
+- **Chatbox sends are now rate-limit aware.** VRChat allows roughly 5 chatbox
+  messages per 5 seconds and answers a burst with a ~30 second cooldown in
+  which *nothing* is displayed - so naively sending on every change would
+  have turned the first bug into a worse one. Sends now go through a rolling
+  window (5 per 5 s, minimum 1.5 s apart - the interval VRChat itself uses).
+  A send that arrives too early is **postponed, never dropped**, and repeated
+  changes inside the waiting period **coalesce into one message**: typing in
+  a status field costs a single send carrying the final text, not one per
+  keystroke. Identical payloads are not re-sent, and clearing the chatbox is
+  counted against the budget like any other message.
+
+- **Windows: the "VRC Picture Folder Fix" button closed the app.** It called
+  a local variable that is only bound at the end of the method, so it raised
+  `NameError` - and PyQt6 routes an exception out of a slot to
+  `sys.excepthook`, whose default terminates the process. It now shows the
+  intended "not needed on Windows" dialog.
+
+- **Status slots 11-20 could be lost.** The 20 rotation texts were normalised
+  through a 10-wide window on load, so the upper ten only survived because
+  the active template happened to restore them afterwards - and did not
+  survive when that template was empty.
+
 ## [v1.3.0] – 2026-08-02
 
 **Windows support.** The app runs natively on Windows 10/11 - same codebase,
