@@ -1,0 +1,43 @@
+# Dependencies for the OSC-DreamChatbox WINDOWS build.
+# Linux keeps using requirements.txt / the AUR package - this file is
+# only read by packaging/windows/build-exe.ps1.
+
+# --- required to run ---
+PyQt6
+python-osc
+
+# --- required to build the .exe ---
+pyinstaller>=6.0
+pillow            # converts assets/icon.png -> assets/icon.ico
+
+# --- Media Player card (now playing) ---
+# PyWinRT bindings for the Windows media session (GSMTC). "[all]" pulls
+# the Foundation/Media/Storage namespaces this needs.
+# Wheels exist up to Python 3.14.
+winrt-Windows.Media.Control[all]
+#
+# Legacy alternative for Python <= 3.12 only - winsdk has no wheels for
+# 3.13/3.14. Install this INSTEAD of the line above if you are on an
+# older Python; the app accepts either binding:
+#   winsdk
+
+# --- Speech to Text ---
+SpeechRecognition   # pure python, works on any version
+sounddevice         # microphone input
+#
+# WHY sounddevice AND NOT pyaudio:
+# PyAudio is a compiled extension and its wheels stop at CPython 3.13.
+# On Python 3.14 "pip install pyaudio" falls back to a source build that
+# needs Visual Studio and a PortAudio checkout. sounddevice wraps the
+# same PortAudio through CFFI, ships as py3-none-win_amd64 (no CPython
+# ABI -> installs on every 3.x), and its Windows wheel carries the
+# PortAudio DLL, so nothing has to be installed system-wide.
+# The app accepts BOTH: if pyaudio happens to be installed it wins.
+
+# --- optional, bundled automatically when installed ---
+zeroconf          # OSCQuery auto-discovery
+deepl             # DeepL translation backend
+
+# NOT listed on purpose:
+#   setproctitle - Linux process-name cosmetics, the .exe already has a name
+#   pyaudio      - replaced by sounddevice, see above

@@ -8,8 +8,11 @@ window class stays small. All `self.*` refer to the MainWindow instance.
 import json
 import shutil
 from core.theming import THEMES
+from core.textstyle import STYLE_NORMAL, normalize as normalize_style
 from core.constants import (
     CONFIG_DIR, CONFIG_FILE, LYRICS_DIR, MIN_STATUS_CYCLE_SEC, OLD_CONFIG_FILE, TITLE_MAX_LEN)
+from core.boxstyle import (
+    CLOCK_24_HM, DEFAULT_CUSTOM_BOX, MODE_CUSTOM as BOX_MODE_CUSTOM, normalize_clock_format, normalize_custom as normalize_box_custom, normalize_mode as normalize_box_mode, normalize_template as normalize_box_template, normalize_width as normalize_box_width)
 from core.textutils import DEFAULT_CUSTOM_BAR, TIME_POS_LINE
 from core.translators import METHOD_LINGVA
 
@@ -41,6 +44,8 @@ class ConfigMixin:
             "status_text": "",
             # mirror of the ACTIVE template; pre-filled on first start
             "status_texts": list(seed) + [""] * (20 - len(seed)),
+            # per text: normal | super | sub (see core/textstyle.py)
+            "status_styles": [STYLE_NORMAL] * 20,
             "status_count": max(1, len(seed)),
             "status_cycle_sec": 10,
             # 10 switchable text templates, each with its own 1-20 texts
@@ -48,6 +53,7 @@ class ConfigMixin:
                 {"name": f"Template {i + 1}",
                  "texts": (list(seed) + [""] * (20 - len(seed))
                            if i == 0 else [""] * 20),
+                 "styles": [STYLE_NORMAL] * 20,
                  "count": max(1, len(seed)) if i == 0 else 1}
                 for i in range(10)
             ],
@@ -58,6 +64,8 @@ class ConfigMixin:
             "media_show_title": True,
             "media_title_max": TITLE_MAX_LEN,  # song title cutoff (3-64)
             "media_show_time": True,
+            # small-letter digits for the music timer: normal|super|sub
+            "media_time_style": STYLE_NORMAL,
             "media_time_seconds": True,  # time incl. seconds (3:27);
                                          # off = old h:mm style (0:03)
             "media_show_lyrics": False,  # synced lyrics via LRCLIB
@@ -120,6 +128,39 @@ class ConfigMixin:
             "aio_rotate_sec": 10,
             "aio_templates": ["{text} \\n {artist} : {title} | {time} \\n {bar}",
                               "", "", "", ""],
+            # ---- Custom Box (core/boxstyle.py, ui/pages/custom_box.py) --
+            # Off by default, on purpose. How wide a frame line can get
+            # before the VRChat chatbox breaks it depends on the font and
+            # on which characters are on the line, and no number in here
+            # can know that - it has to be set once, by eye, against the
+            # game. Shipping it on would mean shipping a frame that
+            # splits on somebody's setup and looks broken out of the box.
+            # Everything below is still filled in, so switching it on
+            # gives a working frame to adjust from rather than a blank.
+            "box_active": False,
+            "box_template": 2,          # 0-11 presets, 12 = custom
+            "box_custom_style": dict(DEFAULT_CUSTOM_BOX),
+            # fill characters, per line: the two middle texts are rarely
+            # the same length, so one number for both was never enough
+            "box_width_top": 7,
+            "box_width_bottom": 3,
+            # off, because the two widths above are deliberately
+            # different - aligning would flatten them back together
+            "box_align": False,
+            "box_top_on": True,
+            "box_bottom_on": True,
+            "box_top_mode": BOX_MODE_CUSTOM,    # none | clock | custom
+            "box_top_custom": "\U0001F550{box_clock}\U0001F550",
+            "box_bottom_mode": BOX_MODE_CUSTOM,
+            "box_bottom_custom": "OSC-DreamChatbox",
+            # on, because the default top line IS a clock - a clock that
+            # only moves when something else happens looks broken
+            "box_clock_live": True,
+            "box_clock_format": CLOCK_24_HM,
+            # MediaPlay: what to show between songs. On by default -
+            # a line that vanishes looks like the app stopped working
+            "media_idle": True,
+            "media_idle_text": "\u23F8",
             "hw_flame": False,
             "hw_custom": False,
             "hw_custom_template": "\U0001F3AE {gpu_name} {gpu_usage} | {gpu_temp} {temp_icon} \\n "
@@ -133,6 +174,7 @@ class ConfigMixin:
             "hw_gpu_name": True,
             "hw_gpu_custom": False,
             "hw_gpu_custom_name": "",
+            "hw_gpu_name_style": STYLE_NORMAL,
             "hw_gpu_temp": True,
             "hw_vram_used": True,
             "hw_vram_pct": False,
@@ -143,6 +185,7 @@ class ConfigMixin:
             "hw_cpu_name": True,
             "hw_cpu_custom": False,
             "hw_cpu_custom_name": "",
+            "hw_cpu_name_style": STYLE_NORMAL,
             "hw_cpu_temp": True,
             "send_to_vrchat": False,
             "interval_sec": 5,
@@ -155,12 +198,23 @@ class ConfigMixin:
             "osc_port": 9000,
             "debug": False,
         }
+        # what the file on disk actually contained. Kept separate from
+        # `defaults` because a default value is indistinguishable from a
+        # stored one after the update() below - and a migration has to be
+        # able to tell "the user never had this key" from "the user set
+        # it to the same number the default happens to be".
+        stored = {}
         try:
             if CONFIG_FILE.exists():
-                defaults.update(json.loads(CONFIG_FILE.read_text()))
+                stored = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
             elif OLD_CONFIG_FILE.exists():
                 # migrate settings from the old location
-                defaults.update(json.loads(OLD_CONFIG_FILE.read_text()))
+                stored = json.loads(
+                    OLD_CONFIG_FILE.read_text(encoding="utf-8"))
+            if isinstance(stored, dict):
+                defaults.update(stored)
+            else:
+                stored = {}
         except Exception as e:
             # a broken/corrupt config must not silently wipe the user's
             # settings – back the file up so it can be inspected/recovered,
@@ -181,6 +235,18 @@ class ConfigMixin:
         while len(defaults["status_texts"]) < 20:
             defaults["status_texts"].append("")
         defaults["status_count"] = min(20, max(1, int(defaults.get("status_count", 1))))
+        # per-text styles: same 20 slots as the texts. Configs written
+        # before v1.3.2 have none, so everything defaults to normal and
+        # nothing about an existing setup changes on update.
+        styles = defaults.get("status_styles")
+        if not isinstance(styles, list):
+            styles = []
+        styles = [normalize_style(x) for x in styles][:20]
+        styles += [STYLE_NORMAL] * (20 - len(styles))
+        defaults["status_styles"] = styles
+        for key in ("hw_gpu_name_style", "hw_cpu_name_style",
+                    "media_time_style"):
+            defaults[key] = normalize_style(defaults.get(key))
         # templates: normalise / migrate old single-list configs
         tpls = defaults.get("status_templates")
         if not isinstance(tpls, list) or len(tpls) != 10:
@@ -189,6 +255,9 @@ class ConfigMixin:
         for t in tpls:
             t.setdefault("name", "Template")
             t["texts"] = (list(t.get("texts", [])) + [""] * 20)[:20]
+            t["styles"] = ([normalize_style(x) for x in
+                            (t.get("styles") or [])]
+                           + [STYLE_NORMAL] * 20)[:20]
             t["count"] = min(20, max(1, int(t.get("count", 1))))
         defaults["status_templates"] = tpls
         idx = min(9, max(0, int(defaults.get("status_template_active", 0))))
@@ -197,9 +266,11 @@ class ConfigMixin:
         if any(x.strip() for x in defaults["status_texts"]) and \
                 not any(x.strip() for x in tpls[idx]["texts"]):
             tpls[idx]["texts"] = list(defaults["status_texts"])
+            tpls[idx]["styles"] = list(defaults["status_styles"])
             tpls[idx]["count"] = defaults["status_count"]
         else:
             defaults["status_texts"] = list(tpls[idx]["texts"])
+            defaults["status_styles"] = list(tpls[idx]["styles"])
             defaults["status_count"] = tpls[idx]["count"]
         # migrate old default templates to the current one
         old_defaults = (
@@ -291,6 +362,42 @@ class ConfigMixin:
         else:
             defaults["aio_templates"] = list(sets[aidx]["templates"])
             defaults["aio_count"] = sets[aidx]["count"]
+        # ---- Custom Box -------------------------------------------------
+        # Configs written before v1.3.2 have none of these keys, so every
+        # one of them falls back to the default above and an existing
+        # setup comes up with the frame switched off, exactly as before.
+        # Everything is clamped rather than rejected: an out-of-range
+        # template index would leave the button group with nothing checked
+        # and the card unusable.
+        defaults["media_idle"] = bool(defaults.get("media_idle", True))
+        idle = defaults.get("media_idle_text", "\u23F8")
+        defaults["media_idle_text"] = idle[:20] if isinstance(idle, str) \
+            else "\u23F8"
+        defaults["box_active"] = bool(defaults.get("box_active", False))
+        defaults["box_template"] = normalize_box_template(
+            defaults.get("box_template"))
+        defaults["box_custom_style"] = normalize_box_custom(
+            defaults.get("box_custom_style"))
+        # one width used to serve both lines; carry it over to the two so
+        # a config from the first Custom Box build keeps its frame. Only
+        # for a side the file did not already carry its own width for.
+        legacy_width = defaults.pop("box_width", None)
+        for key in ("box_width_top", "box_width_bottom"):
+            value = defaults.get(key)
+            if key not in stored and legacy_width is not None:
+                value = legacy_width
+            defaults[key] = normalize_box_width(value)
+        defaults["box_align"] = bool(defaults.get("box_align", True))
+        for key in ("box_top_on", "box_bottom_on"):
+            defaults[key] = bool(defaults.get(key, True))
+        for key in ("box_top_mode", "box_bottom_mode"):
+            defaults[key] = normalize_box_mode(defaults.get(key))
+        for key in ("box_top_custom", "box_bottom_custom"):
+            val = defaults.get(key, "")
+            defaults[key] = val[:120] if isinstance(val, str) else ""
+        defaults["box_clock_live"] = bool(defaults.get("box_clock_live", False))
+        defaults["box_clock_format"] = normalize_clock_format(
+            defaults.get("box_clock_format"))
         return defaults
 
     def _backup_corrupt_config(self, err):
@@ -333,6 +440,11 @@ class ConfigMixin:
     def _write_config(self):
         try:
             CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-            CONFIG_FILE.write_text(json.dumps(self.cfg, indent=2))
+            # json.dumps escapes non-ASCII by default, so this file is
+            # plain ASCII today - the encoding is pinned anyway so a
+            # hand-edited config with an emoji in it still loads on
+            # Windows, where the default is the locale codepage
+            CONFIG_FILE.write_text(json.dumps(self.cfg, indent=2),
+                                   encoding="utf-8")
         except Exception as e:
             self.log(f"Could not save settings: {e}")

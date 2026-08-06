@@ -5,7 +5,7 @@ Plugins live in ``CONFIG_DIR/plugins/<plugin_id>/`` and consist of at
 least a ``plugin.json`` manifest and the python file it points to::
 
     ~/.config/OSC-DreamChatbox/plugins/
-        hello_world/
+        example_template/
             plugin.json
             main.py
 
@@ -18,6 +18,56 @@ Every hook is optional; a plugin only implements what it needs:
     def get_values():        -> dict, extra {<id>_<key>} placeholders
     def on_settings(opts):   called when the user changed a setting
     def on_text(text):       -> str, last-chance filter for the final text
+    def on_tick():           once per chatbox frame, before the values are
+                             collected – for a plugin that has to poll
+    def on_event(name, data) anything the app announces; see "Events"
+    def build_widget(parent) -> QWidget, the plugin's own UI, embedded
+                             under its settings on the Plugins page
+
+Hooks are looked up by name, never required and never awaited: a plugin
+written for a newer app may implement hooks this build has never heard
+of, and an older plugin simply misses the new ones. Neither is an error.
+
+Forward compatibility
+---------------------
+The whole point of the rules below is that a plugin and the app are
+updated by different people at different times, and neither direction
+may end in a traceback or in silently lost settings:
+
+    "api": 3            a manifest may state which plugin API it needs.
+                        A plugin asking for more than PLUGIN_API_VERSION
+                        is listed, greyed out and NOT imported, with the
+                        reason in its tooltip – instead of failing
+                        halfway through setup() with an AttributeError.
+
+    api.supports(...)   runtime feature detection, so one plugin release
+                        can serve several app versions:
+                        `if api.supports("api.set"): api.set(...)`
+
+    unknown settings    a "settings" entry of a type this build does not
+                        know is kept, not dropped: its default is stored
+                        like any other value, the plugin reads it through
+                        api.get() as usual, and the UI shows a disabled
+                        row saying which app version it needs. An option
+                        the user cannot see is still an option the plugin
+                        can rely on.
+
+    unknown keys        anything else the app does not understand – extra
+                        manifest fields, extra keys on a settings row,
+                        extra keys in config.json – is carried along
+                        untouched (Plugin.extra, item["extra"],
+                        entry["extra"]) instead of being thrown away on
+                        the next write.
+
+Events
+------
+    manager.emit("avatar.changed", {"id": "avtr_..."})
+
+reaches every active plugin as ``on_event("avatar.changed", {...})``.
+This is the extension point for everything that does not exist yet: a
+new kind of notification needs no change in here and no change in any
+plugin that does not care about it. Names are dotted and lower case;
+a plugin must ignore what it does not recognise.
 
 Placeholders: every plugin is addressable as ``{<plugin_id>}`` (its
 get_text(), falling back to its get_lines()), and every key of
@@ -32,7 +82,7 @@ Beyond the required keys, plugin.json may declare:
                     Both default to true: most plugins are plain python and
                     run anywhere, so only a plugin that really touches
                     pactl, /sys, WMI or similar has to say so.
-    "template":     default custom string, e.g. "\U0001F44B {hello_world}"
+    "template":     default custom string, e.g. "\u2728 {example_template}"
     "placeholders": {"mood": "what it means"}   – shown as a UI hint
     "global_placeholders": ["realtime"]  – claim these names WITHOUT the
                             id prefix, so {realtime} works everywhere. An
@@ -44,10 +94,77 @@ Beyond the required keys, plugin.json may declare:
                       "default": 24, "min": 6, "max": 64,
                       "suffix": " chars", "depends": "shout"}]
 
-``settings`` entries (type text | bool | int | slider) are rendered as
-real widgets under the plugin's Settings expander, so an author gets a
-config UI without writing a single line of Qt. The current values reach
-the plugin as ``api.settings`` (a live dict) plus the on_settings hook.
+``settings`` entries (type text | bool | int | slider | choice | path
+| emoji | label | action | group)
+are rendered as real widgets under the plugin's Settings expander, so an
+author gets a config UI without writing a single line of Qt. The current
+values reach the plugin as ``api.settings`` (a live dict) plus the
+on_settings hook.
+
+Three of those types need a word beyond their name:
+
+    {"key": "mode", "type": "choice", "label": "Data source",
+     "default": "keyless",
+     "choices": [{"value": "keyless", "label": "Keyless"},
+                 {"value": "api", "label": "Official API"}]}
+
+        A dropdown. The stored value is always one of the "value"
+        strings; a plain list of strings works too, then value == label.
+
+    {"key": "binary", "type": "path", "label": "OSCLeash path",
+     "mode": "file", "placeholder": "auto",
+     "filters": ["OSCLeash (OSCLeash* *.AppImage *.exe)"]}
+
+        A text row with a file picker next to it. "mode" is "file" or
+        "dir", "filters" are Qt name filters and only apply to files.
+        The value is stored exactly as typed or picked and is never
+        resolved or checked here: a plugin may want a path that does not
+        exist yet, and a config carried to another machine must not be
+        silently "corrected".
+
+    {"key": "reset", "type": "action", "label": "Cached data",
+     "button": "Clear now", "style": "danger"}
+
+        A button. It holds no value and never reaches config.json - the
+        key only tells the plugin which button was pressed, through
+        ``on_action(key)``. "style" is normal | primary | danger, and a
+        string returned by the hook is shown next to the button.
+
+    {"key": "status", "type": "label", "label": "State", "default": "idle"}
+
+        A read-only line. The text is an option value like any other, so
+        ``api.set("status", "connected")`` turns it into a live status
+        line - no widget needed for the common case of "the plugin wants
+        to say one thing".
+
+    {"key": "icon", "type": "emoji", "label": "Icon", "default": "\U0001F415"}
+
+        A text row with the app's own icon picker next to it - the same
+        popup the Personal Status and Hardware custom strings use, so a
+        plugin icon is chosen the way every other icon in the app is. It
+        stays a text field: an icon is often two characters (emoji plus
+        variation selector), and a trailing space is sometimes the point.
+
+    {"key": "twitch", "type": "group", "label": "Twitch",
+     "expanded": false, "items": [ ...more settings... ]}
+
+        A collapsible block. A group holds no value of its own, it only
+        groups the settings in its "items" list - which may contain
+        every type including one more level of groups. Like the Settings
+        expander itself, a group starts collapsed unless the manifest
+        says "expanded": true; the open/closed state is a view detail and
+        is deliberately not persisted.
+
+``depends`` hides a row while another setting is switched off. With
+``depends_value`` it can follow a choice instead of a bool::
+
+    {"key": "api_key", "type": "text", "label": "API key",
+     "secret": true, "depends": "mode", "depends_value": "api"}
+
+``depends_value`` accepts a single value or a list of them; without it
+the parent is simply tested for truthiness, which is what every existing
+plugin relies on. ``"secret": true`` on a text row masks the input, for
+tokens and API keys.
 
 ``api`` is a PluginAPI instance (log, paths, host window). Every call
 into plugin code goes through _safe_call(), so a broken plugin can log
@@ -88,6 +205,47 @@ from core.osinfo import IS_LINUX, IS_WINDOWS, OS_NAME  # noqa: F401
 from core.textutils import apply_template
 
 MANIFEST_NAME = "plugin.json"
+
+# --------------------------------------------------------------------
+# plugin API version
+# --------------------------------------------------------------------
+# Bumped whenever plugins gain something they may rely on. A manifest can
+# declare the minimum it needs as "api": <n>; anything higher than this
+# number is refused with a readable reason instead of being imported and
+# blowing up on the first missing attribute.
+#
+#   1  the original contract: setup/teardown/get_*/on_settings/on_text,
+#      settings of type text | bool | int | slider
+#   2  choice + group settings, secret, depends_value, build_widget(),
+#      on_tick(), on_event(), api.set()/api.refresh()/api.supports(),
+#      and unknown settings/keys surviving instead of being dropped
+PLUGIN_API_VERSION = 2
+
+# What THIS build can actually do, for api.supports("..."). Feature
+# strings are additive and never removed - a plugin testing for one that
+# was retired simply gets False and takes its fallback path.
+CAPABILITIES = frozenset({
+    "settings.text", "settings.bool", "settings.int", "settings.slider",
+    "settings.choice", "settings.group", "settings.secret",
+    "settings.path", "settings.emoji", "settings.action", "settings.label",
+    "settings.depends", "settings.depends_value",
+    "settings.unsupported_passthrough",
+    "widget",              # build_widget() is embedded in the plugin card
+    "events",              # on_event(name, data)
+    "tick",                # on_tick() once per chatbox frame
+    "api.set",             # writing a setting back from the plugin
+    "api.refresh",         # asking for a fresh chatbox render
+    "api.data_dir",        # a writable folder that survives updates
+    "manifest.extra",      # unknown manifest keys reach Plugin.extra
+})
+
+# Every hook the app knows. Only used for introspection (the info popup,
+# api.supports("hook.<name>")): dispatch itself is by name, so a plugin
+# may carry hooks from a newer app without anything here complaining.
+HOOKS = ("setup", "teardown", "get_text", "get_lines", "get_values",
+         "on_settings", "on_text", "on_tick", "on_event", "on_action",
+         "build_widget")
+
 # per-plugin state lives in <plugin>/configs/config.json
 CONFIG_DIRNAME = "configs"
 # where a plugin's lines land relative to the standard apps. The value is
@@ -100,7 +258,37 @@ ANCHOR_LABELS = (("status", "Above Personal Status"),
                  ("aio", "Above All in one"))
 DEFAULT_ANCHOR = "aio"
 CONFIG_NAME = "config.json"
-SETTING_TYPES = ("text", "bool", "int", "slider")
+# types that carry a value the user can change
+LEAF_SETTING_TYPES = ("text", "bool", "int", "slider", "choice", "path",
+                      "emoji", "label")
+# a button is not a value: it has a key so the plugin knows which one was
+# pressed, but nothing about it is ever stored
+ACTION_TYPE = "action"
+# purely structural: a collapsible block around other settings
+GROUP_TYPE = "group"
+SETTING_TYPES = LEAF_SETTING_TYPES + (GROUP_TYPE, ACTION_TYPE)
+# not a type an author writes: what a row of an unknown type BECOMES, so
+# its value still exists for the plugin and the UI can say why the row is
+# greyed out. See _parse_schema().
+UNSUPPORTED_TYPE = "unsupported"
+# keys the schema parser consumes itself – everything else on a settings
+# row is handed through in item["extra"] for a future UI to pick up
+KNOWN_ITEM_KEYS = frozenset({
+    "key", "type", "label", "hint", "depends", "depends_value", "default",
+    "min", "max", "suffix", "secret", "choices", "options", "items",
+    "expanded", "mode", "filters", "placeholder", "button", "style"})
+# same idea for the manifest and for config.json
+KNOWN_MANIFEST_KEYS = frozenset({
+    "id", "name", "version", "author", "description", "summary", "Github",
+    "github", "main", "image", "enabled", "is_linux", "is_windows",
+    "template", "placeholders", "global_placeholders", "settings", "api",
+    "min_app"})
+KNOWN_CONFIG_KEYS = frozenset({
+    "enabled", "anchor", "order", "line", "custom", "template", "options"})
+# how deep groups may nest. Two levels are plenty for a settings block
+# and the limit keeps a hand-written (or generated) manifest from
+# recursing the parser into the ground.
+MAX_GROUP_DEPTH = 2
 # plugin ids are used as folder AND module names -> keep them boring
 ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 MODULE_PREFIX = "dreamchatbox_plugin_"
@@ -111,6 +299,24 @@ MODULE_PREFIX = "dreamchatbox_plugin_"
 # every existing plugin and every plugin.json keeps working.
 # zip bomb / typo protection (uncompressed size of the whole archive)
 MAX_UNPACKED_BYTES = 64 * 1024 * 1024
+
+
+def iter_settings(schema):
+    """Yields every setting that holds a VALUE, walking into groups.
+
+    Groups are containers, so everything that deals with option values -
+    filling in defaults, reading them back - iterates with this instead
+    of looping over the schema directly. A schema without groups walks
+    exactly like the flat list it always was.
+    """
+    for item in schema or []:
+        kind = item.get("type")
+        if kind == GROUP_TYPE:
+            yield from iter_settings(item.get("items"))
+        elif kind != ACTION_TYPE:
+            # a button has a key but no value - it must not end up in
+            # config.json, and api.get() has nothing to return for it
+            yield item
 
 
 # --------------------------------------------------------------------
@@ -220,6 +426,10 @@ class Plugin:
     placeholders: dict = field(default_factory=dict)   # name -> description
     global_keys: list = field(default_factory=list)    # unprefixed names
     schema: list = field(default_factory=list)         # user-editable options
+    api_needed: int = 1            # manifest "api": the API it relies on
+    min_app: str = ""              # optional "min_app": "v1.4.0" – a hint
+                               # for the user, never parsed for a decision
+    extra: dict = field(default_factory=dict)   # manifest keys we don't know
     enabled: bool = False          # effective state (central state file)
     module: object = None          # imported module while loaded
     api: object = None
@@ -230,13 +440,45 @@ class Plugin:
         return self.module is not None
 
     @property
-    def supported(self):
-        """False when the manifest rules this platform out."""
+    def platform_ok(self):
+        """False when the manifest rules this operating system out."""
         return self.is_windows if IS_WINDOWS else self.is_linux
 
     @property
+    def api_ok(self):
+        """False when the plugin needs a newer plugin API than this build
+        provides. Checked BEFORE the import, so a plugin from the future
+        is greyed out with a reason instead of raising somewhere inside
+        setup()."""
+        return int(self.api_needed or 1) <= PLUGIN_API_VERSION
+
+    @property
+    def supported(self):
+        """Everything that has to be true before this build may run the
+        plugin at all. Kept as one property because the whole UI asks
+        this one question - the reason lives in platform_note."""
+        return self.platform_ok and self.api_ok
+
+    @property
     def platform_note(self):
-        return "" if self.supported else f"not for {OS_NAME}"
+        """Why the plugin is unusable here, empty when it is usable. The
+        name is historical: it used to only ever be the OS."""
+        if not self.platform_ok:
+            return f"not for {OS_NAME}"
+        if not self.api_ok:
+            need = self.min_app.strip()
+            return (f"needs a newer {APP_NAME}"
+                    + (f" ({need})" if need else "")
+                    + f" – plugin API {self.api_needed}, this build "
+                      f"speaks {PLUGIN_API_VERSION}")
+        return ""
+
+    @property
+    def unsupported_options(self):
+        """Settings this build cannot render. Their values still exist,
+        the plugin can still read them - only the row is disabled."""
+        return [i for i in iter_settings(self.schema)
+                if i.get("type") == UNSUPPORTED_TYPE]
 
     @property
     def main_path(self):
@@ -265,13 +507,26 @@ class Plugin:
 
 class PluginAPI:
     """Everything a plugin is handed in setup(). Deliberately small –
-    extend it here instead of letting plugins poke at internals."""
+    extend it here instead of letting plugins poke at internals.
+
+    Anything added here has to be added to CAPABILITIES as well, because
+    that is what a plugin is meant to test against. The pattern that
+    keeps one plugin release working across app versions is::
+
+        if api.supports("api.set"):
+            api.set("binary", found)
+        else:
+            self._binary = found      # remember it for this session only
+    """
 
     def __init__(self, manager, plugin):
         self._manager = manager
         self._plugin = plugin
         self.app_name = APP_NAME
         self.app_version = VERSION
+        # what the app can do, for feature detection
+        self.api_version = PLUGIN_API_VERSION
+        self.capabilities = CAPABILITIES
         self.plugin_id = plugin.pid
         self.plugin_dir = plugin.folder
         # the plugin's own writable folder – same place its config.json
@@ -291,9 +546,67 @@ class PluginAPI:
         """Convenience reader for a declared setting."""
         return self.settings.get(key, default)
 
+    # ------------------------------------------------ feature detection
+    def supports(self, feature):
+        """True when this build offers a named capability.
+
+        Also answers "hook.<name>" and "settings.<type>", so a plugin can
+        ask the two questions it actually has: 'may I call this?' and
+        'will my settings row show up?'
+        """
+        feature = str(feature or "").strip()
+        if not feature:
+            return False
+        if feature in self.capabilities:
+            return True
+        if feature.startswith("hook."):
+            return feature[5:] in HOOKS
+        return False
+
+    def needs(self, version):
+        """True when the app speaks at least this plugin API version."""
+        try:
+            return PLUGIN_API_VERSION >= int(version)
+        except (TypeError, ValueError):
+            return False
+
+    # ----------------------------------------------------- writing back
+    def set(self, key, value):
+        """Store one of the plugin's own settings and persist it.
+
+        For values the plugin discovers rather than the user types – an
+        autodetected path, a token it just refreshed, the window size of
+        its own panel. The visible widget follows along, and on_settings
+        is NOT called back, so a plugin cannot loop through its own
+        write.
+        """
+        return self._manager.set_option(self.plugin_id, key, value,
+                                        notify=False, from_plugin=True)
+
+    def set_many(self, values):
+        if not isinstance(values, dict):
+            return False
+        ok = True
+        for key, value in values.items():
+            ok = self.set(key, value) and ok
+        return ok
+
+    def refresh(self):
+        """Ask the app for a fresh chatbox render, e.g. after data
+        arrived that would otherwise wait for the next tick."""
+        return self._manager.request_refresh()
+
+    # -------------------------------------------------------- the disk
     def ensure_data_dir(self):
         self.data_dir.mkdir(parents=True, exist_ok=True)
         return self.data_dir
+
+    def data_path(self, *parts):
+        """A path inside the plugin's own folder, parents created. Keeps
+        plugins from inventing their own place under $HOME."""
+        path = self.ensure_data_dir().joinpath(*[str(p) for p in parts])
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return path
 
 
 # --------------------------------------------------------------------
@@ -334,7 +647,7 @@ class PluginManager:
         the live dict – api.settings points at this very object."""
         opts = self.entry(pid)["options"]
         plugin = self.plugins.get(pid)
-        for item in (plugin.schema if plugin else []):
+        for item in iter_settings(plugin.schema if plugin else []):
             if item["key"] not in opts:
                 opts[item["key"]] = item["default"]
         return opts
@@ -418,15 +731,66 @@ class PluginManager:
         self._changed(pid)
         return default
 
-    def set_option(self, pid, key, value):
-        """Stores one option value and notifies the plugin. The options
-        dict is mutated in place, so api.settings sees it immediately."""
+    def set_option(self, pid, key, value, notify=True, from_plugin=False):
+        """Stores one option value. The options dict is mutated in place,
+        so api.settings sees it immediately.
+
+        ``notify`` runs the plugin's on_settings hook – off when the
+        plugin itself is the writer (api.set), because a plugin reacting
+        to its own write is how you build an endless loop.
+        ``from_plugin`` additionally pushes the new value into the widget
+        the user is looking at, if the Plugins page is built.
+        """
         opts = self.options(pid)
         opts[str(key)] = value
         plugin = self.plugins.get(pid)
-        if plugin is not None and plugin.loaded:
+        if notify and plugin is not None and plugin.loaded:
             self._safe_call(plugin, "on_settings", opts)
         self._changed(pid)
+        if from_plugin:
+            self._ui_call("sync_plugin_option", pid, str(key), value)
+        return True
+
+    def _ui_call(self, method, *args):
+        """Optional call into the host window. The manager also runs
+        headless (tests, a future CLI), and an older window simply does
+        not have the method – neither is an error.
+
+        A plugin may call this from one of its own worker threads, and a
+        Qt widget touched from a non-GUI thread is a segfault, not an
+        exception. So the call is handed to the window's event loop with
+        the window itself as the context object, which is what makes Qt
+        run it in the GUI thread. Only if there is no Qt at all (headless
+        manager) does it run inline.
+        """
+        fn = getattr(self.host, method, None)
+        if not callable(fn):
+            return False
+
+        def run():
+            try:
+                fn(*args)
+            except Exception as e:
+                self.log(f"Plugins: host.{method}() raised: {e}")
+
+        try:
+            from PyQt6.QtCore import QObject, QTimer
+            if isinstance(self.host, QObject):
+                # singleShot with a context object queues into THAT
+                # object's thread – the one guarantee we need here
+                QTimer.singleShot(0, self.host, run)
+                return True
+        except Exception:
+            pass
+        run()
+        return True
+
+    def request_refresh(self):
+        """A plugin asking for a fresh render. Drops the cached snapshot
+        in any case, so the next frame is up to date even when the window
+        cannot re-render on demand."""
+        self._snap = None
+        return self._ui_call("update_preview")
 
     # ---------------------------------------------------------- state
     def _read_config(self, plugin):
@@ -460,6 +824,12 @@ class PluginManager:
                          or plugin.template),
             "options": (dict(data["options"])
                         if isinstance(data.get("options"), dict) else {}),
+            # keys a newer app wrote here. This build cannot use them,
+            # but rewriting the file without them would quietly delete
+            # settings the user made in that newer version - so they ride
+            # along and go back out in _write_config().
+            "extra": {k: v for k, v in data.items()
+                      if k not in KNOWN_CONFIG_KEYS},
         }
         self.settings[plugin.pid] = entry
         return entry
@@ -473,8 +843,19 @@ class PluginManager:
             return
         try:
             plugin.config_dir.mkdir(parents=True, exist_ok=True)
-            plugin.config_file.write_text(json.dumps(entry, indent=2,
-                                                     ensure_ascii=False))
+            # encoding pinned: ensure_ascii=False means real emoji and
+            # box characters land in the file, and Windows would
+            # otherwise write it in the locale codepage (cp1252) and
+            # raise on the first one - silently losing the setting,
+            # because the failure below is logged and swallowed
+            data = {k: v for k, v in entry.items() if k != "extra"}
+            # unknown keys go back where they came from: at the top
+            # level, and never on top of a key we do own
+            for key, value in (entry.get("extra") or {}).items():
+                data.setdefault(key, value)
+            plugin.config_file.write_text(
+                json.dumps(data, indent=2, ensure_ascii=False),
+                encoding="utf-8")
         except Exception as e:
             self.log(f"Plugins: could not save the settings of "
                      f"'{pid}': {e}")
@@ -558,6 +939,13 @@ class PluginManager:
                 key = str(k).strip().lower().replace(" ", "_")
                 if key and key != pid and key not in global_keys:
                     global_keys.append(key)
+        # which plugin API the author wrote against. Missing means 1:
+        # every manifest that exists today predates the key and works
+        # exactly as before.
+        try:
+            api_needed = int(data.get("api", 1) or 1)
+        except (TypeError, ValueError):
+            api_needed = 1
         return Plugin(
             folder=Path(folder),
             pid=pid,
@@ -574,23 +962,36 @@ class PluginManager:
             placeholders={str(k): str(v) for k, v in placeholders.items()},
             global_keys=global_keys,
             schema=PluginManager._parse_schema(data.get("settings")),
+            api_needed=max(1, api_needed),
+            min_app=str(data.get("min_app") or "").strip(),
+            # anything this build has no idea about. Kept so a manifest
+            # written for a newer app is not silently truncated, and so a
+            # future feature can be read straight off Plugin.extra
+            extra={k: PluginManager._json_safe(v) for k, v in data.items()
+                   if k not in KNOWN_MANIFEST_KEYS},
         )
 
     @staticmethod
-    def _parse_schema(raw):
+    def _parse_schema(raw, _depth=0, _seen=None):
         """Validates the optional "settings" list from plugin.json. Bad
         entries are dropped instead of raising – a typo in one option
-        must not make the whole plugin uninstallable."""
+        must not make the whole plugin uninstallable.
+
+        Groups recurse with the SAME ``seen`` set, so a key stays unique
+        across the whole schema no matter how deeply it sits: option
+        values live in one flat dict, and two rows sharing a key would
+        silently overwrite each other.
+        """
         if not isinstance(raw, list):
             return []
         out = []
-        seen = set()
+        seen = _seen if _seen is not None else set()
         for item in raw:
             if not isinstance(item, dict):
                 continue
             key = str(item.get("key", "")).strip()
             kind = str(item.get("type", "text")).strip().lower()
-            if not key or key in seen or kind not in SETTING_TYPES:
+            if not key or key in seen:
                 continue
             seen.add(key)
             entry = {
@@ -598,10 +999,102 @@ class PluginManager:
                 "type": kind,
                 "label": str(item.get("label") or key),
                 "hint": str(item.get("hint") or ""),
-                # optional: only show this row while the named bool setting
-                # is on, the way "Max length" hides under "Song title"
+                # optional: only show this row while the named setting is
+                # on, the way "Max length" hides under "Song title"
                 "depends": str(item.get("depends") or "").strip(),
+                # ... or while it has one of these values, for choices
+                "depends_value": PluginManager._parse_depends_value(item),
+                # everything this build does not know about the row. Not
+                # used here, deliberately kept: a newer UI can read it
+                # without every older app having to be taught the key
+                "extra": {k: v for k, v in item.items()
+                          if k not in KNOWN_ITEM_KEYS},
             }
+
+            # ---- a type from a newer app, or a group nested too deep.
+            # The row is kept as a disabled placeholder rather than
+            # dropped: its value stays in config.json, api.get() keeps
+            # returning it, and the page can tell the user what is
+            # missing instead of showing a hole in the settings.
+            too_deep = kind == GROUP_TYPE and _depth >= MAX_GROUP_DEPTH
+            if kind not in SETTING_TYPES or too_deep:
+                entry["type"] = UNSUPPORTED_TYPE
+                entry["raw_type"] = kind
+                entry["default"] = PluginManager._json_safe(
+                    item.get("default"))
+                entry["reason"] = (
+                    "nested too deeply for this version"
+                    if too_deep else
+                    f"setting type '{kind}' needs a newer {APP_NAME}")
+                out.append(entry)
+                continue
+
+            if kind == GROUP_TYPE:
+                entry["expanded"] = bool(item.get("expanded", False))
+                entry["items"] = PluginManager._parse_schema(
+                    item.get("items"), _depth + 1, seen)
+                entry["default"] = None
+                if not entry["items"]:
+                    continue        # an empty block has nothing to show
+                out.append(entry)
+                continue
+
+            if kind == "choice":
+                choices = PluginManager._parse_choices(item)
+                if not choices:
+                    continue        # a dropdown without entries is a typo
+                entry["choices"] = choices
+                values = [v for v, _lbl in choices]
+                default = str(item.get("default", values[0]))
+                entry["default"] = default if default in values else values[0]
+                out.append(entry)
+                continue
+
+            if kind == "path":
+                # a text row with a file picker next to it. The value is
+                # whatever the user typed or picked - never resolved,
+                # never checked for existence here: a plugin may well
+                # want a path that does not exist yet, and a config
+                # carried to another machine must not be "corrected".
+                entry["default"] = str(item.get("default", ""))
+                mode = str(item.get("mode", "file")).strip().lower()
+                entry["mode"] = mode if mode in ("file", "dir") else "file"
+                filters = item.get("filters")
+                entry["filters"] = [str(f) for f in filters
+                                    if str(f).strip()] \
+                    if isinstance(filters, (list, tuple)) else []
+                entry["placeholder"] = str(item.get("placeholder") or "")
+                out.append(entry)
+                continue
+
+            if kind == ACTION_TYPE:
+                # a button. "button" is the caption, the label to its
+                # left is the question it answers. Pressing it calls the
+                # plugin's on_action(key).
+                entry["button"] = str(item.get("button") or item["label"])
+                entry["style"] = str(item.get("style") or "normal").lower()
+                out.append(entry)
+                continue
+
+            if kind == "label":
+                # a read-only line. The value comes from the options like
+                # any other setting, so api.set(key, text) turns it into
+                # a live status line without the plugin needing a widget.
+                entry["default"] = str(item.get("default", ""))
+                out.append(entry)
+                continue
+
+            if kind == "emoji":
+                # a text row with the app's own icon picker next to it.
+                # Deliberately a full text field and not a single
+                # character: a plugin icon is often two of them (a base
+                # emoji plus a variation selector), and people paste
+                # things like "♡ " with a trailing space on purpose.
+                entry["default"] = str(item.get("default", ""))
+                entry["placeholder"] = str(item.get("placeholder") or "")
+                out.append(entry)
+                continue
+
             if kind == "bool":
                 entry["default"] = bool(item.get("default", False))
             elif kind in ("int", "slider"):
@@ -615,7 +1108,72 @@ class PluginManager:
                 entry["suffix"] = str(item.get("suffix") or "")
             else:
                 entry["default"] = str(item.get("default", ""))
+                # masked input for tokens and API keys
+                entry["secret"] = bool(item.get("secret", False))
             out.append(entry)
+        return out
+
+    @staticmethod
+    def _json_safe(value, _depth=0):
+        """Whatever survives a round trip through config.json.
+
+        Used for the default of a setting type this build does not know:
+        the value has to be storable without understanding it, and it
+        must not be able to smuggle in something json cannot write.
+        """
+        if value is None or isinstance(value, (str, bool, int, float)):
+            return value
+        if _depth >= 4:
+            return None
+        if isinstance(value, (list, tuple)):
+            return [PluginManager._json_safe(v, _depth + 1) for v in value]
+        if isinstance(value, dict):
+            return {str(k): PluginManager._json_safe(v, _depth + 1)
+                    for k, v in value.items()}
+        return str(value)
+
+    @staticmethod
+    def _parse_depends_value(item):
+        """The values a parent setting must have for this row to show.
+
+        Empty list = the old behaviour: the parent is tested for
+        truthiness. Everything is compared as a string, because that is
+        what a choice stores.
+        """
+        raw = item.get("depends_value")
+        if raw is None:
+            return []
+        if isinstance(raw, (list, tuple, set)):
+            return [str(v) for v in raw if str(v) != ""]
+        return [str(raw)] if str(raw) != "" else []
+
+    @staticmethod
+    def _parse_choices(item):
+        """[(value, label), ...] for a choice row.
+
+        Accepts the long form [{"value": "a", "label": "A"}] and the
+        short one ["a", "b"], where the value doubles as the label.
+        Duplicates are dropped so the stored value always maps back to
+        exactly one entry.
+        """
+        raw = item.get("choices")
+        if not isinstance(raw, (list, tuple)):
+            raw = item.get("options")
+        if not isinstance(raw, (list, tuple)):
+            return []
+        out = []
+        seen = set()
+        for opt in raw:
+            if isinstance(opt, dict):
+                value = str(opt.get("value", opt.get("key", ""))).strip()
+                label = str(opt.get("label") or value)
+            else:
+                value = str(opt).strip()
+                label = value
+            if not value or value in seen:
+                continue
+            seen.add(value)
+            out.append((value, label))
         return out
 
     # ------------------------------------------------------ (un)loading
@@ -631,12 +1189,24 @@ class PluginManager:
         success; failures are stored in plugin.error and logged."""
         if plugin.loaded:
             return True
-        if not plugin.supported:
+        if not plugin.platform_ok:
             # a zip install bypasses the store, so the guard belongs here:
             # loading anyway would end in a traceback from some missing
             # system tool rather than a clear message
             plugin.error = (f"This plugin is marked as not compatible with "
                             f"{OS_NAME} ({MANIFEST_NAME}).")
+            self.log(f"Plugins: '{plugin.pid}' skipped - {plugin.platform_note}")
+            return False
+        if not plugin.api_ok:
+            # the same idea one step earlier: a plugin built against a
+            # newer API would import fine and then call something that
+            # does not exist yet. Refusing here costs the user a greyed
+            # out row; importing it costs them a traceback per frame.
+            plugin.error = (
+                f"This plugin needs plugin API {plugin.api_needed}; "
+                f"{APP_NAME} {VERSION} provides {PLUGIN_API_VERSION}. "
+                f"Update the app" + (f" to {plugin.min_app}"
+                                     if plugin.min_app else "") + ".")
             self.log(f"Plugins: '{plugin.pid}' skipped - {plugin.platform_note}")
             return False
         if not plugin.main_path.exists():
@@ -683,7 +1253,17 @@ class PluginManager:
             return
         if call_teardown:
             self._safe_call(plugin, "teardown")
-        sys.modules.pop(MODULE_PREFIX + plugin.pid.replace("-", "_"), None)
+        # the plugin's OWN submodules go too. A plugin of more than one
+        # file imports them as "<mod_name>.panel" and friends, and those
+        # stay in sys.modules after the top module is dropped - so
+        # re-importing after an update would build a fresh main.py that
+        # pulls the previous version's helpers straight out of the cache.
+        # The symptom is a plugin showing its new manifest and running
+        # its old code, which is a genuinely confusing afternoon.
+        mod_name = MODULE_PREFIX + plugin.pid.replace("-", "_")
+        for name in [n for n in sys.modules
+                     if n == mod_name or n.startswith(mod_name + ".")]:
+            sys.modules.pop(name, None)
         plugin.module = None
         plugin.api = None
         self._snap = None
@@ -755,8 +1335,69 @@ class PluginManager:
     def invalidate(self):
         """Drops the cached snapshot. MainWindow calls this once at the top
         of build_payload(), so every plugin hook runs exactly once per
-        frame no matter how many places ask for its values."""
+        frame no matter how many places ask for its values.
+
+        This is also the frame boundary, so it is where on_tick() fires:
+        a plugin that has to poll something cheap gets a heartbeat
+        without starting a thread, and it runs BEFORE get_values(), so
+        whatever it collected is in this frame rather than the next.
+        """
         self._snap = None
+        self.dispatch("on_tick")
+
+    def emit(self, name, data=None):
+        """Announce a host event to every active plugin.
+
+        The one extension point that needs no new code on either side: a
+        future notification is a new name, and every plugin that does not
+        know it ignores it. Names are dotted and lower case, e.g.
+        "app.shutdown", "avatar.changed", "chatbox.sent".
+
+        Returns the list of (pid, result) pairs, so an event can also be
+        used to ask plugins something.
+        """
+        name = str(name or "").strip().lower()
+        if not name:
+            return []
+        payload = data if isinstance(data, dict) else {"value": data}
+        return self.dispatch("on_event", name, payload)
+
+    def build_widget(self, pid, parent=None):
+        """The plugin's own UI, or None.
+
+        Goes through _safe_call like every other hook, so a plugin whose
+        widget code is broken loses its panel and nothing else. The host
+        decides where to put the result; it may call this again after a
+        rebuild, and a plugin is expected to survive that (either by
+        building a fresh widget or by noticing its cached one was
+        deleted).
+        """
+        plugin = self.plugins.get(pid)
+        if plugin is None or not plugin.loaded or not plugin.supported:
+            return None
+        ok, widget = self._safe_call(plugin, "build_widget", parent)
+        return widget if ok else None
+
+    def trigger_action(self, pid, key):
+        """One of the plugin's action buttons was pressed.
+
+        Nothing is stored - the button has a key so the plugin can tell
+        which one it was, not because it holds a value. The return value
+        of on_action() is handed back, so a plugin can answer with a
+        string for the UI to show.
+        """
+        plugin = self.plugins.get(pid)
+        if plugin is None or not plugin.loaded:
+            return None
+        ok, result = self._safe_call(plugin, "on_action", str(key))
+        return result if ok else None
+
+    def has_hook(self, pid, hook):
+        """Whether one plugin implements a given hook – lets the UI show
+        a panel button only for plugins that have a panel."""
+        plugin = self.plugins.get(pid)
+        return bool(plugin and plugin.loaded
+                    and callable(getattr(plugin.module, hook, None)))
 
     def snapshot(self):
         """One pass over all active plugins: main text, extra values and
@@ -892,6 +1533,9 @@ class PluginManager:
 
     def shutdown(self):
         """teardown() everything – call this from MainWindow.closeEvent."""
+        # announced first: a plugin may want to flush state while the
+        # rest of the app is still standing
+        self.emit("app.shutdown")
         for plugin in list(self.plugins.values()):
             self._unload(plugin)
 
@@ -983,6 +1627,11 @@ class PluginManager:
 
         self.discover()
         plugin = self.plugins.get(meta.pid)
+        if plugin is not None and not plugin.supported:
+            # installed, but it will sit there greyed out. Saying so once
+            # is friendlier than letting the user hunt for the tooltip.
+            self.log(f"Plugins: '{meta.name}' installed but not usable here "
+                     f"– {plugin.platform_note}")
         if plugin is not None and plugin.enabled and not plugin.loaded:
             self._load(plugin)
         self.log(f"Plugins: installed '{meta.name}' {meta.version} "

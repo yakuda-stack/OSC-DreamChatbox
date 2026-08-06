@@ -4,6 +4,8 @@ core/textutils.py – text helpers (templates, time formatting)
 
 import re
 
+from core.textstyle import apply_inline, is_inline_marker
+
 
 def fmt_time(seconds: float) -> str:
     seconds = max(0, int(seconds))
@@ -146,18 +148,34 @@ PLACEHOLDER_ALIASES = {
     "groupworld": "group_world", "worldname": "group_world",
     "clock": "realtime", "time_now": "realtime", "pctime": "realtime",
     "instancetype": "instance_type", "instance": "instance_type",
+    # Custom Box frame lines (core/boxstyle.py). {box_start} is the line
+    # above everything, {box_stop} the one below it.
+    "box_top": "box_start", "box_open": "box_start", "boxstart": "box_start",
+    "box_end": "box_stop", "box_bottom": "box_stop",
+    "box_close": "box_stop", "boxstop": "box_stop",
 }
 
 
 def apply_template(template: str, values: dict) -> str:
     """Replaces {placeholders} (case-insensitive) and turns \\n into
-    real line breaks. Unknown/missing placeholders become empty."""
+    real line breaks. Unknown/missing placeholders become empty.
+
+    {super/"word"} and {sub/"word"} are styled rather than substituted -
+    see core/textstyle.py. They are resolved after the placeholders, so
+    the content can be one: {super/{cpu_usage}} styles the value.
+    """
     def rep(m):
-        key = m.group(1).strip().lower().replace(" ", "_")
+        inner = m.group(1)
+        if is_inline_marker(inner):
+            # a style marker, not a placeholder name - hand it through
+            # untouched or it would be looked up, missed and deleted
+            return m.group(0)
+        key = inner.strip().lower().replace(" ", "_")
         key = PLACEHOLDER_ALIASES.get(key, key)
         v = values.get(key)
         return "" if v is None else str(v)
     text = re.sub(r"\{([^{}]+)\}", rep, template)
+    text = apply_inline(text)
     text = text.replace("\\n", "\n")
     out = []
     for ln in text.split("\n"):
@@ -171,3 +189,5 @@ def apply_template(template: str, values: dict) -> str:
         if ln:
             out.append(ln)
     return "\n".join(out)
+
+

@@ -76,6 +76,8 @@ Where a platform genuinely cannot do something, the value stays empty and the ca
 
 - Custom string with placeholders: `{artist} {title} {time} {time_status} {time_end} {bar} {icon_sound}`
 
+- **Idle symbol**: shows `⏸` (editable) when nothing is playing, instead of the line silently disappearing – or switch it off. Works in **All in one** too: a template line that is about the song and came out empty becomes the symbol. `{media_idle}` places it by hand
+
 ### 🖥️ Hardware
 - Live **GPU / VRAM / CPU / RAM** stats (Linux: sysfs + nvidia-smi · Windows: Win32 API, nvidia-smi and GPU performance counters)
 - Auto-detected or custom GPU/CPU names, temps as `°C` or 🔥
@@ -86,6 +88,33 @@ Where a platform genuinely cannot do something, the value stays empty and the ca
 - Combine **everything into one master string** – up to 5 rotating layouts
 - **10 switchable AIO templates**, each with its own set of strings – flip between a gaming, a music and a minimal layout with one click, same as the Personal Status templates
 - All placeholders from every app work here, incl. `{text_1}…{text_20}`, `{time_status}`, `{time_end}`, plus every active plugin as `{plugin_id}`
+- **Parameters** – an expander at the bottom of the card listing the complete vocabulary: **Software parameters** (everything the app produces, grouped by app) and **External parameters** (every installed plugin with its `{<id>}` and `{<id>_<key>}` values). Selectable text, rebuilt whenever the plugin list changes
+
+- **Text styles inline**: `{super/"word"}` and `{sub/"word"}` make one part of any custom string small – `GPU {gpu_usage} {super/"vram"} {vram_usage}` → `GPU 68% ⱽᴿᴬᴹ 9/16GB`. Works in Hardware, All in one, MediaPlay, the status texts, a Custom Box middle and plugin strings, and the content may be a placeholder: `{super/{cpu_temp}}`
+
+### 🖼️ Custom Box
+- Ships **switched off but pre-configured** – turn it on and you get a clock on top, app name underneath:
+
+  ```
+  ╔═══ 🕐 09:05 🕐 ═══╗
+  talk to me
+  ╚═ OSC-DreamChatbox ═╝
+  ```
+
+- A **frame around the whole chatbox**: one line above everything, one line below it
+
+  ```
+  ┌──────┐            ┌─── 18:01 ───┐
+  now playing …  ->   now playing …
+  └──────┘            └─── 68 % ───┘
+  ```
+- **12 templates** (Light, Heavy, Double, Rounded, Dashed, Blocks, Rule, Corners, Stars, Hearts, Arrows, Sparkles) plus a **custom slot** where you set the six characters a frame is made of – in a dropdown that shows each frame next to its name
+- **Own width per line** – the top and bottom middle texts are rarely the same length, so a short clock on top and a long hardware line underneath can each get the fill they need
+- Each line switchable on its own, plus **Align top & bottom** which pads the shorter line when you *do* want them even
+- Every line can carry a **middle text**: nothing, a **clock** (`┌─── 18:01 ───┐`, four formats), or your **own string with all the All-in-one placeholders** – `{cpu_usage}`, `{title}`, plugins, everything
+- **Realtime clock is a toggle and off by default** – it is the only part that costs anything, and it only ticks while a line is actually set to Clock
+- A middle text takes **every placeholder All in one takes, plugins included** – the card has the same **Parameters** list at the bottom
+- Prefer to place the frame yourself? `{box_start}` and `{box_stop}` work in any **All in one** string and are not added twice
 
 ### 🧩 Plugins
 - Own **Plugins** page with two tabs: **Installed** and **Store**
@@ -96,7 +125,8 @@ Where a platform genuinely cannot do something, the value stays empty and the ca
 - **Per-plugin settings** declared in `plugin.json` (text, switch, number, slider) are rendered automatically – a plugin author gets a settings UI without writing any Qt
 - `is_linux` / `is_windows` flags mark what a plugin can run on; anything incompatible is greyed out rather than hidden, and refused by the loader. Each row has a 🗑 button to uninstall it
 - Crash-safe by design: a broken plugin logs a traceback to the debug console and is skipped, it can never take the chatbox down
-- Bundled: **World Stats** (players in your instance, world name, local clock – `{player_in_world} {group_world} {realtime}`) and **Hello World** as a template
+- In the store: **World Stats** (players in your instance, world name, local clock – `{player_in_world} {group_world} {realtime}`), **OSCLeash** (runs ZenithVal's OSCLeash, which ships inside the plugin – nothing to install), **Social Media** and **Stream Stats**
+- [**example_template**](https://github.com/yakuda-stack/Dream-Chatbox-Plugins/tree/main/template/example_template) to start your own: a plugin that actually runs, with every setting type (text, checkbox, dropdown, number, slider, icon picker, file picker, button, status line, collapsible groups) next to every hook. Copy the folder, rename it, delete what you don't need
 
 ### 🎨 Customization (Options page)
 - **8 UI themes** shown as colour swatches – Default, Carbon, Nebula, Embers, Grass, Ocean, Rose, Mono
@@ -253,6 +283,9 @@ OSC-DreamChatbox/
 │   │                     #   asks which OS this is, plus config paths
 │   ├── constants.py      #   app name, version, paths
 │   ├── textutils.py      #   time format, songbar styles, templates
+│   ├── textstyle.py      #   superscript / subscript rendering
+│   ├── boxstyle.py       #   Custom Box frame templates + line building
+│   ├── emojis.py        #   emoji picker palette (10 categories)
 │   ├── queryfix.py       #   OSCQuery fixer (supported programs list)
 │   ├── oscquery.py       #   native OSCQuery (mDNS + dynamic ports)
 │   ├── translators.py    #   translation backends (Lingva/Google/Libre/DeepL)
@@ -278,6 +311,7 @@ OSC-DreamChatbox/
 │   ├── config_mixin.py   #   config load/save/validation
 │   ├── pages/            #   one file per page
 │   │   ├── apps_page.py
+│   │   ├── custom_box.py
 │   │   ├── textbox_page.py
 │   │   ├── plugins_page.py
 │   │   └── options_page.py

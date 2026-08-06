@@ -16,9 +16,12 @@ from PyQt6.QtCore import QUrl, Qt
 from PyQt6.QtGui import QColor, QDesktopServices, QPainter, QPixmap
 from PyQt6.QtWidgets import (
     QButtonGroup, QCheckBox, QComboBox, QFileDialog, QFrame, QGraphicsColorizeEffect, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QSlider, QSpinBox, QStackedWidget, QTextBrowser, QVBoxLayout, QWidget)
-from core.constants import PLUGINS_DIR, PLUGINS_REPO_URL
+from core.constants import (
+    PLUGIN_TEMPLATE_URL, PLUGINS_DIR, PLUGINS_REPO_URL)
 from core.plugin_store import PluginStore, StoreError, compare_versions
-from core.plugins import ANCHOR_LABELS, PluginError, PluginExistsError
+from core.plugins import (
+    ACTION_TYPE, ANCHOR_LABELS, PLUGIN_API_VERSION, UNSUPPORTED_TYPE,
+    PluginError, PluginExistsError)
 from ui.ui_main import DragHandle, ToggleLabel, ToggleSwitch
 
 
@@ -65,12 +68,43 @@ class PluginInfoPopup(QFrame):
                 f"{self._esc(plugin.github)}</a>")
         rows.append(
             f"<span style='color:#7a8290'>ID</span> "
-            f"<span style='font-family:monospace'>"
+            f"<span style='font-family:Consolas, monospace'>"
             f"{self._esc(plugin.pid)}</span>")
+        # which systems the manifest claims. Worth a line even when the
+        # answer is "both", because that is the interesting case for
+        # someone deciding whether to recommend a plugin to a friend on
+        # the other OS - and the greyed out row only ever tells you about
+        # the machine you are sitting at.
+        systems = [name for name, ok in (("Linux", plugin.is_linux),
+                                         ("Windows", plugin.is_windows)) if ok]
+        colour = "#7a8290" if plugin.platform_ok else "#d9884a"
+        # joined AFTER escaping: running "Linux & Windows" through _esc
+        # would turn the entity back into "&amp;amp;"
+        names = " &amp; ".join(self._esc(s) for s in systems) or "neither"
+        rows.append(
+            f"<span style='color:#7a8290'>OS</span> "
+            f"<span style='color:{colour}'>{names}</span>")
+        # only worth a line when it is not the default: every manifest
+        # without an "api" key is API 1 and always will be
+        if int(getattr(plugin, "api_needed", 1) or 1) > 1:
+            rows.append(
+                f"<span style='color:#7a8290'>Plugin API</span> "
+                f"{self._esc(plugin.api_needed)} "
+                f"<span style='color:#7a8290'>· this app speaks</span> "
+                f"{PLUGIN_API_VERSION}")
+        locked = getattr(plugin, "unsupported_options", [])
+        if locked:
+            names = ", ".join(self._esc(i["label"]) for i in locked[:6])
+            rows.append(
+                f"<span style='color:#d9884a'>Needs a newer app:</span> "
+                f"{names}{' …' if len(locked) > 6 else ''}<br>"
+                f"<span style='color:#7a8290;font-size:11px'>The plugin "
+                f"still uses these values, they just cannot be edited "
+                f"here.</span>")
         if plugin.error:
             rows.append(
                 f"<span style='color:#d9884a'>Last error:</span><br>"
-                f"<span style='font-family:monospace;font-size:11px'>"
+                f"<span style='font-family:Consolas, monospace;font-size:11px'>"
                 f"{self._esc(plugin.error)}</span>")
         self.lbl.setText("<br>".join(rows))
         self.adjustSize()
@@ -142,6 +176,7 @@ class PluginsPageMixin:
         # pid -> widget, rebuilt on every refresh_plugin_list()
         self.plugin_expanders = {}
         self.plugin_inputs = {}
+        self.plugin_option_widgets = {}
 
         # ------------------------------------------------ actions card
         card = QFrame()
@@ -187,9 +222,11 @@ class PluginsPageMixin:
         repo_btn.setObjectName("linkbtn")
         repo_btn.setFixedHeight(34)
         repo_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        repo_btn.setToolTip("Ready-made plugins to download plus the "
-                            "template to build your own \u2013 opens "
-                            f"{PLUGINS_REPO_URL}")
+        repo_btn.setToolTip(
+            "Ready-made plugins to download, plus example_template - a "
+            "working plugin that shows every setting type next to every "
+            "hook, to copy and rename as a starting point.\n\n"
+            f"{PLUGINS_REPO_URL}\n{PLUGIN_TEMPLATE_URL}")
         repo_btn.clicked.connect(
             lambda: QDesktopServices.openUrl(QUrl(PLUGINS_REPO_URL)))
         btn_row.addWidget(repo_btn)
@@ -243,6 +280,9 @@ class PluginsPageMixin:
         self.plugin_expanders = {}
         self.plugin_inputs = {}
         self.plugin_dependents = {}
+        # (pid, key) -> the widget showing that option, so a plugin
+        # writing a value with api.set() is reflected on screen
+        self.plugin_option_widgets = {}
         # user order, not folder order (Plugins page ▲▼)
         plugins = self.plugins.ordered()
         self.plugin_rows = {}
@@ -255,6 +295,11 @@ class PluginsPageMixin:
         active = sum(1 for p in plugins if p.enabled)
         self.plugin_count_lbl.setText(
             f"{active} of {len(plugins)} active" if plugins else "")
+        # the Apps page lists the same plugins under All in one ->
+        # Parameters; rebuilding it here is what keeps the two in step
+        # after a rescan, an install or an enable/disable
+        if hasattr(self, "_param_layouts"):
+            self.refresh_parameter_lists()
 
     def _build_plugin_row(self, plugin):
         """One plugin = one card: header line + a collapsible Settings
@@ -309,7 +354,7 @@ class PluginsPageMixin:
         # the placeholder is the whole point – show it right in the header
         tag = QLabel(f"{{{plugin.pid}}}")
         tag.setObjectName("dim")
-        tag.setStyleSheet("font-family: monospace; color: #5b8dc9;")
+        tag.setStyleSheet("font-family: Consolas, monospace; color: #5b8dc9;")
         tag.setToolTip("Use this placeholder in any custom string, in "
                        "All-in-one or in a Personal Status text")
         tag.setTextInteractionFlags(
@@ -482,25 +527,117 @@ class PluginsPageMixin:
             line.setObjectName("hline")
             c.addWidget(line)
             opts = self.plugins.options(plugin.pid)
-            # parent key -> [dependent widgets], so a sub-option can hide
-            # with its parent (Max world name length under World name)
+            # parent key -> [(dependent widget, wanted values)], so a
+            # sub-option can hide with its parent (Max world name length
+            # under World name)
             deps = {}
-            for item in plugin.schema:
-                w = self._build_plugin_option(plugin, item, opts)
-                if item.get("depends"):
-                    deps.setdefault(item["depends"], []).append(w)
-                    # indent it so it reads as belonging to the row above
-                    w.setContentsMargins(24, 0, 0, 0)
-                c.addWidget(w)
+            self._add_plugin_options(plugin, plugin.schema, c, opts, deps)
             self.plugin_dependents[plugin.pid] = deps
             self._sync_plugin_dependents(plugin.pid)
+
+        # ----- the plugin's own UI, if it brings one. The settings
+        # schema covers options; a Start button, a live log or a list the
+        # user adds rows to cannot be expressed as an option, so a plugin
+        # may hand us a finished widget instead.
+        own = self.plugins.build_widget(plugin.pid, self)
+        if isinstance(own, QWidget):
+            sep = QFrame()
+            sep.setFrameShape(QFrame.Shape.HLine)
+            sep.setObjectName("hline")
+            c.addWidget(sep)
+            c.addWidget(own)
         return content
+
+    def _add_plugin_options(self, plugin, schema, layout, opts, deps,
+                            depth=0):
+        """Fills one layout with the rows of a schema level. Called again
+        for every group, which is what makes groups nestable."""
+        for item in schema:
+            if item["type"] == "group":
+                w = self._build_plugin_group(plugin, item, opts, deps, depth)
+            else:
+                w = self._build_plugin_option(plugin, item, opts)
+            if item.get("depends"):
+                deps.setdefault(item["depends"], []).append(
+                    (w, item.get("depends_value") or []))
+                # indent it so it reads as belonging to the row above
+                w.setContentsMargins(24, 0, 0, 0)
+            layout.addWidget(w)
+
+    def _build_plugin_group(self, plugin, item, opts, deps, depth):
+        """A collapsible block of settings – the same expander gesture as
+        the card's own Settings button, one level further in.
+
+        Like that one it starts collapsed unless the manifest asks for
+        "expanded": true. The open/closed state is a view detail, so it
+        is deliberately not written to the plugin's config.
+        """
+        holder = QWidget()
+        box = QVBoxLayout(holder)
+        box.setContentsMargins(0, 2, 0, 2)
+        box.setSpacing(6)
+
+        body = QFrame()
+        body.setObjectName("innerbox")
+        inner = QVBoxLayout(body)
+        inner.setContentsMargins(12, 8, 12, 8)
+        inner.setSpacing(8)
+        self._add_plugin_options(plugin, item["items"], inner, opts, deps,
+                                 depth + 1)
+
+        btn = QPushButton()
+        btn.setObjectName("expander")
+        btn.setCheckable(True)
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        if item["hint"]:
+            btn.setToolTip(item["hint"])
+        btn.toggled.connect(
+            lambda on, b=btn, w=body, t=item["label"]:
+            self._set_group_expanded(b, w, t, on))
+        # set the label/visibility once by hand: toggled only fires when
+        # the state actually changes, and False -> False does not
+        btn.setChecked(bool(item.get("expanded")))
+        self._set_group_expanded(btn, body, item["label"], btn.isChecked())
+
+        box.addWidget(btn)
+        box.addWidget(body)
+        return holder
+
+    @staticmethod
+    def _set_group_expanded(btn, body, label, expanded):
+        body.setVisible(expanded)
+        btn.setText(("\u2304  " if expanded else "\u203A  ") + label)
 
     def _build_plugin_option(self, plugin, item, opts):
         """One widget for one entry of the plugin's "settings" schema.
-        Unknown types never reach here – _parse_schema drops them."""
+
+        A type this build does not know arrives here as "unsupported"
+        rather than not at all: the value exists and the plugin uses it,
+        only the editor is missing, and that is worth saying out loud.
+        """
         pid, key, kind = plugin.pid, item["key"], item["type"]
-        value = opts.get(key, item["default"])
+        # .get(): an action row is a button, not a value - it has no
+        # default and never appears in the options dict
+        value = opts.get(key, item.get("default", ""))
+
+        if kind == UNSUPPORTED_TYPE:
+            holder = QWidget()
+            row = QHBoxLayout(holder)
+            row.setContentsMargins(0, 0, 0, 0)
+            row.setSpacing(8)
+            lbl = QLabel(f"\U0001F512  {item['label']}")
+            lbl.setObjectName("dim")
+            row.addWidget(lbl)
+            note = QLabel(item.get("reason") or "not supported here")
+            note.setObjectName("dim")
+            note.setStyleSheet("color: #d9884a;")
+            note.setWordWrap(True)
+            row.addWidget(note, 1)
+            holder.setToolTip(
+                (item["hint"] + "\n\n" if item["hint"] else "")
+                + f"The plugin keeps using this value ({value!r}); this "
+                  f"version of the app just cannot show an editor for it.")
+            return holder
 
         if kind == "bool":
             holder = QWidget()
@@ -514,6 +651,7 @@ class PluginsPageMixin:
                 chk.setToolTip(item["hint"])
             box.addWidget(chk)
             box.addStretch()
+            self._remember_option(pid, key, chk)
             return holder
 
         holder = QWidget()
@@ -545,6 +683,125 @@ class PluginsPageMixin:
                 (lb.setText(f"{v}{sfx}"), self.on_plugin_option(p, k, v)))
             row.addWidget(w, 1)
             row.addWidget(val_lbl)
+            self._remember_option(pid, key, w)
+            return holder
+
+        if kind == "choice":
+            # the stored value is the choice's "value", never its label,
+            # so a plugin author can rename a label without invalidating
+            # every config that already picked it
+            w = QComboBox()
+            for val, label in item["choices"]:
+                w.addItem(label, val)
+            idx = w.findData(str(value))
+            w.setCurrentIndex(idx if idx >= 0 else 0)
+            w.setMinimumWidth(170)
+            if item["hint"]:
+                w.setToolTip(item["hint"])
+            w.currentIndexChanged.connect(
+                lambda _i, p=pid, k=key, cb=w:
+                self.on_plugin_option(p, k, cb.currentData()))
+            row.addWidget(w)
+            row.addStretch()
+            self._remember_option(pid, key, w)
+            return holder
+
+        if kind == "path":
+            # line edit plus a picker. Typing stays possible on purpose:
+            # a path on a network share or one that does not exist yet
+            # cannot be reached through the dialog, and pasting is often
+            # faster than clicking through six folders.
+            w = QLineEdit()
+            w.setMaxLength(400)
+            w.setText(str(value))
+            if item.get("placeholder"):
+                w.setPlaceholderText(item["placeholder"])
+            if item["hint"]:
+                w.setToolTip(item["hint"])
+            w.textChanged.connect(
+                lambda text, p=pid, k=key: self.on_plugin_option(p, k, text))
+            row.addWidget(w, 1)
+
+            browse = QPushButton("\U0001F4C1")
+            browse.setObjectName("iconbtn")
+            browse.setFixedSize(30, 28)
+            browse.setCursor(Qt.CursorShape.PointingHandCursor)
+            browse.setToolTip("Choose a folder" if item.get("mode") == "dir"
+                              else "Choose a file")
+            browse.clicked.connect(
+                lambda _c, it=item, edit=w: self._pick_plugin_path(it, edit))
+            row.addWidget(browse)
+            self._remember_option(pid, key, w)
+            return holder
+
+        if kind == ACTION_TYPE:
+            # a button, not a value. The label on the left says what it
+            # is for, the button says what it does.
+            colours = {
+                "primary": ("#2b3a4d", "#5b8dc9", "#cfe0f5"),
+                "danger": ("#3a2a2c", "#b5504a", "#f0d6d4"),
+                "normal": ("#232733", "#333947", "#cfd6e2"),
+            }
+            bg, edge, fg = colours.get(item.get("style"), colours["normal"])
+            btn = QPushButton(item.get("button") or item["label"])
+            btn.setFixedHeight(28)
+            btn.setMinimumWidth(120)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setStyleSheet(
+                f"QPushButton {{ background: {bg}; border: 1px solid {edge};"
+                f" border-radius: 8px; color: {fg}; padding: 0 14px; }}"
+                f"QPushButton:hover {{ background: {edge}; }}")
+            if item["hint"]:
+                btn.setToolTip(item["hint"])
+            answer = QLabel("")
+            answer.setObjectName("dim")
+            answer.setWordWrap(True)
+            btn.clicked.connect(
+                lambda _c, p=pid, k=key, out=answer:
+                self._run_plugin_action(p, k, out))
+            row.addWidget(btn)
+            row.addWidget(answer, 1)
+            return holder
+
+        if kind == "label":
+            # read-only, and updated by api.set() like any other option -
+            # which is how a plugin gets a live status line without
+            # having to build a widget for it
+            w = QLabel(str(value))
+            w.setWordWrap(True)
+            w.setStyleSheet("color: #c8d2e0;")
+            if item["hint"]:
+                w.setToolTip(item["hint"])
+            row.addWidget(w, 1)
+            self._remember_option(pid, key, w)
+            return holder
+
+        if kind == "emoji":
+            # the same popup the Personal Status, MediaPlay and Hardware
+            # custom strings use. A plugin icon is picked exactly the way
+            # every other icon in the app is, instead of each plugin
+            # inventing its own answer to "how do I type an emoji".
+            w = QLineEdit()
+            w.setMaxLength(24)
+            w.setText(str(value))
+            w.setMinimumWidth(90)
+            if item.get("placeholder"):
+                w.setPlaceholderText(item["placeholder"])
+            if item["hint"]:
+                w.setToolTip(item["hint"])
+            w.textChanged.connect(
+                lambda text, p=pid, k=key: self.on_plugin_option(p, k, text))
+            row.addWidget(w, 1)
+
+            ico = QPushButton("\U0001F600")
+            ico.setObjectName("iconbtn")
+            ico.setFixedSize(30, 28)
+            ico.setCursor(Qt.CursorShape.PointingHandCursor)
+            ico.setToolTip("Insert icon")
+            ico.clicked.connect(
+                lambda _c, e=w, b=ico: self.emoji_popup.open_for(e, b))
+            row.addWidget(ico)
+            self._remember_option(pid, key, w)
             return holder
 
         if kind == "int":
@@ -564,10 +821,15 @@ class PluginsPageMixin:
         else:   # text
             w = QLineEdit()
             w.setMaxLength(200)
+            if item.get("secret"):
+                # tokens and API keys: shoulder-surfing protection, not
+                # encryption - the value still sits in config.json
+                w.setEchoMode(QLineEdit.EchoMode.Password)
             w.setText(str(value))
             w.textChanged.connect(
                 lambda text, p=pid, k=key: self.on_plugin_option(p, k, text))
             row.addWidget(w, 1)
+        self._remember_option(pid, key, w)
         return holder
 
 
@@ -616,14 +878,30 @@ class PluginsPageMixin:
         repo_btn.setObjectName("linkbtn")
         repo_btn.setFixedHeight(34)
         repo_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        repo_btn.setToolTip(
+            "Every plugin in this catalogue, plus example_template to "
+            "start your own.\n\n"
+            f"{PLUGINS_REPO_URL}\n{PLUGIN_TEMPLATE_URL}")
         repo_btn.clicked.connect(
             lambda: QDesktopServices.openUrl(QUrl(PLUGINS_REPO_URL)))
         btns.addWidget(repo_btn)
+
+        template_btn = QPushButton("\U0001F4C4  Write a plugin")
+        template_btn.setObjectName("linkbtn")
+        template_btn.setFixedHeight(34)
+        template_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        template_btn.setToolTip(
+            "example_template: every setting type next to every hook, in a "
+            "plugin that actually runs. Copy the folder, rename it, delete "
+            f"what you don't need.\n\n{PLUGIN_TEMPLATE_URL}")
+        template_btn.clicked.connect(
+            lambda: QDesktopServices.openUrl(QUrl(PLUGIN_TEMPLATE_URL)))
+        btns.addWidget(template_btn)
         btns.addStretch()
         c.addLayout(btns)
 
         hint = QLabel(
-            "Catalogue from <span style='font-family:monospace'>plugins.json</span>"
+            "Catalogue from <span style='font-family:Consolas, monospace'>plugins.json</span>"
             " next to the app \u2013 paste a GitHub link to a plugin folder and it "
             "shows up here. Name, version and preview image come from the "
             "plugin's own plugin.json.")
@@ -807,6 +1085,21 @@ class PluginsPageMixin:
         self.detail_github_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.detail_github_btn.clicked.connect(self.on_store_open_github)
         row.addWidget(self.detail_github_btn)
+
+        # only shown for a plugin that is actually installed. Uninstalling
+        # from here is the same operation as the bin on the Installed
+        # page - people who found a plugin in the store look for the way
+        # out in the store as well, not in a second list.
+        self.detail_delete_btn = QPushButton("\U0001F5D1  Uninstall")
+        self.detail_delete_btn.setObjectName("linkbtn")
+        self.detail_delete_btn.setFixedHeight(34)
+        self.detail_delete_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.detail_delete_btn.setStyleSheet(
+            "QPushButton { color: #d9884a; }"
+            "QPushButton:hover { color: #f0b183; }")
+        self.detail_delete_btn.clicked.connect(self.on_store_delete)
+        self.detail_delete_btn.setVisible(False)
+        row.addWidget(self.detail_delete_btn)
         row.addStretch()
         c.addLayout(row)
         c.addStretch()
@@ -833,6 +1126,7 @@ class PluginsPageMixin:
         if entry.installed:
             bits.append(f"installed: v{entry.installed_version.lstrip('v')}")
         self.detail_meta.setText("  \u00b7  ".join(bits))
+        self.detail_delete_btn.setVisible(bool(entry.installed and entry.pid))
         body = entry.description or "(no description)"
         if entry.error:
             body += f"\n\nCould not be read: {entry.error}"
@@ -869,6 +1163,33 @@ class PluginsPageMixin:
         self._store_selected = key
         self.show_store_detail()
         self.plugin_stack.setCurrentIndex(2)
+
+    def on_store_delete(self):
+        """Uninstall the plugin this store page is showing.
+
+        Reuses on_plugin_delete() rather than repeating the confirmation
+        and the folder handling: one delete path means the warning about
+        losing the plugin's settings can never drift apart between the
+        two places it is offered from.
+        """
+        entry = self._current_store_entry()
+        if entry is None or not entry.pid:
+            return
+        if entry.pid not in self.plugins.plugins:
+            # already gone - the list is just stale
+            self.on_store_refresh_installed_state()
+            return
+        self.on_plugin_delete(entry.pid)
+        self.on_store_refresh_installed_state()
+
+    def on_store_refresh_installed_state(self):
+        """Re-mark the catalogue against what is on disk. Deliberately
+        NOT store.refresh(): that re-fetches every manifest over the
+        network, and this runs on the GUI thread. Nothing upstream
+        changed anyway - only our own folder did."""
+        self.store.sync_installed(self._installed_versions())
+        self.refresh_store_grid()
+        self.show_store_detail()
 
     def on_store_open_github(self):
         entry = self._current_store_entry()
@@ -1146,13 +1467,109 @@ class PluginsPageMixin:
         self.update_preview()
 
     def _sync_plugin_dependents(self, pid):
-        """Shows each dependent row only while its parent bool is on - the
-        same behaviour as the MediaPlay card's sub-options."""
+        """Shows each dependent row only while its parent allows it - the
+        same behaviour as the MediaPlay card's sub-options.
+
+        Without "depends_value" the parent is tested for truthiness, which
+        is the bool case every older plugin uses. With it, the parent's
+        value has to be one of the listed ones, which is how a row hangs
+        off a dropdown instead of a checkbox.
+        """
         opts = self.plugins.options(pid)
-        for parent, widgets in self.plugin_dependents.get(pid, {}).items():
-            on = bool(opts.get(parent))
-            for w in widgets:
-                w.setVisible(on)
+        for parent, targets in self.plugin_dependents.get(pid, {}).items():
+            value = opts.get(parent)
+            for w, wanted in targets:
+                w.setVisible(str(value) in wanted if wanted else bool(value))
+
+    def _pick_plugin_path(self, item, edit):
+        """The picker behind a "path" setting.
+
+        Starts where the field already points, which is the difference
+        between one click and hunting through the filesystem again. Qt's
+        dialog is the native one on Windows and the platform one on
+        Linux, so nothing here has to know which is which - only the
+        name filters do, and those come from the plugin.
+        """
+        text = edit.text().strip()
+        # an empty field must land in $HOME, not in the process working
+        # directory - Path("") is Path("."), which is wherever the app
+        # happened to be started from
+        current = Path(text).expanduser() if text else Path.home()
+        start = current if current.is_dir() else current.parent
+        if not start.is_dir():
+            start = Path.home()
+
+        if item.get("mode") == "dir":
+            picked = QFileDialog.getExistingDirectory(
+                self, item["label"], str(start))
+        else:
+            filters = list(item.get("filters") or [])
+            # always offer a way out of the filter: an AppImage renamed
+            # by the browser, a wrapper script, a build with no suffix
+            if not any(f.strip().endswith("(*)") for f in filters):
+                filters.append("All files (*)")
+            picked, _sel = QFileDialog.getOpenFileName(
+                self, item["label"], str(start), ";;".join(filters))
+        if picked:
+            # setText fires textChanged, which stores the value - the one
+            # path through on_plugin_option(), so nothing is written twice
+            edit.setText(picked)
+
+    def _run_plugin_action(self, pid, key, out_label):
+        """Press an action button and show whatever the plugin answers.
+
+        The hook runs on the GUI thread, so a plugin doing something slow
+        in there freezes the window - that is the plugin's job to get
+        right, and the docs say so. What is NOT its job is a crash: the
+        call goes through the manager's _safe_call, so a raising button
+        leaves an error line and nothing else.
+        """
+        answer = self.plugins.trigger_action(pid, key)
+        out_label.setText(str(answer) if answer else "")
+        self._sync_plugin_dependents(pid)
+        self.update_preview()
+
+    def _remember_option(self, pid, key, widget):
+        """Note which widget shows which option, so sync_plugin_option()
+        can find it again."""
+        self.plugin_option_widgets[(pid, key)] = widget
+
+    def sync_plugin_option(self, pid, key, value):
+        """A plugin wrote one of its own settings (api.set) – put the new
+        value into the widget the user is looking at.
+
+        Called through PluginManager._ui_call(), which guarantees this
+        runs in the GUI thread even when the plugin wrote from a worker.
+        Signals are blocked while the widget is updated, otherwise the
+        change would travel straight back into set_option() and the
+        plugin would be answering its own write.
+        """
+        widget = self.plugin_option_widgets.get((pid, key))
+        if widget is None:
+            return
+        try:
+            blocked = widget.blockSignals(True)
+            if isinstance(widget, QCheckBox):
+                widget.setChecked(bool(value))
+            elif isinstance(widget, QComboBox):
+                idx = widget.findData(str(value))
+                if idx >= 0:
+                    widget.setCurrentIndex(idx)
+            elif isinstance(widget, (QSpinBox, QSlider)):
+                widget.setValue(int(value))
+            elif isinstance(widget, QLineEdit):
+                widget.setText(str(value))
+            elif isinstance(widget, QLabel):
+                # a "label" row: this is the whole point of it, a plugin
+                # writing its own status text into the settings card
+                widget.setText(str(value))
+            widget.blockSignals(blocked)
+        except (RuntimeError, TypeError, ValueError):
+            # RuntimeError: the page was rebuilt and this widget is gone.
+            # Nothing to do - the fresh one reads the stored value anyway.
+            self.plugin_option_widgets.pop((pid, key), None)
+            return
+        self._sync_plugin_dependents(pid)
 
     def on_plugin_option(self, pid, key, value):
         """One of the plugin's own settings changed. The plugin is told

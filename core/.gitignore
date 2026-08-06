@@ -1,0 +1,14 @@
+venv/
+.build-venv/
+__pycache__/
+*.pyc
+build/
+dist/
+*.spec
+# ...except the checked-in Windows build recipe
+!packaging/windows/*.spec
+appimagetool
+AppDir/
+*.AppImage
+# generated from assets/icon.png by packaging/windows/build-exe.ps1
+assets/icon.ico

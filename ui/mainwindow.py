@@ -23,6 +23,7 @@ from core.oscquery import HAS_ZEROCONF, OSCQueryService
 from core.theming import build_style
 from core.plugins import PluginManager
 from core.speechtotext import SpeechWorker
+from core.textstyle import STYLE_NORMAL, apply_style
 from core.textutils import (
     CUSTOM_STYLE_INDEX, DEFAULT_CUSTOM_BAR, TIME_POS_LINE, fmt_time, fmt_time_hm)
 from core.translators import LibreTranslateServer, METHOD_DEEPL, METHOD_LINGVA
@@ -30,13 +31,15 @@ from ui.ui_main import (
     DebugConsole, EmojiPopup, STYLE, ToggleLabel, ToggleSwitch)
 from ui.config_mixin import ConfigMixin
 from ui.pages.apps_page import AppsPageMixin
+from ui.pages.custom_box import CustomBoxMixin
 from ui.pages.textbox_page import TextboxPageMixin
 from ui.pages.options_page import OptionsPageMixin
 from ui.pages.plugins_page import PluginsPageMixin
 
 
-class MainWindow(ConfigMixin, AppsPageMixin, TextboxPageMixin,
-                 OptionsPageMixin, PluginsPageMixin, QMainWindow):
+class MainWindow(ConfigMixin, AppsPageMixin, CustomBoxMixin,
+                 TextboxPageMixin, OptionsPageMixin, PluginsPageMixin,
+                 QMainWindow):
     # emitted by log() – possibly from background threads (lyrics
     # fetcher, OSCQuery/mDNS listeners). Qt delivers cross-thread
     # signals as queued connection, so the debug console is only
@@ -107,6 +110,11 @@ class MainWindow(ConfigMixin, AppsPageMixin, TextboxPageMixin,
         self.rotate_timer.timeout.connect(self.advance_status)
         self.aio_timer = QTimer(self)
         self.aio_timer.timeout.connect(self.advance_aio)
+        # Custom Box clock. Only ever runs while the realtime toggle is
+        # on AND a side is set to Clock - see _update_box_timer().
+        self.box_timer = QTimer(self)
+        self.box_timer.timeout.connect(self._box_tick)
+        self._box_clock_last = None
         self.stt_timer = QTimer(self)
         self.stt_timer.timeout.connect(self.poll_stt)
         self.hw_timer = QTimer(self)
@@ -299,8 +307,12 @@ class MainWindow(ConfigMixin, AppsPageMixin, TextboxPageMixin,
         sa.setWidget(widget)
         return sa
 
-    def make_settings_expander(self, on_toggled):
-        btn = QPushButton("›  Settings")
+    def make_settings_expander(self, on_toggled, label="Settings"):
+        """The › / ⌄ arrow every collapsible block uses. `label` is only
+        for blocks that are not settings - the Parameters list under All
+        in one, for instance - so every existing caller keeps its text
+        without passing anything."""
+        btn = QPushButton(f"›  {label}")
         btn.setObjectName("expander")
         btn.setCheckable(True)
         btn.setChecked(False)  # collapsed by default on start
@@ -309,9 +321,9 @@ class MainWindow(ConfigMixin, AppsPageMixin, TextboxPageMixin,
         return btn
 
     @staticmethod
-    def set_expanded(btn, content, expanded):
+    def set_expanded(btn, content, expanded, label="Settings"):
         content.setVisible(expanded)
-        btn.setText(("⌄  Settings") if expanded else ("›  Settings"))
+        btn.setText((f"⌄  {label}") if expanded else (f"›  {label}"))
 
     def apply_theme(self):
         """(Re)builds the stylesheet from the current theme settings and
@@ -339,6 +351,8 @@ class MainWindow(ConfigMixin, AppsPageMixin, TextboxPageMixin,
         self._block_updating = True
         for i, edit in enumerate(self.status_edits):
             edit.setText(self.cfg["status_texts"][i])
+            self.set_style_combo(self.status_style_combos[i],
+                                 self.cfg["status_styles"][i])
         self.status_count_spin.setValue(self.cfg["status_count"])
         self.status_cycle_spin.setValue(self.cfg["status_cycle_sec"])
         self.tpl_buttons[self.cfg["status_template_active"]].setChecked(True)
@@ -358,6 +372,8 @@ class MainWindow(ConfigMixin, AppsPageMixin, TextboxPageMixin,
         self.chk_time.setChecked(self.cfg["media_show_time"])
         self.chk_time_seconds.setChecked(
             self.cfg.get("media_time_seconds", True))
+        self.set_style_combo(self.time_style_combo,
+                             self.cfg.get("media_time_style", STYLE_NORMAL))
         self.chk_lyrics.setChecked(self.cfg.get("media_show_lyrics", False))
         self.chk_lyrics_local.setChecked(
             self.cfg.get("media_lyrics_local", False))
@@ -402,6 +418,8 @@ class MainWindow(ConfigMixin, AppsPageMixin, TextboxPageMixin,
         self._sync_media_dependents()
         self.poll_spin.setValue(self.cfg["media_poll_sec"])
         self.chk_media_icon.setChecked(self.cfg["media_icon"])
+        self.chk_media_idle.setChecked(self.cfg["media_idle"])
+        self.media_idle_input.setText(self.cfg["media_idle_text"])
         self.chk_media_custom.setChecked(self.cfg["media_custom"])
         self.media_custom_input.setText(self.cfg["media_custom_template"])
         for i, edit in enumerate(self.preset_edits):
@@ -459,6 +477,7 @@ class MainWindow(ConfigMixin, AppsPageMixin, TextboxPageMixin,
             edit.setText(self.cfg["aio_templates"][i])
         for i, row in enumerate(self.aio_rows):
             row.setVisible(i < self.cfg["aio_count"])
+        self.apply_box_config_to_ui()
         self.chk_hw_flame.setChecked(self.cfg["hw_flame"])
         self.chk_hw_custom.setChecked(self.cfg["hw_custom"])
         self.hw_custom_input.setText(self.cfg["hw_custom_template"])
@@ -467,6 +486,10 @@ class MainWindow(ConfigMixin, AppsPageMixin, TextboxPageMixin,
         self.chk_gpu_name.setChecked(self.cfg["hw_gpu_name"])
         self.chk_gpu_custom.setChecked(self.cfg["hw_gpu_custom"])
         self.gpu_custom_input.setText(self.cfg["hw_gpu_custom_name"])
+        self.set_style_combo(self.gpu_style_combo,
+                             self.cfg.get("hw_gpu_name_style", STYLE_NORMAL))
+        self.set_style_combo(self.cpu_style_combo,
+                             self.cfg.get("hw_cpu_name_style", STYLE_NORMAL))
         self.chk_gpu_temp.setChecked(self.cfg["hw_gpu_temp"])
         self.chk_vram_used.setChecked(self.cfg["hw_vram_used"])
         self.chk_vram_pct.setChecked(self.cfg["hw_vram_pct"])
@@ -532,6 +555,8 @@ class MainWindow(ConfigMixin, AppsPageMixin, TextboxPageMixin,
         else:
             self.aio_timer.stop()
             self.aio_index = 0
+        # Custom Box clock (started only when it can change anything)
+        self._update_box_timer()
         # send timer
         if self.cfg["send_to_vrchat"]:
             self.send_timer.start(self.cfg["interval_sec"] * 1000)
@@ -552,12 +577,14 @@ class MainWindow(ConfigMixin, AppsPageMixin, TextboxPageMixin,
             # line goes above it - anchors have nothing else to sit on here
             lines = self.plugins.render_lines()
             lines.extend(self.build_aio_lines())
-            return self.plugins.filter_text("\n".join(lines))
+            return self.plugins.filter_text(
+                "\n".join(self._apply_custom_box(lines)))
         lines = []
         for key in self.cfg["app_order"]:
             lines.extend(anchored.get(key, []))    # anchored ABOVE this app
             if key == "status" and self.cfg["status_active"]:
-                cur = self._render_status(self.current_status_text())
+                cur = self._render_status(self.current_status_text(),
+                                          self.current_status_style())
                 if cur:
                     lines.append(cur)
             elif key == "media" and self.cfg["media_active"]:
@@ -566,7 +593,8 @@ class MainWindow(ConfigMixin, AppsPageMixin, TextboxPageMixin,
                 lines.extend(self.build_hw_lines())
         # "Above All in one" with AIO off means: after everything else
         lines.extend(anchored.get("aio", []))
-        return self.plugins.filter_text("\n".join(lines))
+        return self.plugins.filter_text(
+            "\n".join(self._apply_custom_box(lines)))
 
     def sending_live(self):
         """True when a payload would actually reach VRChat right now.
@@ -695,6 +723,9 @@ class MainWindow(ConfigMixin, AppsPageMixin, TextboxPageMixin,
         else:
             text = self.build_payload()
         self.preview_label.setText(text if text else "[Status Text goes here]")
+        # the card's own two-line preview follows the same values, so a
+        # placeholder in a frame line is never stale next to the big one
+        self.update_box_preview()
         # Everything that changes the output ends up here, so this is the
         # one place that can notice "the app shows something VRChat does
         # not" - which was the whole complaint. Comparing against the
@@ -730,9 +761,15 @@ class MainWindow(ConfigMixin, AppsPageMixin, TextboxPageMixin,
         toggle: ON -> m:ss / h:mm:ss (3:27), OFF -> h:mm (0:03,
         the old behaviour). Used by the time line AND the {time}
         {time_status} {time_end} {position} {length} placeholders."""
-        if self.cfg.get("media_time_seconds", True):
-            return fmt_time(seconds)
-        return fmt_time_hm(seconds)
+        text = (fmt_time(seconds) if self.cfg.get("media_time_seconds", True)
+                else fmt_time_hm(seconds))
+        # small-letter digits, if the user picked them: one choke point
+        # for the time line, the merged songbar line and the {time}
+        # {position} {length} placeholders alike. digits_only keeps the
+        # ':' and '/' at normal size, which is what makes it readable.
+        return apply_style(text, self.cfg.get("media_time_style",
+                                              STYLE_NORMAL),
+                           digits_only=True)
 
     def log(self, msg):
         # safe to call from ANY thread: print is thread-safe and the

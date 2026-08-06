@@ -2,9 +2,539 @@
 
 All notable changes to OSC-DreamChatbox are documented here.
 
-🟢 Windows Support: Complete & Stable
+🟢 Windows Support: Complete & Stable (v.1.3.0)
 
 🟢 Linux Support: Complete & Stable (v1.2.6)
+
+## [v1.3.2] – 2026-08-03
+
+**Plugin settings got a real layout, and the chatbox got smaller letters.**
+Two things that both come down to the same problem: 144 characters and a
+handful of pixels, and everything has to fit in there. Everything in here
+works identically on Windows and Linux, and no existing config is touched.
+
+### Added
+
+- **Plugin settings: collapsible groups.** A `plugin.json` can now wrap its
+  settings in a block instead of dumping twenty rows in a flat list:
+
+  ```json
+  {"key": "g_twitch", "type": "group", "label": "Twitch",
+   "expanded": false, "items": [ ... ]}
+  ```
+
+  A group holds no value of its own, it only groups the settings in its
+  `items` list – which may contain every type, including one more level of
+  groups (`MAX_GROUP_DEPTH = 2`; anything deeper is dropped rather than
+  parsed, the same way a broken setting is dropped today). It renders with
+  the same expander gesture as the card's own **Settings** button and, like
+  that one, starts collapsed unless the manifest says `"expanded": true`.
+  The open/closed state is a view detail and is deliberately **not** written
+  to the plugin's `config.json` – a plugin that reopens five blocks on every
+  start would be worse than one that opens none.
+
+- **Plugin settings: dropdowns.** The new `"type": "choice"` renders a combo
+  box:
+
+  ```json
+  {"key": "mode", "type": "choice", "label": "Data source",
+   "default": "keyless",
+   "choices": [{"value": "keyless", "label": "Keyless"},
+               {"value": "api", "label": "Official API"}]}
+  ```
+
+  The **stored value is always the `value` string, never the label**, so a
+  plugin author can rename a label in a later version without invalidating
+  every config that already picked it. `"choices": ["a", "b"]` works as a
+  short form where the value doubles as the label. Duplicates are dropped so
+  a stored value always maps back to exactly one entry, and a choice without
+  usable entries is dropped like any other broken row.
+
+- **Plugin settings: `depends_value`.** `depends` used to mean "show this row
+  while that checkbox is on". It can now follow a dropdown as well:
+
+  ```json
+  {"key": "api_key", "type": "text", "label": "API key", "secret": true,
+   "depends": "mode", "depends_value": "official"}
+  ```
+
+  Accepts a single value or a list of them. **Without** `depends_value`
+  nothing changes: the parent is tested for truthiness, exactly as every
+  existing plugin relies on.
+
+- **Plugin settings: `"secret": true`** on a `text` row switches the input to
+  password echo, for tokens and API keys. Shoulder-surfing protection only –
+  the value still sits in plain text in the plugin's `config.json`, and a
+  plugin asking for credentials should say so in its `hint`.
+
+- **Superscript and subscript for chatbox text** – the same character count,
+  a fraction of the height. Unicode has modifier letters and sub/superscript
+  digits, so a hardware name or a music timer can be tucked under the line it
+  belongs to instead of eating a whole line of the 144:
+
+  ```
+  normal        hallo        012345689
+  superscript   ᴴᴬᴸᴸᴼ        ⁰¹²³⁴⁵⁶⁷⁸⁹
+  subscript     ₕₐₗₗₒ        ₀₁₂₃₄₅₆₇₈₉
+  ```
+
+  A dropdown sits behind **every one of the 20 Personal Status texts**, so
+  one line can be small while the next stays normal. The style belongs to the
+  text field, not to the position in the rotation, and it travels with the
+  **text template** it was set in – all ten templates keep their own styles
+  the way they keep their own texts.
+
+  The same dropdown sits behind the **GPU name** and the **CPU name** in the
+  Hardware card (a card name is the longest thing on a hardware line, so that
+  is where the room is) and behind the **music timer** in MediaPlay. The timer
+  converts **digits only**, so `:` and `/` keep their normal shape and
+  `³:²⁷/⁴:¹⁵` still reads as a time.
+
+  Unicode does **not** have a complete alphabet for either variant – that is
+  the catch, and it is the reason for the info line above the status texts.
+  There is no superscript `q`, and subscript is missing `b c d f g q w y z`.
+  A character without a mapping is passed through unchanged, so a word comes
+  out mixed rather than mangled. For those cases a word can be kept out of
+  the conversion entirely by wrapping it:
+
+  ```
+  Playing _"Quake"_ right now   ->   ᴾᴸᴬʸᴵᴺᴳ Quake ᴿᴵᴳᴴᵀ ᴺᴼᵂ
+  ```
+
+  The markers are a formatting instruction, not content, so they are stripped
+  in **every** mode – including Normal – and never reach VRChat. Picking a
+  style that cannot render a letter also logs which characters stayed big,
+  because that is much easier than squinting at the preview wondering why one
+  letter looks wrong.
+
+- **Inline `{super/"word"}` and `{sub/"word"}` in every custom string.** The
+  dropdowns style a whole field, which is the wrong unit for a string you
+  built yourself – the Hardware custom string is one field but five values,
+  and styling the lot of it was never the point. The markers style one part
+  instead:
+
+  ```
+  GPU {gpu_usage} {super/"vram"} {vram_usage}   ->   GPU 68% ⳽ᴿᴬᴹ 9/16GB
+  ```
+
+  Handled inside `apply_template()`, so every custom string has it for the
+  same reason and with the same syntax: Hardware, All in one, MediaPlay, the
+  Personal Status texts, a Custom Box middle text and a plugin's own string.
+  Resolved *after* the placeholders, so the content can be one –
+  `{super/{cpu_temp}}` styles whatever the value turned out to be. The quotes
+  are optional and stripped when present, which is the only way to write a
+  word with a trailing space. Aliases `{sup/…}`, `{superscript/…}` and
+  `{subscript/…}` all work, and the `_"keep me"_ ` markers work inside a
+  marker as well.
+
+  The same caveat as everywhere else applies and is spelled out under the
+  field: Unicode has no superscript `q` and no subscript for about half the
+  alphabet, so those letters pass through unchanged rather than being mangled.
+
+- **MediaPlay: an idle symbol between songs.** Until now the MediaPlay line
+  simply vanished when nothing was playing, which on a two-line chatbox reads
+  as "the app stopped working" rather than "no song". It now shows a single
+  character instead – `⏸` by default, editable, with the emoji picker next to
+  it – and can be switched off to get the old behaviour back.
+
+  It covers all three ways of ending up with nothing: no player at all, a
+  player whose custom string rendered to nothing, and a player where every
+  part was switched off or the title was empty. All three are the same
+  situation from the chatbox's side, so they give the same answer.
+
+  **All in one gets it without asking for it.** A template line that is about
+  the song and rendered to nothing means there is no song, so it is answered
+  with the idle symbol instead of being cleaned away:
+
+  ```
+  {box_start}\n{text}\n {artist} : {title} |\n {time_status} {bar} {time_end}\n {box_stop}
+  ```
+
+  ```
+  ┌──────┐          ┌──────┐
+  talk to me        talk to me
+  ⏸           ->    Artist : Song
+  └──────┘          0:30 [██░░░░░░░░░░░] 3:00
+                    └──────┘
+  ```
+
+  Only the *first* such line answers – a layout with a title line, a bar line
+  and a lyrics line would otherwise stack three identical symbols. A line that
+  mixes song values with anything else is untouched as long as the rest of it
+  renders, and a line with no song values in it is cleaned away exactly as
+  before. Aliases count: `{song}` is `{title}`.
+
+  This is why `build_aio_lines()` now renders the template one line at a time.
+  The output is identical – `apply_template()` cleans per line anyway – but it
+  keeps the link between an output line and the template line it came from,
+  which is the whole thing that makes the above possible.
+
+  **`{media_idle}`** is still there for placing the symbol by hand: the symbol
+  while nothing plays, empty otherwise, so `{media_idle}{artist} : {title}`
+  puts it on the same line rather than on its own.
+
+- **The emoji picker grew from 30 icons to just over a thousand**, in ten
+  categories – Smileys, People, Hearts, Animals, Nature, Food, Activities,
+  Travel, Objects, Symbols – with a tab row to switch between them. The
+  palette moved into `core/emojis.py`, where it is plain data.
+
+  Two things shaped what got in, and both come from the chatbox rather than
+  from taste. **No ZWJ sequences, no flags, no skin tone modifiers**: a
+  "family" emoji is five codepoints glued together with zero-width joiners
+  and a flag is two regional indicators, VRChat's chatbox font renders a good
+  part of them as tofu, and where it does not they still cost their full
+  length against the 144 characters. Single codepoints are used wherever one
+  exists. **Variation selectors are kept where the character needs one**,
+  because `❤` and `❤️` are different strings and many fonts draw the
+  monochrome glyph for the first – so 57 of the 1010 entries cost two
+  characters instead of one, and each button says which in its tooltip.
+
+  **A search box sits above the tabs.** Its terms come from `unicodedata`
+  rather than a hand-written table: every entry in the palette has an official
+  Unicode name and they are usually the words someone would type – FIRE,
+  ROCKET, DOG FACE – so a thousand hand-maintained keyword lists would be a
+  thousand chances to drift from the palette for no gain. The index is built
+  on the first search, not at import. On top of that sits a short `ALIASES`
+  table for the shorthand Unicode has no word for and for German, both
+  deliberately not exhaustive: `lol`, `pc`, `gpu`, `cpu`, `ram`, `fps`, `vrc`,
+  `afk`, `herz`, `feuer`, `musik`, `katze`, `wut`. All query words must match,
+  so a second word narrows. Whole-word matches rank above substring ones,
+  because `lol` is a substring of LOLLIPOP and `pc` of CUPCAKE – without the
+  ranking the obvious answer sits under the sweets. The result grid reuses one
+  pool of buttons instead of rebuilding on every keystroke.
+
+  The picker shows one category at a time and builds a category's buttons the
+  first time it is opened. A thousand QPushButtons built up front would be
+  paid for on every start by everyone, including the people who never open
+  the picker; this way one category exists at startup and the other nine
+  cost 0.1 s in total, only if visited.
+
+- **Custom Box – a frame around the whole chatbox.** A new card on the Apps
+  page, below All in one. Switch it on and one line is hung above everything
+  the app sends and one below it, so the chatbox reads as a closed box
+  instead of a stack of loose lines:
+
+  ```
+  ┌──────┐            ┌─── 18:01 ───┐
+  now playing …  ->   now playing …
+  └──────┘            └─── 68 % ───┘
+  ```
+
+  It sits below All in one because that is the order it works in: All in one
+  decides *what* is sent, the box only frames whatever came out. The top line
+  is the first line of the message and the bottom line the last one, no
+  matter which apps or plugins produced what in between.
+
+  **Twelve templates plus one you build yourself** – Light, Heavy, Double,
+  Rounded, Dashed, Blocks, Rule, Corners, Stars, Hearts, Arrows, Sparkles,
+  in a dropdown that shows each frame next to its name. A row of numbered
+  buttons would have said "7" and nothing else, so picking a frame would have
+  meant clicking through all twelve to find out what they look like. The
+  **C** slot exposes the six strings a template actually is (left cap, fill
+  and right cap, for each of the two lines), so any frame is a few characters
+  away. Each line can be switched off on its own – a top rule with no bottom
+  is a valid frame.
+
+  **Width is set per line**, not once for both. The two middle texts are
+  rarely the same length – a short clock on top and a long hardware line
+  underneath need different amounts of fill to end up looking like one box,
+  and a single number could only ever suit one of them. **Align top & bottom**
+  is still there for when you *do* want them even: it pads the shorter of the
+  two rendered lines. It only ever adds fill, never trims, so for two
+  deliberately different lines, switch it off.
+
+  **Each line can carry a middle text**, chosen per line in a dropdown:
+
+  - **None** – a plain line: `┌──────┐`
+  - **Clock** – `┌─── 18:01 ───┐`, in one of four formats (24 h with or
+    without seconds, 12 h with or without AM/PM)
+  - **Custom** – your own text through the **same template engine All in one
+    uses**, so `{cpu_usage}`, `{title}`, `{gpu_temp}`, the live info and
+    every active plugin all work in the frame. `{box_clock}` is the clock
+    from the format above.
+
+  The fill is split evenly around a middle text, which is what turns
+  `┌──────┐` into `┌─── 18:01 ───┐`. The alignment is an estimate by design –
+  the chatbox font is not monospaced, so it gets the two lines close and
+  cannot get them pixel perfect.
+
+- **A "Parameters" list under All in one.** A second arrow below Settings,
+  because the placeholder vocabulary had grown into a wall of grey text that
+  nobody reads and half of it lived on the Plugins page anyway. It opens into
+  two halves:
+
+  - **Software parameters** – everything the app itself produces, grouped the
+    way the UI is grouped: Personal Status, MediaPlay, Hardware, Live info,
+    Custom Box, and `\n`. Each group with a one-line note on the parts that
+    are not obvious, e.g. that `{temp_icon}` makes the temperatures drop
+    their unit.
+  - **External parameters** – every installed plugin with its `{<id>}`, its
+    `{<id>_<key>}` values and any name it claimed unprefixed. Inactive and
+    unsupported plugins are listed too, marked as such, because "why is this
+    placeholder empty" is the question the list exists to answer.
+
+  The same list sits at the bottom of the **Custom Box** card, because a box
+  middle text is rendered against the identical value dict – plugins included
+  – and one shared builder cannot drift the way two hand-kept lists would.
+  The text is selectable, so a placeholder can be copied straight out of the
+  list into the string. It is rebuilt when the block is opened and whenever
+  the plugin list changes, so a plugin installed while the app is running
+  shows up without a restart. The old paragraph above the All-in-one string
+  shrank to one sentence pointing at it.
+
+- **`{box_start}` and `{box_stop}`** – the way back out of the card. Put them
+  into an All-in-one string and the two frame lines land exactly where you
+  wrote them instead of being wrapped around the whole message. They resolve
+  whether or not the card is Active, so All in one can use the frame without
+  the automatic wrapping at all, and a string that places a line itself does
+  **not** get that line added a second time.
+
+- **The card ships switched off but fully filled in.** Turning it on gives:
+
+  ```
+  ╔═══ 🕐 09:05 🕐 ═══╗
+  talk to me
+  ╚═ OSC-DreamChatbox ═╝
+  ```
+
+  Double frame, a live clock on top, the app name underneath, widths 7 and 3,
+  alignment off because those two widths are deliberately different. A card
+  with thirteen switches and an empty preview teaches nobody what it does, so
+  the settings are there – but the frame itself is not sent until asked for.
+
+  Off rather than on, because how wide a frame line can get before the chatbox
+  breaks it depends on the font and on which characters are on the line, and
+  nothing in the config can know that. It is set once, by eye, against the
+  game – and once set it stays set. Shipping it on would mean shipping a frame
+  that splits on somebody's setup and looks broken out of the box.
+
+- **Realtime clock.** The clock tick is the only thing in the Custom Box that
+  costs anything, so it is a toggle. Off, the frame is rebuilt when something
+  else changes, which means a clock can sit up to one send interval behind.
+  On, it gets its own tick and updates the moment it changes. It is on by
+  default because the default top line is a clock – a clock that only moves
+  when something else happens looks broken.
+
+  The tick only runs while the card is Active **and** a line actually shows a
+  clock. That includes `{box_clock}` inside a Custom middle, not just the
+  Clock middle mode: the default top line is exactly that shape, and checking
+  only the mode would have left the switch on and doing nothing. It is 2 s for
+  a format without seconds and 1 s for one with them, and it compares the
+  rendered clock string before doing anything – so a clock that changes once
+  a minute causes one refresh a minute, not sixty.
+
+
+- **Plugin API 2: a plugin may now say which one it needs.** `plugin.json`
+  takes `"api": 2` (and an optional `"min_app"`). A plugin asking for more
+  than the app provides is listed, greyed out and **not imported**, with the
+  reason in its tooltip and its info popup. Before, such a plugin imported
+  fine and then raised on the first call into something that did not exist
+  yet – once per frame, into the debug console. The store checks the same
+  thing before the download, so an install that would end in a greyed out row
+  is not offered at all. No `"api"` key means 1, which is every manifest that
+  exists today, so nothing published so far changes.
+- **`api.supports("feature")` and `api.needs(n)`** – runtime feature
+  detection, so one plugin release can serve several app versions instead of
+  pinning a minimum for something it could have worked around. Also answers
+  `"hook.<name>"` and `"settings.<type>"`, which are the two questions an
+  author actually has: may I call this, and will my settings row show up.
+- **`api.set(key, value)` / `api.set_many()`.** A plugin can write its *own*
+  settings – an autodetected path, a refreshed token, the size of its own
+  panel – and have them persisted like any user edit. The visible widget
+  follows along, `on_settings()` is deliberately **not** called back, because
+  a plugin answering its own write is how you build an endless loop, and the
+  update is queued onto the GUI thread, so a plugin may write from one of its
+  worker threads without that being a segfault.
+- **`api.refresh()`** asks for a fresh render for data that arrived between
+  frames, and **`api.data_path(*parts)`** hands out a path inside the
+  plugin's own folder with the parents created – so plugins stop inventing
+  places under `$HOME`.
+- **`build_widget(parent)`: a plugin may bring its own UI.** It returns a
+  `QWidget` and the Plugins page embeds it under that plugin's settings. The
+  settings schema covers *options*; a Start button, a live log or a list the
+  user adds rows to cannot be expressed as an option, and the alternative was
+  every such plugin opening its own window. Runs through the same
+  `_safe_call()` as every hook, so broken widget code costs that plugin its
+  panel and nothing else.
+- **`on_event(name, data)` plus `PluginManager.emit()`.** One generic channel
+  for everything that does not exist yet: a new kind of notification is a new
+  name, and every plugin that does not know it ignores it – no change in
+  `core/plugins.py` and none in any installed plugin. First name in use is
+  `app.shutdown`, announced before teardown so a plugin can flush while the
+  rest of the app is still standing.
+- **`on_tick()`** fires at the top of every chatbox frame, before the values
+  are collected: a heartbeat for cheap polling without starting a thread.
+- **New plugin setting type `path`** – a text row with a file picker next to
+  it. A path field without one is unusable on Windows, where nobody types
+  `C:\Users\…\AppData\Local\Programs\OSCLeash\OSCLeash.exe` by hand, and
+  awkward enough on Linux. `"mode": "file" | "dir"`, optional Qt name
+  `"filters"` and a `"placeholder"`; `QFileDialog` gives the native dialog on
+  Windows and the platform one on Linux, so the app never has to know which
+  it is. The dialog opens where the field already points – the folder itself
+  when the value is one, its parent when it is a file, `$HOME` when the field
+  is empty. Typing stays possible, because a path on a share or one that does
+  not exist yet cannot be picked, and the value is stored exactly as entered:
+  never resolved, never checked, so a config carried to another machine is
+  not silently "corrected".
+- **The plugin info popup names the systems a plugin runs on** – `OS  Linux &
+  Windows`, or just the one, in orange when it is not this machine. The greyed
+  out row only ever answers for the computer you are sitting at, which is no
+  help when you are deciding whether to recommend a plugin to someone on the
+  other OS.
+- **New plugin setting types `action` and `label`.** `action` is a button: it
+  holds no value, never reaches `config.json`, and calls the plugin's
+  `on_action(key)` when pressed, showing whatever the hook returns next to it
+  (`style` is `normal`, `primary` or `danger`). `label` is a read-only line
+  whose text is an ordinary option value - combined with `api.set()` that
+  gives a plugin a live status line inside its own settings card. Between
+  them they close the gap that made `build_widget()` feel mandatory: a plugin
+  that only wanted one button used to need a whole Qt file for it.
+- **An Uninstall button in the store**, on the detail page of a plugin that is
+  installed. It runs the same delete path as the bin on the Installed page, so
+  the warning about losing that plugin's settings cannot drift apart between
+  the two places it is offered from – somebody who found a plugin in the store
+  looks for the way out there too, not in a second list. Afterwards the
+  catalogue is re-marked against the folder on disk with the new
+  `PluginStore.sync_installed()`, which touches no network: nothing upstream
+  changed, only our own side did, and `refresh()` would have frozen the window
+  while it fetched every manifest again.
+- **The store catalogue lists the new plugins**: OSCLeash, Social Media and
+  Stream Stats next to World Stats, and `example_template` replaces the old
+  Hello World, which is gone from the repository. `config/plugins.json` is
+  fetched from GitHub on every refresh, so AppImage and AUR users see them
+  without updating the app.
+- **A “Write a plugin” button** in the store, and `PLUGIN_TEMPLATE_URL` in
+  `core/constants.py` so the address lives in one place instead of in four
+  tooltips.
+- **An example plugin ships with the app**, `example_template`: every setting
+  type next to every hook, all of it live, with the reasoning in the comments.
+  Copy the folder, rename it, delete what you don't need - including the
+  deliberate row of an invented type, which is there to show that an unknown
+  setting is kept rather than dropped.
+- **New plugin setting type `emoji`** – a text row with the app's own icon
+  picker behind a 😀 button, the same popup the Personal Status, MediaPlay,
+  Hardware and Custom Box strings already use. Nothing new was built for it;
+  the point is that a plugin icon is chosen the way every other icon in the
+  app is, rather than each plugin inventing its own answer to "how do I type
+  an emoji on this machine". It stays a text field on purpose: an icon is
+  often two characters (a base emoji plus a variation selector) and a
+  trailing space is sometimes exactly what the author wanted.
+- **The plugin contract is documented** in `PATCH-README.md`, including the
+  parts that are easy to get wrong – `None` versus `""` in `get_values()`,
+  importing Qt lazily, never touching a widget from a worker thread, and
+  never shipping a `configs/` folder inside a plugin zip.
+
+### Changed
+
+- Plugin option values are collected through the new `iter_settings()` walker,
+  so defaults and stored values keep living in one flat dict no matter how the
+  settings are grouped. Keys stay unique across the whole schema – groups
+  recurse sharing one `seen` set, because two rows sharing a key would
+  silently overwrite each other in that dict.
+- The GPU/CPU name is built in one place (`_hw_display_name()`) for both the
+  plain hardware lines and the custom string, which is what keeps the style
+  from applying to one and not the other.
+- The music timer is styled inside `_fmt_media_time()`, the single point every
+  time string already went through – so the time line, the merged songbar
+  line and the `{time}` `{position}` `{length}` `{time_status}` `{time_end}`
+  placeholders all follow the setting without five separate code paths.
+- The All-in-one value dict moved out of `build_aio_lines()` into
+  `_template_values()`, because the Custom Box needs exactly the same
+  placeholders. One builder means the frame can never know a placeholder All
+  in one does not, or fill one differently.
+- A config from the first Custom Box build carried one `box_width` for both
+  lines; it is migrated into `box_width_top` / `box_width_bottom` and the old
+  key dropped. The stored file is now kept alongside the defaults during load,
+  because after the merge a default is indistinguishable from a stored value –
+  and a migration has to be able to tell "never had this key" from "set it to
+  the number the default happens to be".
+- `make_settings_expander()` / `set_expanded()` take an optional label. It
+  was hard-wired to "Settings", which is right for every existing caller and
+  wrong for a block that is a reference list, so the default keeps all of
+  them unchanged.
+- An empty payload is no longer framed. With every app quiet there is nothing
+  to put a box around, and an empty frame is not a smaller message – it is a
+  message that says nothing and still costs two lines and a send.
+
+
+- **Nothing the plugin system does not understand is dropped any more.** A
+  settings row of a type this build does not know is kept instead of silently
+  vanishing: its default is stored like any other value, `api.get()` keeps
+  returning it, and the row shows up as a disabled 🔒 line naming what it
+  needs. The same for unknown keys everywhere else – extra manifest fields in
+  `Plugin.extra`, extra keys on a settings row in `item["extra"]`, extra keys
+  in `configs/config.json` written back out untouched. That last one matters
+  most: rewriting a config that a newer version wrote used to quietly delete
+  every setting made there.
+- **`Plugin.supported` now means "runnable here"** – the platform check and
+  the plugin API check together, with `platform_note` returning whichever
+  reason applies. Both halves stay available as `platform_ok` and `api_ok`,
+  and every place in the UI that asked the old question keeps working
+  unchanged.
+- Groups nested deeper than the two supported levels become that same
+  disabled placeholder instead of disappearing.
+
+### Fixed
+
+- **Windows: a plugin setting containing an emoji was silently lost.**
+  `PluginManager._write_config()` wrote the file with `ensure_ascii=False` but
+  without an explicit encoding, so Windows used the locale codepage (cp1252)
+  and raised `UnicodeEncodeError` on the first non-Latin-1 character. The
+  write is wrapped in a `try` that logs and moves on – losing a setting must
+  not take the chatbox down – so the failure was invisible and the setting
+  simply never arrived. Reachable through the emoji picker sitting right next
+  to every plugin custom string, and now also through `{super/…}` output.
+  Linux never saw it because its locale is UTF-8. Both config paths (plugin
+  and main) are now pinned to UTF-8 on read and write.
+- **Windows: `font-family: monospace` is a fontconfig alias, not a family.**
+  It resolves on Linux and matches nothing on Windows, where Qt then picked
+  whatever it liked – which for the Custom Box preview meant the frame stopped
+  lining up. The preview now asks the system for its actual fixed-width font,
+  and the stylesheet rules ask for `Consolas, monospace` so each platform gets
+  the one it has.
+
+
+- **Updating a plugin left its old code running.** `_unload()` dropped only
+  the plugin's top-level module from `sys.modules`, never the submodules a
+  multi-file plugin imports as `<module>.panel` and friends. Re-importing
+  after an update therefore built a fresh `main.py` around the *previous*
+  version's helpers, and the plugin showed its new manifest while running its
+  old code – visible as a card that says v2 next to an error message only v1
+  could produce. Every module belonging to the plugin is dropped now, so the
+  next load is genuinely fresh.
+- **A plugin writing to the UI from a background thread could take the whole
+  app down.** Host calls out of the plugin manager are now queued into the
+  window's event loop with the window as the context object, which is what
+  makes Qt run them in the GUI thread – the same class of bug as the
+  `_log_signal` fix in v1.0.8, one layer further out.
+
+### Notes
+
+- Fully backwards compatible in all three parts. Manifests without groups or
+  choices parse and render exactly as before; configs written before v1.3.2
+  have no styles, so every text, name and timer defaults to **Normal**, and
+  they have no Custom Box keys either, so the frame comes up switched off and
+  nothing about an existing setup changes on update. Every Custom Box value
+  is clamped on load rather than rejected – an out-of-range template index
+  would otherwise leave the card with no template selected at all.
+- The frame costs characters out of the same 144 as everything else. Two
+  `┌──────┐` lines are about 16 of them; the counter under the preview warns
+  before VRChat cuts anything.
+- New files: `core/textstyle.py` (the maps, the `_"keep me"_` handling and the
+  dropdown labels), `core/boxstyle.py` (the frame templates, line building and
+  the width estimate) and `ui/pages/custom_box.py` (the card). Changed:
+  `core/plugins.py`, `core/plugin_store.py`, `core/textutils.py`,
+  `ui/pages/plugins_page.py`, `ui/pages/apps_page.py`, `ui/mainwindow.py`,
+  `ui/config_mixin.py`.
+- **Plugin API 2 is additive.** Every hook, every manifest key and the config
+  format are unchanged; an installed plugin keeps loading without being
+  touched, and a plugin built against API 2 stays installable on an older app
+  as long as it feature-detects instead of declaring `"api": 2`. The number
+  lives in `core/plugins.py` as `PLUGIN_API_VERSION` and is deliberately not
+  the app version: the app version is a release, the API number is a promise.
+  Once v1.3.2 is out, API 2 means what it means today – new abilities arrive
+  as additional capability strings, which cost nothing because
+  `api.supports()` answers `False` for anything it has never heard of.
 
 ## [v1.3.1] – 2026-08-03
 
@@ -71,11 +601,14 @@ the app. Everything in here works identically on Windows and Linux.
   keystroke. Identical payloads are not re-sent, and clearing the chatbox is
   counted against the budget like any other message.
 
-- **Windows: the "VRC Picture Folder Fix" button closed the app.** It called
-  a local variable that is only bound at the end of the method, so it raised
-  `NameError` - and PyQt6 routes an exception out of a slot to
-  `sys.excepthook`, whose default terminates the process. It now shows the
-  intended "not needed on Windows" dialog.
+- **Dead `NameError` in the Windows branch of "VRC Picture Folder Fix."** The
+  guard called a local variable that is only bound at the end of the method.
+  Nobody ever hit it: on Windows that button is hidden and its row is never
+  added to the layout, and the method has no other caller - so the branch was
+  unreachable and no release ever crashed on it. It was still a loaded gun
+  pointed at the next person who unhides the button, because PyQt6 routes an
+  exception out of a slot to `sys.excepthook`, whose default terminates the
+  process. It now shows the intended "not needed on Windows" dialog.
 
 - **Status slots 11-20 could be lost.** The 20 rotation texts were normalised
   through a 10-wide window on load, so the upper ten only survived because

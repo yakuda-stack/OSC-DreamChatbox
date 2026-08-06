@@ -15,7 +15,7 @@ from core.osinfo import (  # noqa: F401  (IS_WINDOWS/OS_NAME re-exported)
     IS_WINDOWS, OS_NAME, config_dir, legacy_config_dir, resource_root)
 
 APP_NAME = "OSC-DreamChatbox"
-VERSION = "v1.3.1"
+VERSION = "v1.3.2"
 GITHUB_REPO = "yakuda-stack/OSC-DreamChatbox"
 DISCORD_URL = "https://discord.gg/X5TaN4A47h"
 DONATE_URL = "https://ko-fi.com/yakuda_"
@@ -23,6 +23,11 @@ VRCHAT_GROUP_URL = ("https://vrchat.com/home/group/"
                     "grp_829b7777-430d-48b2-8bf3-4e348d0dac9b")
 # ready-made plugins + the template to start your own (see core/plugins.py)
 PLUGINS_REPO_URL = "https://github.com/yakuda-stack/Dream-Chatbox-Plugins"
+# the example plugin: every setting type next to every hook, all of it
+# live. One constant instead of the URL sitting in four tooltips, because
+# a link that moved is only worth fixing once.
+PLUGIN_TEMPLATE_URL = (PLUGINS_REPO_URL
+                       + "/tree/main/template/example_template")
 
 # ---------------------------------------------------------------- paths
 # project root = folder that contains osc_dreamchatbox.py / core / ui.
@@ -61,6 +66,8 @@ CHATBOX_INPUT = "/chatbox/input"
 # time it flips, so the UI and the config validator both enforce it
 MIN_STATUS_CYCLE_SEC = 10
 CHATBOX_LIMIT = 144  # VRChat chatbox character limit
+
+
 
 # ------------------------------------------------------- OSC rate limit
 # VRChat throttles the chatbox: roughly 5 messages inside a 5 second

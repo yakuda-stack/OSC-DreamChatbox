@@ -61,8 +61,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from core.constants import (
-    CONFIG_DIR, GITHUB_REPO, STORE_SOURCES_FILE, VERSION)
-from core.plugins import IS_WINDOWS, OS_NAME
+    APP_NAME, CONFIG_DIR, GITHUB_REPO, STORE_SOURCES_FILE, VERSION)
+from core.plugins import IS_WINDOWS, OS_NAME, PLUGIN_API_VERSION
 
 RAW_HOST = "https://raw.githubusercontent.com"
 # where to look for a newer catalogue when plugins.json names no self_url
@@ -208,6 +208,10 @@ class StoreEntry:
     image_path: Path = None
     is_linux: bool = True
     is_windows: bool = True
+    # which plugin API the catalogue entry asks for. 1 = every manifest
+    # that predates the key, which is all of them until an author opts in
+    api_needed: int = 1
+    min_app: str = ""
     error: str = ""
     # filled in against the installed set
     installed_version: str = ""
@@ -218,12 +222,31 @@ class StoreEntry:
         return bool(self.installed_version)
 
     @property
-    def supported(self):
+    def platform_ok(self):
         return self.is_windows if IS_WINDOWS else self.is_linux
 
     @property
+    def api_ok(self):
+        """False when the store entry needs a newer app than this one.
+        Checked here so the answer arrives BEFORE the download: an
+        install that ends in a greyed out row is a wasted click."""
+        return int(self.api_needed or 1) <= PLUGIN_API_VERSION
+
+    @property
+    def supported(self):
+        return self.platform_ok and self.api_ok
+
+    @property
     def platform_note(self):
-        return "" if self.supported else f"not for {OS_NAME}"
+        """Why this entry cannot be used here, empty when it can. The
+        name is historical - it used to only ever be the OS."""
+        if not self.platform_ok:
+            return f"not for {OS_NAME}"
+        if not self.api_ok:
+            need = (self.min_app or "").strip()
+            return (f"needs a newer {APP_NAME}"
+                    + (f" ({need})" if need else ""))
+        return ""
 
 
 class PluginStore:
@@ -459,11 +482,31 @@ class PluginStore:
         entry.description = str(data.get("description") or "")
         entry.is_linux = bool(data.get("is_linux", True))
         entry.is_windows = bool(data.get("is_windows", True))
+        try:
+            entry.api_needed = max(1, int(data.get("api", 1) or 1))
+        except (TypeError, ValueError):
+            entry.api_needed = 1
+        entry.min_app = str(data.get("min_app") or "").strip()
         entry.summary = str(data.get("summary") or entry.description)
         image = str(data.get("image") or "").strip()
         if image:
             entry.image_url = image if image.startswith(("http://", "https://")) \
                 else entry.source.raw(image)
+
+    def sync_installed(self, installed=None):
+        """Re-marks the entries already in memory against what is on disk.
+
+        No network at all: after an install or an uninstall the catalogue
+        itself has not changed, only our side of it. refresh() would go
+        and fetch every manifest again, which is seconds of a frozen
+        window for information we already have.
+        """
+        installed = installed or {}
+        for entry in self.entries:
+            entry.installed_version = ""
+            entry.has_update = False
+            self._mark_installed(entry, installed)
+        return self.entries
 
     def _mark_installed(self, entry, installed):
         cur = installed.get(entry.pid)
