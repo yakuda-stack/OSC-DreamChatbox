@@ -8,12 +8,17 @@ window class stays small. All `self.*` refer to the MainWindow instance.
 import time
 from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtWidgets import (
-    QComboBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QSpinBox, QVBoxLayout, QWidget)
-from core.constants import CHATBOX_INPUT, CHATBOX_LIMIT, SLIM_SUFFIX
+    QCheckBox, QComboBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QSpinBox, QVBoxLayout, QWidget)
+from core.constants import (
+    CHATBOX_INPUT, CHATBOX_LIMIT, CHAT_MODE_DIRECT, CHAT_MODE_LINE,
+    CHAT_MODE_VARS, DEFAULT_TRANSLATE_NOTICE, ORIGIN_CHAT, ORIGIN_LABELS, ORIGIN_STT, ORIGIN_TTT,
+    SLIM_SUFFIX)
 from core.speechtotext import (
-    LANGUAGES, OUTPUT_LANGUAGES, SpeechWorker, has_sr, list_microphones,
-    missing_dependency, reload_sr,
+    LANGUAGES, OUTPUT_LANGUAGES, SpeechWorker, cached_microphones,
+    clear_driver_stuck, default_device_note, driver_stuck, has_sr,
+    list_microphones, missing_dependency, reload_sr, resolve_device,
     has_microphone_driver, reload_mic_driver)
+from core.plugins import ANCHOR_LABELS
 from core import pyextras
 from core.constants import EXTRAS_DIR
 from core.translators import (
@@ -26,6 +31,52 @@ from ui.ui_main import DragHandle, ToggleLabel, ToggleSwitch
 #: third-party account pages, not app identity.
 GOOGLE_KEYS_URL = "https://console.cloud.google.com/apis/credentials"
 DEEPL_KEYS_URL = "https://www.deepl.com/your-account/keys"
+
+#: The three ways a message can reach the chatbox. Applies to everything
+#: that produces text here - the Chat field, the Presets, Speech to Text
+#: and Text to Text - so the route is one decision instead of four.
+CHAT_SEND_MODES = (
+    ("Standard \u2013 message on its own, apps paused", CHAT_MODE_DIRECT),
+    ("Line \u2013 as a line inside the normal output", CHAT_MODE_LINE),
+    ("Variables \u2013 only {text_input} / {text_output}", CHAT_MODE_VARS),
+)
+
+#: The same three, phrased for the To Text card - "the message" there is
+#: what you spoke or typed, and the pause/anchor controls live in the
+#: Chat card, so the wording points at them instead of repeating them.
+STT_MODE_HINTS = {
+    CHAT_MODE_DIRECT: (
+        "What you speak or type takes over the chatbox on its own and the "
+        "apps pause, so nothing overwrites it."),
+    CHAT_MODE_LINE: (
+        "What you speak or type becomes a line inside the normal output, "
+        "at the position set in the Chat card - the apps keep running "
+        "around it."),
+    CHAT_MODE_VARS: (
+        "What you speak or type gets no line of its own; it only fills "
+        "the variables below, so an All-in-one string decides where it "
+        "goes."),
+}
+
+#: What each mode does, spelled out under the dropdown.
+CHAT_MODE_HINTS = {
+    CHAT_MODE_DIRECT: (
+        "The message takes over the chatbox: it is sent immediately and "
+        "every app (Personal Status, MediaPlay, Hardware, All in one) "
+        "stays quiet for the pause below, so nothing overwrites it. When "
+        "the pause is over, the apps come back on their own."),
+    CHAT_MODE_LINE: (
+        "The message becomes one more line of the normal output, at the "
+        "position you pick above \u2013 exactly the way a plugin is "
+        "placed. The apps keep running around it, so you get your status "
+        "AND what you just said, together in one chatbox."),
+    CHAT_MODE_VARS: (
+        "The message gets no line of its own. It only fills "
+        "{text_input} (what you typed or said) and {text_output} (what "
+        "is actually sent, i.e. the translation when there is one), so "
+        "an All-in-one string decides where it goes and what it looks "
+        "like. Nothing shows up until a template asks for it."),
+}
 
 
 class TextboxPageMixin:
@@ -108,7 +159,36 @@ class TextboxPageMixin:
         tb_row.addWidget(self.textbox_send_btn)
         c.addLayout(tb_row)
 
-        pause_row = QHBoxLayout()
+        # No "Send as" here on purpose. The Chat card is the "take over
+        # the chatbox right now" control - that is what typing a message
+        # and pressing Send means - and the other two routes only ever
+        # made sense for the To Text card, where a spoken line wants to
+        # live alongside the apps instead of replacing them.
+
+        # anchor picker – same vocabulary as the Plugins page, so "where
+        # does this line sit" means the same thing everywhere
+        self.chat_anchor_w = QWidget()
+        anchor_row = QHBoxLayout(self.chat_anchor_w)
+        anchor_row.setContentsMargins(0, 0, 0, 0)
+        anchor_row.addWidget(QLabel("Position:"))
+        self.chat_anchor_combo = QComboBox()
+        for key, label in ANCHOR_LABELS:
+            self.chat_anchor_combo.addItem(label, key)
+        self.chat_anchor_combo.currentIndexChanged.connect(
+            self.on_chat_anchor)
+        anchor_row.addWidget(self.chat_anchor_combo, 1)
+        # added to the To Text card further down, not here: Position,
+        # Keep for and the mode hint all describe what Line / Variables
+        # do, and those are now only reachable from there
+
+        self.chat_mode_hint = QLabel("")
+        self.chat_mode_hint.setObjectName("dim")
+        self.chat_mode_hint.setWordWrap(True)
+
+        # how long the apps stay quiet after a send
+        self.chat_pause_w = QWidget()
+        pause_row = QHBoxLayout(self.chat_pause_w)
+        pause_row.setContentsMargins(0, 0, 0, 0)
         pause_row.addWidget(QLabel("Pause apps for"))
         self.pause_spin = QSpinBox()
         self.pause_spin.setObjectName("smallspin")
@@ -119,7 +199,32 @@ class TextboxPageMixin:
         pause_row.addWidget(self.pause_spin)
         pause_row.addWidget(QLabel("sec after sending"))
         pause_row.addStretch()
-        c.addLayout(pause_row)
+        c.addWidget(self.chat_pause_w)
+
+        # Line / Variables: the text STAYS, so it needs a way out
+        self.chat_hold_w = QWidget()
+        hold_row = QHBoxLayout(self.chat_hold_w)
+        hold_row.setContentsMargins(0, 0, 0, 0)
+        hold_row.addWidget(QLabel("Keep for"))
+        self.chat_hold_spin = QSpinBox()
+        self.chat_hold_spin.setObjectName("smallspin")
+        self.chat_hold_spin.setRange(0, 3600)
+        self.chat_hold_spin.setFixedSize(70, 28)
+        self.chat_hold_spin.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.chat_hold_spin.setSpecialValueText("\u221E")
+        self.chat_hold_spin.setToolTip(
+            "Seconds the text stays in the chatbox. 0 (\u221E) keeps it "
+            "until you clear it or send something new.")
+        self.chat_hold_spin.valueChanged.connect(self.on_chat_hold)
+        hold_row.addWidget(self.chat_hold_spin)
+        hold_row.addWidget(QLabel("sec"))
+        self.chat_clear_btn = QPushButton("\u2715  Clear now")
+        self.chat_clear_btn.setObjectName("linkbtn")
+        self.chat_clear_btn.setFixedHeight(28)
+        self.chat_clear_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.chat_clear_btn.clicked.connect(lambda _=False: self.clear_chat_text())
+        hold_row.addWidget(self.chat_clear_btn)
+        hold_row.addStretch()
         # ----- speech to text -----
         scard = QFrame()
         scard.setObjectName("card")
@@ -157,12 +262,97 @@ class TextboxPageMixin:
         mode_hint.setObjectName("dim")
         mode_hint.setWordWrap(True)
         sc.addWidget(mode_hint)
+        # ---- the send route, mirrored from the Chat card ----
+        # The only "Send as" left. It used to be mirrored from the Chat
+        # card, which shared the setting - but a typed chat message is
+        # the one case where "take over the chatbox now" is always what
+        # was meant, so Chat is fixed to Standard and this dropdown
+        # belongs to speech and typed-to-text alone.
+        sm_row = QHBoxLayout()
+        sm_row.addWidget(QLabel("Send as:"))
+        self.stt_mode_combo = QComboBox()
+        for label, val in CHAT_SEND_MODES:
+            self.stt_mode_combo.addItem(label, val)
+        self.stt_mode_combo.currentIndexChanged.connect(self.on_stt_send_mode)
+        sm_row.addWidget(self.stt_mode_combo, 1)
+        sc.addLayout(sm_row)
+        sc.addWidget(self.chat_anchor_w)
+        sc.addWidget(self.chat_hold_w)
+        sc.addWidget(self.chat_mode_hint)
+        self.stt_mode_hint = QLabel("")
+        self.stt_mode_hint.setObjectName("dim")
+        self.stt_mode_hint.setWordWrap(True)
+        sc.addWidget(self.stt_mode_hint)
+
+        var_hint = QLabel(
+            "Variables: {stt_input} / {stt_output} carry a SPOKEN message, "
+            "{ttt_input} / {ttt_output} a typed one, {chat_input} / "
+            "{chat_output} one from the Chat card above – and "
+            "{text_input} / {text_output} carry whichever of them sent "
+            "last. So an All-in-one string can put speech somewhere else "
+            "than typing, or style only one of them.")
+        var_hint.setObjectName("dim")
+        var_hint.setWordWrap(True)
+        sc.addWidget(var_hint)
+
         blk = QLabel("Block apps: while ON, NO app sends anything via OSC "
                      "(Personal Status, MediaPlay, Hardware, AIO) \u2013 "
-                     "everything stays blocked until you turn it OFF again.")
+                     "and, unless you switch them off below, no plugin "
+                     "line and no Custom Box frame either. Everything "
+                     "stays blocked until you turn it OFF again.")
         blk.setObjectName("dim")
         blk.setWordWrap(True)
         sc.addWidget(blk)
+
+        # ---- what the block covers, and what it lets through ----
+        self.block_expander = self.make_settings_expander(
+            lambda on: self.set_expanded(self.block_expander,
+                                         self.block_box, on,
+                                         "Block exceptions"),
+            "Block exceptions")
+        sc.addWidget(self.block_expander)
+        self.block_box = QWidget()
+        bb = QVBoxLayout(self.block_box)
+        bb.setContentsMargins(8, 4, 0, 4)
+        bb.setSpacing(6)
+        bb_intro = QLabel(
+            "Block apps switches the four app cards off. These two "
+            "extend it to the rest of the output \u2013 and the list "
+            "below names what should keep running anyway.")
+        bb_intro.setObjectName("dim")
+        bb_intro.setWordWrap(True)
+        bb.addWidget(bb_intro)
+
+        bp_row = QHBoxLayout()
+        self.toggle_block_plugins = ToggleSwitch()
+        self.toggle_block_plugins.toggled.connect(self.on_block_plugins)
+        bp_row.addWidget(self.toggle_block_plugins)
+        bp_row.addWidget(ToggleLabel("Also block plugins",
+                                     self.toggle_block_plugins))
+        bp_row.addStretch()
+        bb.addLayout(bp_row)
+
+        bx_row = QHBoxLayout()
+        self.toggle_block_box = ToggleSwitch()
+        self.toggle_block_box.toggled.connect(self.on_block_box)
+        bx_row.addWidget(self.toggle_block_box)
+        bx_row.addWidget(ToggleLabel("Also block the Custom Box",
+                                     self.toggle_block_box))
+        bx_row.addStretch()
+        bb.addLayout(bx_row)
+
+        exc_lbl = QLabel("Keep running while blocked:")
+        exc_lbl.setStyleSheet("font-weight: 600;")
+        bb.addWidget(exc_lbl)
+        # rebuilt whenever the plugin list changes - see
+        # refresh_block_exceptions()
+        self.block_exc_box = QWidget()
+        self.block_exc_layout = QVBoxLayout(self.block_exc_box)
+        self.block_exc_layout.setContentsMargins(0, 0, 0, 0)
+        self.block_exc_layout.setSpacing(2)
+        bb.addWidget(self.block_exc_box)
+        self.block_box.setVisible(False)
+        sc.addWidget(self.block_box)
         self.stt_speech_desc = QLabel(
             "Speak into your microphone \u2013 your voice is transcribed "
             "in realtime and sent to the VRChat chatbox. While recording, "
@@ -213,6 +403,37 @@ class TextboxPageMixin:
         both_hint.setWordWrap(True)
         sc.addWidget(both_hint)
 
+        # placeholder in the chatbox while the translation is in flight
+        notice_row = QHBoxLayout()
+        self.toggle_translate_notice = ToggleSwitch()
+        self.toggle_translate_notice.toggled.connect(
+            self.on_translate_notice)
+        notice_row.addWidget(self.toggle_translate_notice)
+        notice_row.addWidget(ToggleLabel(
+            "Say when a translation is running",
+            self.toggle_translate_notice))
+        notice_row.addSpacing(12)
+        self.translate_notice_edit = QLineEdit()
+        self.translate_notice_edit.setFixedWidth(180)
+        self.translate_notice_edit.setPlaceholderText(
+            DEFAULT_TRANSLATE_NOTICE)
+        self.translate_notice_edit.editingFinished.connect(
+            self.on_translate_notice_text)
+        notice_row.addWidget(self.translate_notice_edit)
+        notice_row.addStretch()
+        sc.addLayout(notice_row)
+        notice_hint = QLabel(
+            "Translating is a network call, so between speaking and the "
+            "text arriving the chatbox keeps showing the previous "
+            "message \u2013 which reads, to everyone else in the "
+            "instance, as nothing happening. With this ON that gap says "
+            "so instead. It goes out the same way the message itself "
+            "does, so {text_output} and the Line / Variables routes show "
+            "it too.")
+        notice_hint.setObjectName("dim")
+        notice_hint.setWordWrap(True)
+        sc.addWidget(notice_hint)
+
         # ---- microphone selection (speech mode only) ----
         self.mic_row_w = QWidget()
         mic_row = QHBoxLayout(self.mic_row_w)
@@ -225,11 +446,38 @@ class TextboxPageMixin:
         mic_refresh = QPushButton("\u27F3")
         mic_refresh.setObjectName("iconbtn")
         mic_refresh.setFixedSize(30, 30)
-        mic_refresh.setToolTip("Refresh microphone list")
+        mic_refresh.setToolTip(
+            "Refresh microphone list.\n\nAlso the way back after the audio "
+            "driver stopped responding \u2013 plug the device back in (or "
+            "start VR again), then press this.")
         mic_refresh.setCursor(Qt.CursorShape.PointingHandCursor)
-        mic_refresh.clicked.connect(self._fill_mic_combo)
+        mic_refresh.clicked.connect(lambda _=False: self.on_mic_refresh())
         mic_row.addWidget(mic_refresh)
         sc.addWidget(self.mic_row_w)
+
+        # ---- what to do when the chosen device is gone ----
+        self.mic_strict_w = QWidget()
+        strict_row = QVBoxLayout(self.mic_strict_w)
+        strict_row.setContentsMargins(0, 0, 0, 0)
+        strict_row.setSpacing(4)
+        sr_row = QHBoxLayout()
+        sr_row.setContentsMargins(0, 0, 0, 0)
+        self.toggle_mic_strict = ToggleSwitch()
+        self.toggle_mic_strict.toggled.connect(self.on_mic_strict)
+        sr_row.addWidget(self.toggle_mic_strict)
+        sr_row.addWidget(ToggleLabel("Stop if the microphone is missing",
+                                     self.toggle_mic_strict))
+        sr_row.addStretch()
+        strict_row.addLayout(sr_row)
+        strict_hint = QLabel(
+            "ON (recommended): if the selected device is gone, recording "
+            "refuses to start and says so. OFF: it falls back to the system "
+            "default \u2013 which on a machine that just lost an audio "
+            "device (leaving VR) is often the device that hangs.")
+        strict_hint.setObjectName("dim")
+        strict_hint.setWordWrap(True)
+        strict_row.addWidget(strict_hint)
+        sc.addWidget(self.mic_strict_w)
 
         # ---- translation method (four-tier system) ----
         method_row = QHBoxLayout()
@@ -521,23 +769,130 @@ class TextboxPageMixin:
         self.save_config()
         self.log("Textbox order: " + " > ".join(self.cfg["textbox_order"]))
 
+    # ================================================================
+    # Block apps
+    # ================================================================
+    #: everything the block can cover, besides the plugins. The four app
+    #: keys match the toggles; "custombox" is the frame in build_payload.
+    BLOCK_TARGETS = (("status", "Personal Status"),
+                     ("media", "MediaPlay"),
+                     ("hardware", "Hardware"),
+                     ("aio", "All in one"),
+                     ("custombox", "Custom Box"))
+
+    def block_exceptions(self):
+        """The set of keys that keep running while Block apps is on."""
+        raw = self.cfg.get("stt_block_except")
+        return set(raw) if isinstance(raw, list) else set()
+
+    def blocked_plugin_ids(self):
+        """Plugin ids the block currently silences. Empty set when the
+        block is off or plugins are excluded from it - MainWindow hands
+        this to the PluginManager on every frame."""
+        if not (self.cfg.get("stt_block")
+                and self.cfg.get("stt_block_plugins", True)):
+            return set()
+        keep = self.block_exceptions()
+        return {p.pid for p in self.plugins.ordered()
+                if f"plugin:{p.pid}" not in keep}
+
+    def box_blocked(self):
+        """True when the Custom Box frame has to stay away this frame."""
+        return bool(self.cfg.get("stt_block")
+                    and self.cfg.get("stt_block_box", True)
+                    and "custombox" not in self.block_exceptions())
+
+    def on_block_plugins(self, on):
+        self.cfg["stt_block_plugins"] = bool(on)
+        self.save_config()
+        self.update_preview()
+
+    def on_block_box(self, on):
+        self.cfg["stt_block_box"] = bool(on)
+        self.save_config()
+        self.update_preview()
+
+    def on_block_exception(self, key, on):
+        keep = self.block_exceptions()
+        if on:
+            keep.add(key)
+        else:
+            keep.discard(key)
+        self.cfg["stt_block_except"] = sorted(keep)
+        self.save_config()
+        # An app that just became an exception while the block is active
+        # has to come back on right now, not on the next toggle - the
+        # checkbox would otherwise look like it did nothing.
+        if self.cfg.get("stt_block") and on:
+            toggles = self._app_toggles()
+            if key in toggles and key in self.cfg.get("stt_block_saved", []):
+                self._block_updating = True
+                try:
+                    toggles[key].setChecked(True)
+                    saved = [k for k in self.cfg["stt_block_saved"]
+                             if k != key]
+                    self.cfg["stt_block_saved"] = saved
+                finally:
+                    self._block_updating = False
+                self.save_config()
+        self.update_preview()
+
+    def refresh_block_exceptions(self):
+        """(Re)builds the checkbox list. Called from refresh_plugin_list(),
+        so installing or removing a plugin is reflected here as well."""
+        layout = self.block_exc_layout
+        while layout.count():
+            item = layout.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.setParent(None)
+                w.deleteLater()
+        keep = self.block_exceptions()
+        for key, label in self.BLOCK_TARGETS:
+            box = QCheckBox(label)
+            box.setChecked(key in keep)
+            box.toggled.connect(
+                lambda on, k=key: self.on_block_exception(k, on))
+            layout.addWidget(box)
+        plugins = self.plugins.ordered()
+        if plugins:
+            head = QLabel("Plugins")
+            head.setObjectName("dim")
+            layout.addWidget(head)
+        for plugin in plugins:
+            key = f"plugin:{plugin.pid}"
+            box = QCheckBox(plugin.name or plugin.pid)
+            box.setChecked(key in keep)
+            box.toggled.connect(
+                lambda on, k=key: self.on_block_exception(k, on))
+            layout.addWidget(box)
+
+    def _app_toggles(self):
+        return {"status": self.toggle_active, "media": self.toggle_media,
+                "hardware": self.toggle_hw, "aio": self.toggle_aio}
+
     def on_stt_block(self, on):
         self.cfg["stt_block"] = on
         if self._block_updating:
             self.save_config()
             return
-        app_toggles = {"status": self.toggle_active, "media": self.toggle_media,
-                       "hardware": self.toggle_hw, "aio": self.toggle_aio}
+        app_toggles = self._app_toggles()
+        keep = self.block_exceptions()
         self._block_updating = True
         try:
             if on:
-                # remember which apps were on, then switch them off
-                saved = [k for k, t in app_toggles.items() if t.isChecked()]
+                # remember which apps were on, then switch them off -
+                # except the ones the exception list protects
+                saved = [k for k, t in app_toggles.items()
+                         if t.isChecked() and k not in keep]
                 self.cfg["stt_block_saved"] = saved
                 for k in saved:
                     app_toggles[k].setChecked(False)
+                kept = [k for k in keep if k in app_toggles]
                 self.log(f"Block apps: ON \u2013 switched off: "
-                         f"{', '.join(saved) if saved else 'nothing was on'}")
+                         f"{', '.join(saved) if saved else 'nothing was on'}"
+                         + (f" | kept running: {', '.join(sorted(kept))}"
+                            if kept else ""))
             else:
                 # switch the remembered apps back on
                 saved = self.cfg.get("stt_block_saved", [])
@@ -654,18 +1009,75 @@ class TextboxPageMixin:
         }
         self.tr_method_hint.setText(hints.get(method, ""))
 
-    def _fill_mic_combo(self):
+    def _fill_mic_combo(self, force=False):
         """(Re)populates the microphone dropdown; keeps the configured
-        selection when the device is still present."""
+        selection when the device is still present.
+
+        ENUMERATION RUNS ON A WORKER THREAD. Asking PortAudio for the
+        device list is a blocking C call with no timeout, and when a
+        device vanished while the system still lists it - which is what
+        leaving VR does to a virtual microphone - it can block forever.
+        This used to run right here, on the GUI thread, so the window
+        froze and, because a frozen Qt client on Wayland keeps its input
+        grab, the whole desktop went with it.
+
+        Until the answer arrives the dropdown shows the last known list,
+        so the entry you picked is still selectable the whole time.
+        """
+        if getattr(self, "_mic_scan_busy", False):
+            return
+        self._mic_scan_busy = True
+        self._apply_mic_list(cached_microphones(), scanning=True)
+
+        def work():
+            return list_microphones(self.log, force=force)
+
+        self.run_async(
+            work, self._on_mic_list, interval=150,
+            on_error=lambda _e: self._on_mic_list(cached_microphones()))
+
+    def _on_mic_list(self, devices):
+        self._mic_scan_busy = False
+        self._apply_mic_list(devices or [])
+        stuck = driver_stuck()
+        if stuck:
+            self.stt_status_lbl.setText(
+                f"\u26A0 The audio driver is not responding ({stuck}). "
+                f"Showing the last known device list \u2013 press \u27F3 "
+                f"to try again.")
+            self.stt_status_lbl.setStyleSheet("color: #d9884a;")
+
+    def _apply_mic_list(self, devices, scanning=False):
+        """Paints the dropdown. GUI thread only, and it never touches
+        PortAudio - `devices` is already resolved."""
+        want = self.cfg.get("stt_mic", "") if hasattr(self, "cfg") else ""
         self.mic_combo.blockSignals(True)
         self.mic_combo.clear()
-        self.mic_combo.addItem("System default", "")
-        for name, idx in list_microphones(self.log):
+        self.mic_combo.addItem(
+            "System default" + (" \u2013 scanning \u2026" if scanning else ""),
+            "")
+        names = set()
+        for name, _idx in devices:
             self.mic_combo.addItem(name, name)
-        want = self.cfg.get("stt_mic", "") if hasattr(self, "cfg") else ""
+            names.add(name)
+        # A configured device that is not in the list right now still has
+        # to be selectable, or a refresh while VR is off would silently
+        # reset the choice to "System default" and the setting would be
+        # lost by the time VR comes back.
+        if want and want not in names:
+            self.mic_combo.addItem(f"{want}  (not available)", want)
         pos = self.mic_combo.findData(want)
         self.mic_combo.setCurrentIndex(pos if pos >= 0 else 0)
         self.mic_combo.blockSignals(False)
+
+    def on_mic_refresh(self):
+        """The \u27F3 button. Forces a fresh scan even after a previous
+        timeout - the usual fix is on the user's side (plug the device
+        back in, restart PipeWire) and the app cannot notice that."""
+        clear_driver_stuck()
+        self.stt_status_lbl.setText("Scanning for microphones \u2026")
+        self.stt_status_lbl.setStyleSheet("")
+        self._fill_mic_combo(force=True)
 
     def on_mic_changed(self, idx):
         self.cfg["stt_mic"] = self.mic_combo.itemData(idx) or ""
@@ -673,19 +1085,9 @@ class TextboxPageMixin:
         self.log("Speech to Text: microphone = "
                  + (self.cfg["stt_mic"] or "system default"))
 
-    def _mic_index(self):
-        """Resolves the configured microphone NAME to its current
-        device index (devices can shift between sessions);
-        -1 = system default."""
-        name = self.cfg.get("stt_mic", "")
-        if not name:
-            return -1
-        for n, i in list_microphones(self.log):
-            if n == name:
-                return i
-        self.log(f"Speech to Text: microphone '{name}' not found "
-                 "\u2013 using system default")
-        return -1
+    def on_mic_strict(self, on):
+        self.cfg["stt_mic_strict"] = bool(on)
+        self.save_config()
 
     def on_tr_test(self):
         """Tests the currently selected translation service with a
@@ -968,30 +1370,96 @@ class TextboxPageMixin:
     def on_stt_toggled(self, on):
         if on:
             if not SpeechWorker.available():
-                self.stt_button.setChecked(False)
+                self._abort_stt_start()
                 return
-            self.stt_recording = True
-            self.stt_button.setText("\u23F9  Stop recording")
-            self.stt_status_lbl.setText("Starting microphone \u2026")
-            self.log(f"Speech to Text: recording started "
-                     f"({self.cfg['stt_language']}) \u2013 apps are blocked")
-            self.stt.start(
-                self.cfg["stt_language"], self.cfg["stt_output"],
-                self.cfg["stt_method"],
-                self.cfg["stt_deepl_key"],
-                self.cfg["stt_libre_url"],
-                self._mic_index(),
-                google_key=self.cfg.get("stt_google_key", ""),
-                libre_online_url=self.cfg.get("stt_libre_online_url", ""),
-                libre_online_key=self.cfg.get("stt_libre_online_key", ""))
-            self.stt_timer.start(200)
+            if getattr(self, "_stt_preflight", 0):
+                return          # a start is already being checked
+            # Resolving the device touches PortAudio, so it happens on a
+            # worker thread and the recording only begins once we know
+            # the microphone is actually there. Starting blind is what
+            # used to walk straight into a blocking open.
+            self._stt_preflight = getattr(self, "_stt_preflight_seq", 0) + 1
+            self._stt_preflight_seq = self._stt_preflight
+            token = self._stt_preflight
+            name = self.cfg.get("stt_mic", "")
+            strict = bool(self.cfg.get("stt_mic_strict", True))
+            self.stt_button.setText("\u23F3  Checking microphone \u2026")
+            self.stt_status_lbl.setText(
+                "Checking that the microphone is available \u2026")
+            self.stt_status_lbl.setStyleSheet("")
+
+            def work():
+                # the user just asked for this explicitly, so a previous
+                # timeout must not make the attempt fail on the spot
+                clear_driver_stuck()
+                if name:
+                    devices = list_microphones(self.log, force=True)
+                    index, note = resolve_device(name, self.log,
+                                                 devices=devices)
+                    if index is None and not strict:
+                        note = ""
+                        index = -1
+                    return index, note, devices
+                return -1, default_device_note(self.log), None
+
+            self.run_async(
+                work,
+                lambda res, t=token: self._on_stt_preflight(t, res),
+                interval=150,
+                on_error=lambda e, t=token: self._on_stt_preflight(
+                    t, (None, f"Microphone check failed: {e}", None)))
         else:
+            self._stt_preflight = 0
             self.stt.stop()
             self.stt_recording = False
             self.stt_timer.stop()
             self.stt_button.setText("\U0001F3A4  Start recording")
             self.log("Speech to Text: recording stopped \u2013 apps resume")
             self.update_preview()
+
+    def _abort_stt_start(self):
+        """Puts the record button back without going through the whole
+        stop path - nothing was started yet."""
+        self._stt_preflight = 0
+        self.stt_recording = False
+        self.stt_button.blockSignals(True)
+        self.stt_button.setChecked(False)
+        self.stt_button.blockSignals(False)
+        self.stt_button.setText("\U0001F3A4  Start recording")
+
+    def _on_stt_preflight(self, token, result):
+        """Back on the GUI thread with a device index, or a reason why
+        there is none."""
+        if token != getattr(self, "_stt_preflight", 0):
+            return          # the user already toggled again
+        self._stt_preflight = 0
+        index, note, devices = result
+        if devices is not None:
+            self._apply_mic_list(devices)
+        if note:
+            self.log(f"Speech to Text: {note}")
+            self.stt_status_lbl.setText(f"\u26A0 {note}")
+            self.stt_status_lbl.setStyleSheet("color: #d9884a;")
+            self._abort_stt_start()
+            return
+        if not self.stt_button.isChecked():
+            return          # toggled off while we were checking
+        self.stt_recording = True
+        self.stt_button.setText("\u23F9  Stop recording")
+        self.stt_status_lbl.setText("Starting microphone \u2026")
+        self.stt_status_lbl.setStyleSheet("")
+        self.log(f"Speech to Text: recording started "
+                 f"({self.cfg['stt_language']}) \u2013 apps are blocked")
+        self.stt.start(
+            self.cfg["stt_language"], self.cfg["stt_output"],
+            self.cfg["stt_method"],
+            self.cfg["stt_deepl_key"],
+            self.cfg["stt_libre_url"],
+            index if index is not None else -1,
+            google_key=self.cfg.get("stt_google_key", ""),
+            libre_online_url=self.cfg.get("stt_libre_online_url", ""),
+            libre_online_key=self.cfg.get("stt_libre_online_key", ""))
+        self.stt_timer.start(200)
 
     def poll_stt(self):
         while not self.stt.messages.empty():
@@ -1005,6 +1473,8 @@ class TextboxPageMixin:
                     source_text = final_text = payload
                 self.log(f"Speech to Text heard: \"{source_text}\"")
                 self._deliver_translation(source_text, final_text, "Speech")
+            elif kind == "translating":
+                self.show_translating_notice("Speech")
             elif kind == "status":
                 self.stt_status_lbl.setText(payload)
             elif kind == "error":
@@ -1029,9 +1499,23 @@ class TextboxPageMixin:
         text mode. Shared settings (languages, service) stay visible."""
         ttt = self.cfg.get("stt_mode", "stt") == "ttt"
         self.stt_mode_lbl.setText("Text to Text" if ttt else "Speech to Text")
-        for w in (self.stt_speech_desc, self.mic_row_w, self.rec_row_w):
+        for w in (self.stt_speech_desc, self.mic_row_w, self.mic_strict_w,
+                  self.rec_row_w):
             w.setVisible(not ttt)
         self.stt_text_box.setVisible(ttt)
+
+    def on_translate_notice(self, on):
+        self.cfg["stt_translate_notice"] = bool(on)
+        self.save_config()
+
+    def on_translate_notice_text(self):
+        value = (self.translate_notice_edit.text().strip()
+                 or DEFAULT_TRANSLATE_NOTICE)
+        if value == self.cfg.get("stt_translate_notice_text"):
+            return
+        self.cfg["stt_translate_notice_text"] = value
+        self.translate_notice_edit.setText(value)
+        self.save_config()
 
     def on_stt_show_both(self, on):
         self.cfg["stt_show_both"] = on
@@ -1052,6 +1536,7 @@ class TextboxPageMixin:
             self._deliver_translation(text, text, "Text")
             return
         self.stt_status_lbl.setText("Translating \u2026")
+        self.show_translating_notice("Text")
 
         def work():
             tr = translate_with_fallback(
@@ -1073,7 +1558,28 @@ class TextboxPageMixin:
                 "Translation failed \u2013 sending original")
             self._deliver_translation(source_text, source_text, "Text")
 
+    def show_translating_notice(self, origin):
+        """Puts a placeholder in the chatbox while the translation is
+        still on its way back.
+
+        A translation is a network call, so between speaking and the
+        text appearing there is a gap that the chatbox spends showing
+        the previous message - which reads, to everyone else in the
+        instance, as nothing happening. This fills the gap instead, and
+        goes down the same path as the real message so {text_output} and
+        the Line/Variables routes show it too.
+        """
+        if not self.cfg.get("stt_translate_notice", True):
+            return
+        notice = str(self.cfg.get("stt_translate_notice_text")
+                     or DEFAULT_TRANSLATE_NOTICE)
+        self._translating = True
+        self.send_manual_text(
+            notice, notice,
+            ORIGIN_STT if origin == "Speech" else ORIGIN_TTT)
+
     def _deliver_translation(self, source_text, final_text, origin):
+        self._translating = False
         """Sends the message to VRChat. With 'Show original + translation'
         on and an actual translation, both languages go into the chatbox."""
         if (self.cfg.get("stt_show_both")
@@ -1083,7 +1589,13 @@ class TextboxPageMixin:
             out = final_text or source_text
         self.log(f"{origin} to Text: sending \"{out}\"")
         self.stt_status_lbl.setText(f"Sent: {out}")
-        self.send_manual_text(out)
+        # source_text is what was typed/spoken, out is what actually goes
+        # out. The Variables mode exposes both, and the origin decides
+        # whether they answer to {stt_*} or {ttt_*} - {text_*} answers
+        # either way.
+        self.send_manual_text(
+            out, source_text=source_text,
+            origin=ORIGIN_STT if origin == "Speech" else ORIGIN_TTT)
 
     def on_pause_changed(self, val):
         self.cfg["textbox_pause_sec"] = val
@@ -1110,10 +1622,118 @@ class TextboxPageMixin:
             self.send_manual_text(text)
             self.textbox_input.clear()
 
-    def send_manual_text(self, text):
-        """Sends a manual message and pauses the apps briefly so they
-        don't overwrite it."""
+    # ================================================================
+    # chat send mode
+    # ================================================================
+    def on_stt_send_mode(self, idx):
+        """How Speech to Text and Text to Text reach the chatbox."""
+        if getattr(self, "_send_mode_syncing", False):
+            return
+        self.cfg["stt_send_mode"] = (self.stt_mode_combo.itemData(idx)
+                                     or CHAT_MODE_DIRECT)
+        self.save_config()
+        # Leaving a mode that parks text in the payload has to take the
+        # text with it, or a line from the old mode would sit in the
+        # chatbox with no visible control left to remove it.
+        if self.cfg["stt_send_mode"] == CHAT_MODE_DIRECT:
+            self.clear_chat_text(quiet=True)
+        self._update_chat_mode_ui()
+        self.log(f"To Text send mode: {self.cfg['stt_send_mode']}")
+        self.update_preview()
+
+    def on_chat_anchor(self, idx):
+        self.cfg["chat_anchor"] = (self.chat_anchor_combo.itemData(idx)
+                                   or "aio")
+        self.save_config()
+        self.update_preview()
+
+    def on_chat_hold(self, val):
+        self.cfg["chat_hold_sec"] = int(val)
+        self.save_config()
+        # re-arm against the new duration rather than waiting for the old
+        # one to run out first
+        if self.chat_text_output:
+            self.chat_text_until = (time.time() + val) if val else 0.0
+        self.update_preview()
+
+    def _update_chat_mode_ui(self):
+        mode = self.cfg.get("stt_send_mode", CHAT_MODE_DIRECT)
+        self.chat_anchor_w.setVisible(mode == CHAT_MODE_LINE)
+        self.chat_hold_w.setVisible(mode != CHAT_MODE_DIRECT)
+        self.chat_mode_hint.setText(CHAT_MODE_HINTS.get(mode, ""))
+        # the Chat card is always Standard now, so its pause always applies
+        self.chat_pause_w.setVisible(True)
+        combo = getattr(self, "stt_mode_combo", None)
+        if combo is not None:
+            pos = combo.findData(mode)
+            self._send_mode_syncing = True
+            try:
+                combo.setCurrentIndex(pos if pos >= 0 else 0)
+            finally:
+                self._send_mode_syncing = False
+            self.stt_mode_hint.setText(STT_MODE_HINTS.get(mode, ""))
+
+    def clear_chat_text(self, quiet=False):
+        """Drops the parked message. Both modes that keep text around need
+        this, and so does switching back to Standard."""
+        had = bool(self.chat_text_output)
+        self.chat_text_input = ""
+        self.chat_text_output = ""
+        self.chat_text_origin = ORIGIN_CHAT
+        self.chat_text_until = 0.0
+        if had and not quiet:
+            self.log("Chat: parked message cleared")
+        self.update_preview()
+
+    def chat_text_expired(self):
+        """True when a parked message has outlived its hold time. Checked
+        from build_payload(), so it takes effect on the next frame without
+        needing a timer of its own."""
+        return bool(self.chat_text_until
+                    and time.time() >= self.chat_text_until)
+
+    def _park_chat_text(self, source_text, final_text, origin):
+        """Store a message for the Line / Variables modes.
+
+        `origin` is what makes {stt_output} different from {chat_output}:
+        one message is parked, and it answers to the names of the source
+        it came from plus the source-agnostic {text_*} pair. Keeping one
+        slot rather than three is deliberate - the chatbox is 144
+        characters, "the last thing I sent" is what people mean, and
+        three slots would have to disagree about which one the Line mode
+        renders.
+        """
+        hold = int(self.cfg.get("chat_hold_sec", 0) or 0)
+        self.chat_text_input = source_text
+        self.chat_text_output = final_text
+        self.chat_text_origin = origin
+        self.chat_text_until = (time.time() + hold) if hold else 0.0
+        self.update_preview()
+
+    def send_manual_text(self, text, source_text=None, origin=ORIGIN_CHAT):
+        """The single way a typed or spoken message reaches VRChat.
+
+        Every producer goes through here - the Chat field, the Presets,
+        Speech to Text and Text to Text alike. Which route a message
+        takes depends on where it came from: typed chat always takes
+        over the chatbox, speech and text-to-text follow the "Send as"
+        setting on the To Text card.
+        """
         if self.osc_client is None:
+            return
+        # the Chat card always takes over the chatbox; only speech and
+        # typed-to-text can be routed somewhere else
+        mode = CHAT_MODE_DIRECT if origin == ORIGIN_CHAT else \
+            self.cfg.get("stt_send_mode", CHAT_MODE_DIRECT)
+        if mode != CHAT_MODE_DIRECT:
+            # Line / Variables: the message joins the normal payload
+            # instead of replacing it, so it goes through the ordinary
+            # send path (rate limit, slim suffix, preview) rather than
+            # firing its own message here.
+            self._park_chat_text(source_text if source_text is not None
+                                 else text, text, origin)
+            self.log(f"{ORIGIN_LABELS.get(origin, 'Chat')} ({mode}): "
+                     f"\"{text}\"")
             return
         if self.cfg["slim_chatbox"]:
             text = text[:CHATBOX_LIMIT - len(SLIM_SUFFIX)]

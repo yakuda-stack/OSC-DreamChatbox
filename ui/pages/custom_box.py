@@ -74,13 +74,17 @@ class CustomBoxMixin:
 
         desc = QLabel("Hangs one line above everything and one line below "
                       "everything, so the chatbox looks like a closed box. "
-                      "Works with every app and with All in one \u2013 the "
-                      "top line is always the first line of the message, the "
-                      "bottom line always the last. Two lines and their "
-                      "characters come out of the same 144 as everything "
-                      "else, so keep an eye on the counter under the "
-                      "preview. With every app quiet nothing is sent at all "
-                      "\u2013 an empty frame is not worth a message.")
+                      "The top line is always the first line of the "
+                      "message, the bottom line always the last. Two lines "
+                      "and their characters come out of the same 144 as "
+                      "everything else, so keep an eye on the counter under "
+                      "the preview. With every app quiet nothing is sent at "
+                      "all \u2013 an empty frame is not worth a message.\n"
+                      "With All in one active the frame is NOT wrapped "
+                      "around the message: there you place it yourself "
+                      "with {box_start}, {box_stop} and {box_text}, which "
+                      "is the only way it can sit where you want it "
+                      "relative to your strings and your plugin lines.")
         desc.setObjectName("dim")
         desc.setWordWrap(True)
         layout.addWidget(desc)
@@ -233,10 +237,11 @@ class CustomBoxMixin:
             "here too, plugins included \u2013 the full list is under "
             "\u201cParameters\u201d at the bottom of this card. "
             "{box_clock} is the clock from the format above.\n"
-            "The other way round: with All in one you do not need this "
-            "card at all \u2013 put {box_start} and {box_stop} into an AIO "
-            "string and the two lines land exactly where you wrote them "
-            "(they are not added a second time).")
+            "With All in one active this card stops wrapping the message "
+            "on its own \u2013 put {box_start}, {box_stop} or {box_text} "
+            "into an AIO string (or onto the Advanced canvas) and the "
+            "lines land exactly where you wrote them. Everything set up "
+            "here still decides what they look like.")
         ph.setObjectName("dim")
         ph.setWordWrap(True)
         bc.addWidget(ph)
@@ -598,9 +603,14 @@ class CustomBoxMixin:
 
     def box_placed_manually(self, side):
         """True when the All-in-one string that is on screen right now
-        places this line itself with {box_start} / {box_stop}. Then the
-        automatic wrapping keeps its hands off that side \u2013 otherwise the
-        line would appear twice."""
+        places this line itself with {box_start} / {box_stop}.
+
+        Kept for plugins and for the card's own hints. The automatic
+        wrapping no longer consults it: with All in one active there IS
+        no automatic wrapping any more (see _apply_custom_box), which is
+        the whole point - a per-string check could only ever be right for
+        the one string that happened to be showing.
+        """
         if not self.cfg.get("aio_active"):
             return False
         return bool(_MANUAL_RE[side].search(self.current_aio_template()))
@@ -608,8 +618,28 @@ class CustomBoxMixin:
     def _apply_custom_box(self, lines):
         """Wraps the finished payload. Called as the very last step of
         build_payload(), so the top line is the first line of the message
-        and the bottom line the last one."""
+        and the bottom line the last one.
+        """
         if not self.cfg.get("box_active"):
+            return lines
+        if self.cfg.get("aio_active"):
+            # All in one decides WHAT is sent, and that includes where
+            # the frame goes: {box_start} / {box_stop} / {box_text} place
+            # it, nothing else does.
+            #
+            # Wrapping automatically here was wrong in both directions.
+            # A layout that placed the frame itself only got left alone
+            # while the ONE string carrying {box_start} happened to be on
+            # rotation, so the box reappeared around the other strings;
+            # and the wrap sat outside the plugin lines too, framing
+            # output that has nothing to do with the box. Neither is
+            # something the user asked for by switching the card on.
+            return lines
+        if self.box_blocked():
+            # "Block apps" extends to the frame: a box drawn around a
+            # message the block left empty is two wasted lines and a
+            # send, and around a speech-to-text message it is a frame
+            # the user did not ask for.
             return lines
         if not any((ln or "").strip() for ln in lines):
             # nothing to frame. An empty box is not a smaller message,
@@ -617,8 +647,8 @@ class CustomBoxMixin:
             # lines and a send - so with every app quiet, stay quiet.
             return lines
         top, bottom = self.box_lines()
-        if bottom and not self.box_placed_manually(SIDE_BOTTOM):
+        if bottom:
             lines = list(lines) + [bottom]
-        if top and not self.box_placed_manually(SIDE_TOP):
+        if top:
             lines = [top] + list(lines)
         return lines

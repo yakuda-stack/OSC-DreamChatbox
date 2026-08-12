@@ -402,6 +402,10 @@ class _Lhm:
         self.ok = None            # None = never tried yet
         self._next_try = 0.0
         self._cache = (0.0, None, None)   # (when, cpu_temp, gpu_temp)
+        # LHM reports power in the same tree as the temperatures, so it
+        # comes out of the same fetch - a second HTTP round trip per poll
+        # for one more number would be silly
+        self._power = (None, None)        # (cpu_power, gpu_power)
 
     def _fetch(self):
         try:
@@ -456,8 +460,26 @@ class _Lhm:
         # beats "GPU Hot Spot" (the hot spot runs ~15 K higher and would
         # look alarming in a chatbox).
         best_cpu = best_gpu = (-1, None)     # (score, value)
+        best_cpu_w = best_gpu_w = (-1, None)
         for trail, text, value in rows:
             joined = " / ".join(trail).lower()
+            if "power" in joined:
+                # Watts. "CPU Package" / "GPU Package" are the totals the
+                # vendor tools show; "CPU Cores" and "GPU Memory" are
+                # parts of them and would understate the draw, so they
+                # only win when nothing better is there.
+                w = _num(value)
+                if w is None or not (0 < w < 2000):
+                    continue
+                label = text.lower()
+                score = 3 if "package" in label else (
+                    2 if "total" in label else 1)
+                if "gpu" in joined:
+                    if score > best_gpu_w[0]:
+                        best_gpu_w = (score, w)
+                elif score > best_cpu_w[0]:
+                    best_cpu_w = (score, w)
+                continue
             if "temperatur" not in joined:          # matches "Temperatures"
                 continue
             v = _num(value)
@@ -481,8 +503,19 @@ class _Lhm:
                     best_cpu = (score, v)
 
         cpu, gpu = best_cpu[1], best_gpu[1]
+        self._power = (best_cpu_w[1], best_gpu_w[1])
         self._cache = (now, cpu, gpu)
         return cpu, gpu
+
+    def powers(self):
+        """-> (cpu_power, gpu_power) in watts, either may be None.
+
+        Filled as a side effect of temps(), which is what refreshes the
+        cache - calling this alone would answer with whatever the last
+        fetch happened to see, so it asks for a reading first.
+        """
+        self.temps()
+        return self._power
 
 
 # ====================================================================
@@ -679,6 +712,13 @@ class WindowsHardwareMonitor:
     def amd_gpu_temp(self):
         return self._temps()[1]
 
+    def cpu_power(self):
+        """Watts, from LibreHardwareMonitor. Windows exposes no power
+        counter of its own - there is no PDH equivalent of RAPL - so this
+        is empty unless LHM's web server is running, exactly like the
+        temperatures."""
+        return self._lhm.powers()[0]
+
     # ------------------------------------------------------------- ram
     def ram(self):
         return self._win32.ram() if self._win32 else None
@@ -691,11 +731,18 @@ class WindowsHardwareMonitor:
         if self.has_nvidia:
             out = _run([self.nvidia_smi,
                         "--query-gpu=utilization.gpu,temperature.gpu,"
-                        "memory.used,memory.total",
+                        "memory.used,memory.total,power.draw",
                         "--format=csv,noheader,nounits"])
             try:
-                u, t, mu, mt = [float(x) for x in out.splitlines()[0].split(",")]
-                return {"usage": u, "temp": t,
+                cols = out.splitlines()[0].split(",")
+                u, t, mu, mt = [float(x) for x in cols[:4]]
+                # "[N/A]" on cards that do not report it - parsed on its
+                # own so it cannot cost us the four that always work
+                try:
+                    power = float(cols[4])
+                except (IndexError, ValueError):
+                    power = None
+                return {"usage": u, "temp": t, "power": power,
                         "vram_used": mu / 1024.0, "vram_total": mt / 1024.0,
                         "vram_pct": 100.0 * mu / mt if mt else None}
             except Exception:
@@ -708,6 +755,7 @@ class WindowsHardwareMonitor:
         vt = self._vram_total_bytes / GB if self._vram_total_bytes else None
         return {"usage": usage,
                 "temp": self._temps()[1],
+                "power": self._lhm.powers()[1],
                 "vram_used": vu,
                 "vram_total": vt,
                 "vram_pct": (100.0 * vu / vt)
@@ -722,6 +770,7 @@ class WindowsHardwareMonitor:
     def snapshot(self):
         return {"cpu_usage": self.cpu_usage(),
                 "cpu_temp": self.cpu_temp(),
+                "cpu_power": self.cpu_power(),
                 "ram": self.ram(),
                 "gpu": self.gpu(),
                 "fps": self.fps()}

@@ -15,14 +15,17 @@ from PyQt6.QtCore import QTimer, Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QFrame, QHBoxLayout, QLabel, QMainWindow, QPushButton, QScrollArea, QStackedWidget, QVBoxLayout, QWidget)
 from core.constants import (
-    APP_NAME, CHATBOX_INPUT, CHATBOX_LIMIT, OSC_MIN_SEND_GAP_SEC, OSC_RATE_MAX_SENDS, OSC_RATE_WINDOW_SEC, SLIM_SUFFIX, VERSION)
+    APP_NAME, CHATBOX_INPUT, CHATBOX_LIMIT, CHAT_MODE_LINE, ORIGIN_CHAT, OSC_MIN_SEND_GAP_SEC, OSC_RATE_MAX_SENDS, OSC_RATE_WINDOW_SEC, SLIM_SUFFIX, VERSION)
 from core.hardware import HardwareMonitor
 from core.lyrics import LyricsFetcher
 from core.mediafetch import MediaFetcher
+from core.hotkeywatch import HotkeyListener
+from core.oscin import DEFAULT_IN_PORT, OscParameterListener
+from core.procwatch import ProcessWatcher
 from core.oscquery import HAS_ZEROCONF, OSCQueryService
-from core.theming import build_style
-from core.plugins import PluginManager
-from core.speechtotext import SpeechWorker
+from core.theming import build_style, resolve_tokens
+from core.plugins import ANCHORS, DEFAULT_ANCHOR, PluginManager
+from core.speechtotext import SpeechWorker, cached_microphones
 from core.textstyle import STYLE_NORMAL, apply_style
 from core.textutils import (
     CUSTOM_STYLE_INDEX, DEFAULT_CUSTOM_BAR, TIME_POS_LINE, fmt_time, fmt_time_hm)
@@ -30,16 +33,28 @@ from core.translators import LibreTranslateServer, METHOD_DEEPL, METHOD_LINGVA
 from ui.ui_main import (
     DebugConsole, EmojiPopup, STYLE, ToggleLabel, ToggleSwitch)
 from ui.config_mixin import ConfigMixin
+from ui.pages.advanced_page import AdvancedPageMixin
 from ui.pages.apps_page import AppsPageMixin
 from ui.pages.custom_box import CustomBoxMixin
 from ui.pages.textbox_page import TextboxPageMixin
 from ui.pages.options_page import OptionsPageMixin
+from ui.pages.placeholder_picker import PlaceholderPickerMixin
 from ui.pages.plugins_page import PluginsPageMixin
 
 
-class MainWindow(ConfigMixin, AppsPageMixin, CustomBoxMixin,
-                 TextboxPageMixin, OptionsPageMixin, PluginsPageMixin,
-                 QMainWindow):
+class MainWindow(ConfigMixin, AppsPageMixin, AdvancedPageMixin,
+                 CustomBoxMixin, TextboxPageMixin, OptionsPageMixin,
+                 PluginsPageMixin, PlaceholderPickerMixin, QMainWindow):
+    # Sidebar / QStackedWidget indices. Named because two places have to
+    # agree on them and a bare 1 in "go to the node editor" is the kind
+    # of thing that silently points at the wrong page the next time a
+    # tab is inserted.
+    PAGE_APPS = 0
+    PAGE_ADVANCED = 1
+    PAGE_TEXTBOX = 2
+    PAGE_PLUGINS = 3
+    PAGE_OPTIONS = 4
+
     # emitted by log() – possibly from background threads (lyrics
     # fetcher, OSCQuery/mDNS listeners). Qt delivers cross-thread
     # signals as queued connection, so the debug console is only
@@ -73,6 +88,17 @@ class MainWindow(ConfigMixin, AppsPageMixin, CustomBoxMixin,
         self.lyrics = LyricsFetcher(self.log)
         self.manual_pause_until = 0.0
         self.last_manual_text = ""
+        # The parked chat message for the Line / Variables send modes.
+        # Runtime only, never written to the config: a status text you
+        # want back after a restart belongs in Personal Status, and
+        # silently re-sending yesterday's sentence into VRChat on launch
+        # would be a surprise, not a feature.
+        self.chat_text_input = ""
+        self.chat_text_output = ""
+        # which of Chat / Speech to Text / Text to Text sent it - decides
+        # whether {chat_*}, {stt_*} or {ttt_*} answers
+        self.chat_text_origin = ORIGIN_CHAT
+        self.chat_text_until = 0.0
         # OSC rate limiting (see _osc_send_delay): timestamps of the
         # sends inside the current window, and the payload that is
         # actually on screen in VRChat right now.
@@ -82,6 +108,15 @@ class MainWindow(ConfigMixin, AppsPageMixin, CustomBoxMixin,
         self.stt = SpeechWorker()
         self.stt_recording = False
         self.oscq = OSCQueryService(APP_NAME, self.log)
+        # the receiving half (core/oscin.py). Only started when the
+        # option is on: binding 9001 is the kind of thing that fights
+        # with other OSC tools, so it stays off until asked for.
+        self.osc_in = OscParameterListener(self.log)
+        # watching the keyboard globally is opt-in (see Options); the
+        # process list is not, because reading it needs nothing and
+        # costs one scan every two seconds only when a block asks
+        self.hotkey_in = HotkeyListener(self.log)
+        self.procs = ProcessWatcher(self.log)
         self.libre_server = LibreTranslateServer(self.log)
         self._oscq_applied = None   # zuletzt uebernommenes VRChat-Ziel
         self._block_updating = False
@@ -108,6 +143,9 @@ class MainWindow(ConfigMixin, AppsPageMixin, CustomBoxMixin,
         self.media_timer.timeout.connect(self.poll_media)
         self.rotate_timer = QTimer(self)
         self.rotate_timer.timeout.connect(self.advance_status)
+        # Advanced mode ticks on its own clock, not on the send interval
+        self.graph_timer = QTimer(self)
+        self.graph_timer.timeout.connect(self.tick_graph)
         self.aio_timer = QTimer(self)
         self.aio_timer.timeout.connect(self.advance_aio)
         # Custom Box clock. Only ever runs while the realtime toggle is
@@ -140,6 +178,8 @@ class MainWindow(ConfigMixin, AppsPageMixin, CustomBoxMixin,
             if self.oscq.start():
                 self.oscq_timer.start(2000)
         self.update_osc_client()
+        self.update_osc_input()
+        self.update_hotkey_input()
         self.update_timers()
 
     def run_async(self, work, on_done, interval=200, on_error=None):
@@ -217,11 +257,15 @@ class MainWindow(ConfigMixin, AppsPageMixin, CustomBoxMixin,
         sb_layout.setSpacing(6)
 
         self.btn_apps = QPushButton("Apps")
+        self.btn_advanced = QPushButton("Advanced")
         self.btn_textbox = QPushButton("Textbox")
         self.btn_plugins = QPushButton("Plugins")
         self.btn_options = QPushButton("Options")
-        self.nav_buttons = (self.btn_apps, self.btn_textbox,
-                            self.btn_plugins, self.btn_options)
+        # order must match the PAGE_* constants and the order the pages
+        # are added below
+        self.nav_buttons = (self.btn_apps, self.btn_advanced,
+                            self.btn_textbox, self.btn_plugins,
+                            self.btn_options)
         for i, b in enumerate(self.nav_buttons):
             b.setObjectName("navbtn")
             b.setCheckable(True)
@@ -234,6 +278,7 @@ class MainWindow(ConfigMixin, AppsPageMixin, CustomBoxMixin,
         # ===================== middle (pages) =====================
         self.pages = QStackedWidget()
         self.pages.addWidget(self._wrap_scroll(self.build_apps_page()))
+        self.pages.addWidget(self._wrap_scroll(self.build_advanced_page()))
         self.pages.addWidget(self._wrap_scroll(self.build_textbox_page()))
         # order must match nav_buttons above - switch_page() indexes both
         self.pages.addWidget(self._wrap_scroll(self.build_plugins_page()))
@@ -325,6 +370,14 @@ class MainWindow(ConfigMixin, AppsPageMixin, CustomBoxMixin,
         content.setVisible(expanded)
         btn.setText((f"⌄  {label}") if expanded else (f"›  {label}"))
 
+    def current_theme_tokens(self):
+        """The active colour tokens (see core/theming.py). The node
+        canvas paints itself instead of being styled by the sheet, so it
+        needs the colours handed over."""
+        theme = self.cfg.get("theme", "default")
+        return resolve_tokens(
+            theme, self.cfg.get("theme_colors", {}).get(theme, {}))
+
     def apply_theme(self):
         """(Re)builds the stylesheet from the current theme settings and
         applies it to the whole window. Cheap enough to call on every
@@ -341,11 +394,26 @@ class MainWindow(ConfigMixin, AppsPageMixin, CustomBoxMixin,
             self.log(f"Theme could not be built ({e}), using the default")
             style = STYLE
         self.setStyleSheet(style)
+        # hand-painted items are outside the stylesheet's reach
+        canvas = getattr(self, "graph_canvas", None)
+        if canvas is not None:
+            canvas.apply_tokens(self.current_theme_tokens())
 
     def switch_page(self, idx):
         self.pages.setCurrentIndex(idx)
         for i, b in enumerate(self.nav_buttons):
             b.setChecked(i == idx)
+        if idx == self.PAGE_ADVANCED:
+            # the received-parameter list and the plugin variables are
+            # only worth rebuilding when somebody is actually looking at
+            # them, so opening the page is the trigger
+            self.refresh_graph_variables()
+        elif idx == self.PAGE_PLUGINS:
+            # one catalogue load per session, in the background: without
+            # it the Installed list would only learn about a new plugin
+            # version after a visit to the Store tab. Failures are the
+            # store's own business - the page works offline either way.
+            self.scan_plugin_updates()
 
     def apply_config_to_ui(self):
         self._block_updating = True
@@ -428,6 +496,33 @@ class MainWindow(ConfigMixin, AppsPageMixin, CustomBoxMixin,
         for i, row in enumerate(self.preset_rows):
             row.setVisible(i < self.cfg["textbox_preset_count"])
         self.pause_spin.setValue(self.cfg["textbox_pause_sec"])
+        # ---- chat routing ----
+        cidx = self.stt_mode_combo.findData(self.cfg["stt_send_mode"])
+        self.stt_mode_combo.blockSignals(True)
+        self.stt_mode_combo.setCurrentIndex(cidx if cidx >= 0 else 0)
+        self.stt_mode_combo.blockSignals(False)
+        aidx2 = self.chat_anchor_combo.findData(self.cfg["chat_anchor"])
+        self.chat_anchor_combo.blockSignals(True)
+        self.chat_anchor_combo.setCurrentIndex(
+            aidx2 if aidx2 >= 0 else self.chat_anchor_combo.count() - 1)
+        self.chat_anchor_combo.blockSignals(False)
+        self.chat_hold_spin.blockSignals(True)
+        self.chat_hold_spin.setValue(int(self.cfg["chat_hold_sec"]))
+        self.chat_hold_spin.blockSignals(False)
+        self._update_chat_mode_ui()
+        # ---- block apps ----
+        self.toggle_block_plugins.blockSignals(True)
+        self.toggle_block_plugins.setChecked(
+            bool(self.cfg.get("stt_block_plugins", True)))
+        self.toggle_block_plugins.blockSignals(False)
+        self.toggle_block_box.blockSignals(True)
+        self.toggle_block_box.setChecked(
+            bool(self.cfg.get("stt_block_box", True)))
+        self.toggle_block_box.blockSignals(False)
+        self.toggle_mic_strict.blockSignals(True)
+        self.toggle_mic_strict.setChecked(
+            bool(self.cfg.get("stt_mic_strict", True)))
+        self.toggle_mic_strict.blockSignals(False)
         self.toggle_stt_block.setChecked(self.cfg["stt_block"])
         self.toggle_stt_mode.blockSignals(True)
         self.toggle_stt_mode.setChecked(
@@ -463,18 +558,35 @@ class MainWindow(ConfigMixin, AppsPageMixin, CustomBoxMixin,
             self.cfg.get("stt_libre_online_key", ""))
         self.libre_online_key_input.blockSignals(False)
         self._sync_libre_online_ui()
-        pos = self.mic_combo.findData(self.cfg.get("stt_mic", ""))
-        self.mic_combo.blockSignals(True)
-        self.mic_combo.setCurrentIndex(pos if pos >= 0 else 0)
-        self.mic_combo.blockSignals(False)
+        # the dropdown is filled from a worker thread (PortAudio blocks),
+        # so this only paints what we already know and lets the scan that
+        # build_textbox_page() kicked off fill in the rest
+        self._apply_mic_list(cached_microphones())
         self._update_tr_method_ui()
+        self.toggle_osc_in.setChecked(self.cfg.get("osc_input_enabled", False))
+        self.osc_in_port.setValue(int(self.cfg.get("osc_input_port", 9001)))
+        self.toggle_translate_notice.setChecked(
+            self.cfg.get("stt_translate_notice", True))
+        self.translate_notice_edit.setText(
+            str(self.cfg.get("stt_translate_notice_text", "")))
+        self.toggle_hotkey_in.setChecked(
+            self.cfg.get("hotkey_input_enabled", False))
+        self.osc_ext_ip.setText(str(self.cfg.get("osc_ext_ip", "127.0.0.1")))
+        self.osc_ext_port.setValue(int(self.cfg.get("osc_ext_port", 9002)))
         self.toggle_aio.setChecked(self.cfg["aio_active"])
+        self._apply_aio_mode()
+        self.load_graph_into_ui()
         self.aio_set_buttons[self.cfg["aio_set_active"]].setChecked(True)
         self.aio_count_spin.setValue(self.cfg["aio_count"])
         self.chk_aio_rotate.setChecked(self.cfg["aio_rotate"])
         self.aio_rotate_spin.setValue(self.cfg["aio_rotate_sec"])
         for i, edit in enumerate(self.aio_edits):
-            edit.setText(self.cfg["aio_templates"][i])
+            edit.setValue(self.cfg["aio_templates"][i])
+            edit.setManualHeight(self.cfg["aio_heights"][i])
+        for i, chk in enumerate(self.aio_time_checks):
+            chk.setChecked(self.cfg["aio_custom_time"][i])
+        for i, spin in enumerate(self.aio_time_spins):
+            spin.setValue(self.cfg["aio_custom_sec"][i])
         for i, row in enumerate(self.aio_rows):
             row.setVisible(i < self.cfg["aio_count"])
         self.apply_box_config_to_ui()
@@ -491,6 +603,7 @@ class MainWindow(ConfigMixin, AppsPageMixin, CustomBoxMixin,
         self.set_style_combo(self.cpu_style_combo,
                              self.cfg.get("hw_cpu_name_style", STYLE_NORMAL))
         self.chk_gpu_temp.setChecked(self.cfg["hw_gpu_temp"])
+        self.chk_gpu_power.setChecked(self.cfg["hw_gpu_power"])
         self.chk_vram_used.setChecked(self.cfg["hw_vram_used"])
         self.chk_vram_pct.setChecked(self.cfg["hw_vram_pct"])
         self.chk_ram_used.setChecked(self.cfg["hw_ram_used"])
@@ -501,6 +614,7 @@ class MainWindow(ConfigMixin, AppsPageMixin, CustomBoxMixin,
         self.chk_cpu_custom.setChecked(self.cfg["hw_cpu_custom"])
         self.cpu_custom_input.setText(self.cfg["hw_cpu_custom_name"])
         self.chk_cpu_temp.setChecked(self.cfg["hw_cpu_temp"])
+        self.chk_cpu_power.setChecked(self.cfg["hw_cpu_power"])
         self.hw_poll_spin.setValue(self.cfg["hw_poll_sec"])
         self.toggle_send.setChecked(self.cfg["send_to_vrchat"])
         self.interval_spin.setValue(self.cfg["interval_sec"])
@@ -548,13 +662,32 @@ class MainWindow(ConfigMixin, AppsPageMixin, CustomBoxMixin,
         # a text switch waiting to be sent - see advance_status()
         self.pending_status_index = None
         # AIO string rotation (only when AIO active, rotation enabled
-        # and more than one non-empty string exists)
+        # and more than one non-empty string exists). The interval comes
+        # from the string on screen, not from the shared value - see
+        # AppsPageMixin.aio_interval_ms().
+        # Whether this timer runs is decided HERE and nowhere else. It
+        # used to be switched off again in the "not Advanced mode" branch
+        # below, which is every Normal mode session: the timer was
+        # started one line up and stopped one line down, so Normal mode
+        # never left AIO 1 while Advanced mode rotated fine.
         if (self.cfg["aio_active"] and self.cfg["aio_rotate"]
                 and len(self._aio_active_templates()) > 1):
-            self.aio_timer.start(self.cfg["aio_rotate_sec"] * 1000)
+            self.aio_timer.start(self.aio_interval_ms())
         else:
             self.aio_timer.stop()
-            self.aio_index = 0
+            if not self.cfg["aio_active"]:
+                # Only All in one being off starts the rotation over. A
+                # manual jump (the Change AIO block) has to survive an
+                # unrelated setting being touched.
+                self.aio_index = 0
+        # Advanced mode ticks once a second regardless of the send
+        # interval. A Timer block set to 2 seconds should fire after 2
+        # seconds, not "at the next send" - with the default 5 second
+        # interval that was a 2 second timer behaving like a 5 second
+        # one, which reads as the block being broken.
+        self.graph_timer.stop()
+        if self.cfg["aio_active"] and self.cfg.get("aio_mode") == "advanced":
+            self.graph_timer.start(1000)
         # Custom Box clock (started only when it can change anything)
         self._update_box_timer()
         # send timer
@@ -563,20 +696,39 @@ class MainWindow(ConfigMixin, AppsPageMixin, CustomBoxMixin,
         else:
             self.send_timer.stop()
 
-    def build_payload(self):
+    def build_payload(self, commit=False):
         """Combines all active apps in the order of the cards (drag to change).
         If All in one is active, only the AIO string is sent instead."""
         # one snapshot per frame: every plugin hook runs exactly once, no
         # matter how many templates ask for its values below
+        # Block apps reaches the plugins from here rather than from the
+        # toggle, because it has to hold for every frame the block is on -
+        # including plugins installed while it was already active.
+        self.plugins.set_blocked(self.blocked_plugin_ids())
+        if commit:
+            # every canvas gets to act, not just the one on rotation - a
+            # graph that only presses a hotkey has no Chatbox Output and
+            # would never be "current"
+            self.run_graph_automation()
+        # a parked chat message that outlived its hold time goes now, so
+        # the expiry needs no timer of its own
+        if self.chat_text_expired():
+            self.clear_chat_text(quiet=True)
         self.plugins.invalidate()
         # plugin lines grouped by the app they are anchored above; each
         # group is already in the order set on the Plugins page
         anchored = self.plugins.lines_by_anchor()
+        # the Chat card's own line, when "Send as: Line" parked one
+        chat_anchor, chat_lines = self.chat_payload_lines()
+        if chat_lines:
+            anchored[chat_anchor] = (list(anchored.get(chat_anchor, []))
+                                     + chat_lines)
         if self.cfg["aio_active"]:
             # All in one is one block at the very bottom, so every plugin
             # line goes above it - anchors have nothing else to sit on here
             lines = self.plugins.render_lines()
-            lines.extend(self.build_aio_lines())
+            lines.extend(chat_lines)
+            lines.extend(self.build_aio_lines(commit=commit))
             return self.plugins.filter_text(
                 "\n".join(self._apply_custom_box(lines)))
         lines = []
@@ -595,6 +747,23 @@ class MainWindow(ConfigMixin, AppsPageMixin, CustomBoxMixin,
         lines.extend(anchored.get("aio", []))
         return self.plugins.filter_text(
             "\n".join(self._apply_custom_box(lines)))
+
+    def chat_payload_lines(self):
+        """(anchor, lines) for the parked chat message.
+
+        Only the Line mode produces a line; Variables mode parks the same
+        text but deliberately contributes nothing here, because the whole
+        point of it is that a template decides where the text goes.
+        """
+        if self.cfg.get("stt_send_mode") != CHAT_MODE_LINE:
+            return DEFAULT_ANCHOR, []
+        text = (self.chat_text_output or "").strip()
+        anchor = self.cfg.get("chat_anchor", DEFAULT_ANCHOR)
+        if anchor not in ANCHORS:
+            anchor = DEFAULT_ANCHOR
+        if not text:
+            return anchor, []
+        return anchor, text.split("\n")
 
     def sending_live(self):
         """True when a payload would actually reach VRChat right now.
@@ -673,6 +842,30 @@ class MainWindow(ConfigMixin, AppsPageMixin, CustomBoxMixin,
         if self.send_timer.isActive():
             self.send_timer.start(self.cfg["interval_sec"] * 1000)
 
+    def tick_graph(self):
+        """One second of Advanced mode.
+
+        Runs the blocks that act, then sends only when the message
+        actually changed. Sending on every tick would spend the whole
+        VRChat rate limit on repeats of the same text; sending on none
+        of them would leave a Timer waiting for the ordinary send
+        interval to notice it.
+        """
+        if not (self.cfg.get("aio_active")
+                and self.cfg.get("aio_mode") == "advanced"):
+            return
+        if self.stt_recording or time.time() < self.manual_pause_until:
+            return
+        before = self.current_aio_index()
+        self.run_graph_automation()
+        text = self.build_payload()
+        if (text and text != getattr(self, "_last_graph_text", None)) or \
+                self.current_aio_index() != before:
+            self._last_graph_text = text
+            self.send_now()
+        else:
+            self.update_preview()
+
     def send_now(self):
         if self.stt_recording:
             return  # speech to text is recording - sending is blocked
@@ -688,7 +881,9 @@ class MainWindow(ConfigMixin, AppsPageMixin, CustomBoxMixin,
         # take over a pending text switch, so what we send is exactly what
         # the preview shows afterwards
         self.commit_status()
-        text = self.build_payload()
+        # the ONE place the graph is allowed to act: a real send, not a
+        # preview repaint (see AppsPageMixin.run_graph_automation)
+        text = self.build_payload(commit=True)
         if not text or self.osc_client is None:
             return
         if self.cfg["slim_chatbox"]:

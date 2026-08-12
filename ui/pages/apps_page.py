@@ -12,8 +12,17 @@ from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (
     QButtonGroup, QCheckBox, QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QSlider, QSpinBox, QVBoxLayout, QWidget)
 from core.constants import (
+    AIO_MAX, ORIGINS, ORIGIN_CHAT,
     CHATBOX_LIMIT, LYRICS_DIR, MIN_STATUS_CYCLE_SEC, SLIM_SUFFIX, SONGBAR_LEN, TITLE_MAX_LEN)
 from core.osinfo import IS_WINDOWS
+from core.boxstyle import SIDE_BOTTOM, SIDE_TOP
+from core.hotkeys import HotkeySender
+from core.proclaunch import launch as launch_program
+
+try:
+    from pythonosc.udp_client import SimpleUDPClient
+except ImportError:      # pragma: no cover - python-osc is a hard dep
+    SimpleUDPClient = None
 # download links for the two optional Windows helpers; harmless to
 # import on Linux (the module is pure stdlib) but only used there
 from core.backends.wintemp import LHM_DOWNLOAD_URL, RTSS_DOWNLOAD_URL
@@ -22,9 +31,52 @@ from core.mediafetch import (
 from core.textstyle import (
     DIGIT_STYLE_CHOICES, KEEP_HINT, STYLE_CHOICES, STYLE_NORMAL, apply_style, is_inline_marker, normalize as normalize_style, unsupported as unsupported_chars)
 from core.textutils import (
-    CUSTOM_STYLE_INDEX, DEFAULT_CUSTOM_BAR, PLACEHOLDER_ALIASES, SONGBAR_STYLES, TIME_POSITIONS, TIME_POS_LINE, apply_template, bar_length, compose_bar_line, make_songbar)
+    CUSTOM_STYLE_INDEX, DEFAULT_CUSTOM_BAR, PLACEHOLDER_ALIASES, SONGBAR_STYLES, TIME_POSITIONS, TIME_POS_LINE, apply_template, bar_length, compose_bar_line, finish_template, make_songbar)
+from core.nodegraph_eval import (
+    evaluate as graph_evaluate, has_output as graph_has_output,
+    has_side_effects as graph_has_side_effects, literals as graph_literals,
+    run_side_effects as graph_run_side_effects)
 from pathlib import Path
+from ui.aio_edit import AioTextEdit
 from ui.ui_main import DragHandle, ToggleLabel, ToggleSwitch
+
+
+#: {text_t<X>} and {text_t<X>_<N>} in their canonical spelling - see
+#: core.textutils.canonical_placeholder(), which folds {text_template3},
+#: {text_tpl3_5} and {text_t03} onto exactly this shape first.
+_TEXT_T_RE = re.compile(r"^text_t(\d{1,2})(?:_(\d{1,2}))?$")
+
+
+class LazyStatusValues(dict):
+    """The placeholder dict, with the cross-template names resolved on
+    demand instead of materialised.
+
+    Ten templates times twenty slots is 210 extra placeholders. Building
+    those into the dict on every single frame - and running the template
+    engine over each non-empty one - would be real work done for a
+    feature most strings use none of. So the ordinary values stay a plain
+    dict and only a lookup that actually asks for {text_t...} costs
+    anything.
+
+    Only ``get()`` is extended, which is the single way apply_template
+    reads a value. Everything else (``in``, ``[]``, ``update``,
+    ``setdefault``) behaves like the plain dict it is, so the plugin
+    merge and the rest of the pipeline are untouched.
+    """
+
+    resolver = None      # set by _template_values(); a bound method
+
+    def get(self, key, default=None):
+        if key in self:
+            # a key that IS present wins, even when its value is None -
+            # "Personal Status is off" has to stay distinguishable from
+            # "nobody has ever heard of this name"
+            return dict.get(self, key, default)
+        if self.resolver is not None and key.startswith("text_t"):
+            value = self.resolver(key)
+            if value is not None:
+                return value
+        return default
 
 
 class AppsPageMixin:
@@ -512,6 +564,17 @@ class AppsPageMixin:
         self.media_custom_input.setMaxLength(200)
         self.media_custom_input.textChanged.connect(self.on_media_template)
         m_custom_row.addWidget(self.media_custom_input, 1)
+        m_plus = QPushButton("+")
+        m_plus.setObjectName("iconbtn")
+        m_plus.setFixedSize(30, 30)
+        m_plus.setCursor(Qt.CursorShape.PointingHandCursor)
+        m_plus.setToolTip(
+            "Insert a MediaPlay placeholder or a formatting tag at the "
+            "cursor.\nSelect text first and the formatting entries wrap it.")
+        m_plus.clicked.connect(
+            lambda _=False, e=self.media_custom_input, b=m_plus:
+                self.open_placeholder_menu(e, b, scope="media"))
+        m_custom_row.addWidget(m_plus)
         m_ico = QPushButton("\U0001F600")
         m_ico.setObjectName("iconbtn")
         m_ico.setFixedSize(30, 30)
@@ -667,6 +730,14 @@ class AppsPageMixin:
         hc.addWidget(gpu_lbl)
         self.chk_gpu_usage = hw_chk("GPU usage  (e.g. GPU: 27%)", "hw_gpu_usage")
         self.chk_gpu_temp = hw_chk("GPU temp", "hw_gpu_temp")
+        self.chk_gpu_power = hw_chk(
+            "GPU power draw in watts  (e.g. 213W)", "hw_gpu_power")
+        self.chk_gpu_power.setToolTip(
+            "Adds the card's power draw to the GPU line, and fills "
+            "{gpu_power} / {gpu_watt} for custom strings.\n\n"
+            "NVIDIA always reports it. AMD needs amdgpu's hwmon node, and "
+            "on Windows both come from LibreHardwareMonitor. Where nothing "
+            "reports a value the line simply stays as it was.")
         self.chk_gpu_name = hw_chk("GPU name", "hw_gpu_name")
         gname_row = QHBoxLayout()
         self.chk_gpu_custom = QCheckBox("Custom GPU name:")
@@ -710,6 +781,14 @@ class AppsPageMixin:
         hc.addWidget(cpu_lbl)
         self.chk_cpu_usage = hw_chk("CPU usage  (e.g. CPU: 27%)", "hw_cpu_usage")
         self.chk_cpu_temp = hw_chk("CPU temp", "hw_cpu_temp")
+        self.chk_cpu_power = hw_chk(
+            "CPU power draw in watts  (e.g. 68W)", "hw_cpu_power")
+        self.chk_cpu_power.setToolTip(
+            "Adds the package power to the CPU line, and fills "
+            "{cpu_power} / {cpu_watt} for custom strings.\n\n"
+            "Needs zenpower or readable RAPL counters on Linux, and "
+            "LibreHardwareMonitor on Windows. Where nothing reports a "
+            "value the line simply stays as it was.")
         if IS_WINDOWS:
             hc.addLayout(self._build_wintemp_row())
         self.chk_cpu_name = hw_chk("CPU name", "hw_cpu_name")
@@ -775,6 +854,17 @@ class AppsPageMixin:
         self.hw_custom_input.textChanged.connect(
             lambda t: self.on_hw_text("hw_custom_template", t))
         hw_custom_row.addWidget(self.hw_custom_input, 1)
+        hw_plus = QPushButton("+")
+        hw_plus.setObjectName("iconbtn")
+        hw_plus.setFixedSize(30, 30)
+        hw_plus.setCursor(Qt.CursorShape.PointingHandCursor)
+        hw_plus.setToolTip(
+            "Insert a hardware placeholder or a formatting tag at the "
+            "cursor.\nSelect text first and the formatting entries wrap it.")
+        hw_plus.clicked.connect(
+            lambda _=False, e=self.hw_custom_input, b=hw_plus:
+                self.open_placeholder_menu(e, b, scope="hardware"))
+        hw_custom_row.addWidget(hw_plus)
         hw_ico = QPushButton("\U0001F600")
         hw_ico.setObjectName("iconbtn")
         hw_ico.setFixedSize(30, 30)
@@ -848,6 +938,35 @@ class AppsPageMixin:
         ahead.addWidget(ToggleLabel("Active", self.toggle_aio))
         a_layout.addLayout(ahead)
 
+        # ---- mode switch: the five template strings, or the node canvas
+        #      on the Advanced page. Two buttons rather than a combo box
+        #      because this is the first thing in the card and it decides
+        #      what the rest of it looks like - that should be readable
+        #      at a glance, not one click deep.
+        amode_row = QHBoxLayout()
+        amode_row.setSpacing(6)
+        amode_row.addWidget(QLabel("Mode:"))
+        self.aio_mode_group = QButtonGroup(self)
+        self.aio_mode_group.setExclusive(True)
+        self.aio_mode_buttons = {}
+        for key, label, tip in (
+                ("normal", "Normal mode",
+                 "Write the AIO strings by hand, with placeholders."),
+                ("advanced", "Advanced mode",
+                 "Build the string visually on the node canvas "
+                 "(\u201cAdvanced\u201d in the sidebar).")):
+            b = QPushButton(label)
+            b.setObjectName("modebtn")
+            b.setCheckable(True)
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.setToolTip(tip)
+            self.aio_mode_group.addButton(b)
+            amode_row.addWidget(b)
+            self.aio_mode_buttons[key] = b
+            b.clicked.connect(lambda _=False, k=key: self.on_aio_mode(k))
+        amode_row.addStretch()
+        a_layout.addLayout(amode_row)
+
         adesc = QLabel("When active, Personal Status, MediaPlay and Hardware no "
                        "longer send their own lines \u2013 everything is combined "
                        "here in one custom string (AIO) and only that gets sent "
@@ -882,7 +1001,7 @@ class AppsPageMixin:
             b.setFixedSize(30, 26)
             b.setCursor(Qt.CursorShape.PointingHandCursor)
             b.setToolTip(f"AIO template {i + 1} \u2013 own set of up to "
-                         "5 strings")
+                         f"{AIO_MAX} strings")
             b.setStyleSheet(
                 "QPushButton { background: #232833; border: 1px solid"
                 " #333947; border-radius: 6px; color: #aeb4bf; }"
@@ -900,7 +1019,7 @@ class AppsPageMixin:
         acnt_row.addWidget(QLabel("Number of strings"))
         self.aio_count_spin = QSpinBox()
         self.aio_count_spin.setObjectName("smallspin")
-        self.aio_count_spin.setRange(1, 5)
+        self.aio_count_spin.setRange(1, AIO_MAX)
         self.aio_count_spin.setFixedSize(64, 28)
         self.aio_count_spin.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.aio_count_spin.valueChanged.connect(self.on_aio_count)
@@ -922,29 +1041,91 @@ class AppsPageMixin:
 
         self.aio_rows = []
         self.aio_edits = []
-        for i in range(5):
+        self.aio_time_checks = []
+        self.aio_time_spins = []
+        top = Qt.AlignmentFlag.AlignTop
+        for i in range(AIO_MAX):
             row_w = QWidget()
-            row = QHBoxLayout(row_w)
+            row_v = QVBoxLayout(row_w)
+            row_v.setContentsMargins(0, 0, 0, 0)
+            row_v.setSpacing(4)
+
+            row = QHBoxLayout()
             row.setContentsMargins(0, 0, 0, 0)
             row.setSpacing(6)
             lbl = QLabel(f"AIO {i + 1}:")
             lbl.setFixedWidth(48)
-            row.addWidget(lbl)
-            edit = QLineEdit()
-            edit.setPlaceholderText("{text} \\n {artist} : {title} | {time} \u2026")
+            row.addWidget(lbl, 0, top)
+            # multi-line since v1.3.3: three rows to start with, grows
+            # with the text, and Shift+Enter writes the \n the template
+            # language wants. See ui/aio_edit.py.
+            edit = AioTextEdit()
+            edit.setPlaceholderText(
+                "{text}\nShift+Enter = new line \u2026")
             edit.setMaxLength(300)
-            edit.textChanged.connect(lambda t, idx=i: self.on_aio_text(idx, t))
+            edit.setToolTip(
+                "Shift+Enter (or Ctrl+Enter) starts a new chatbox line \u2013 "
+                "stored as \\n.\nDrag the bottom edge to set the height, "
+                "double-click it to grow with the text again.")
+            edit.valueChanged.connect(
+                lambda t, idx=i: self.on_aio_text(idx, t))
+            edit.heightChanged.connect(
+                lambda px, idx=i: self.on_aio_height(idx, px))
             row.addWidget(edit, 1)
+            a_plus = QPushButton("+")
+            a_plus.setObjectName("iconbtn")
+            a_plus.setFixedSize(30, 30)
+            a_plus.setCursor(Qt.CursorShape.PointingHandCursor)
+            a_plus.setToolTip(
+                "Insert a placeholder or a formatting tag at the cursor.\n"
+                "Select text first and the formatting entries wrap it.")
+            a_plus.clicked.connect(
+                lambda _=False, e=edit, b=a_plus:
+                    self.open_placeholder_menu(e, b))
+            row.addWidget(a_plus, 0, top)
             a_ico = QPushButton("\U0001F600")
             a_ico.setObjectName("iconbtn")
             a_ico.setFixedSize(30, 30)
             a_ico.setCursor(Qt.CursorShape.PointingHandCursor)
             a_ico.clicked.connect(
                 lambda _, e=edit, b=a_ico: self.emoji_popup.open_for(e, b))
-            row.addWidget(a_ico)
+            row.addWidget(a_ico, 0, top)
+            row_v.addLayout(row)
+
+            # ---- per-string dwell time: this one string overrides the
+            #      shared "Rotate strings every N sec" while it is on
+            #      screen; the next one is back to the shared value
+            #      unless it carries its own.
+            trow = QHBoxLayout()
+            trow.setContentsMargins(48 + 6, 0, 0, 0)
+            trow.setSpacing(6)
+            chk_time = QCheckBox("Custom time")
+            chk_time.setToolTip(
+                "Give this string its own time on screen instead of the "
+                "shared rotation interval.\nOnly this string is "
+                "affected \u2013 the others keep the shared value.")
+            chk_time.toggled.connect(
+                lambda on, idx=i: self.on_aio_custom_time(idx, on))
+            trow.addWidget(chk_time)
+            spin_time = QSpinBox()
+            spin_time.setObjectName("smallspin")
+            spin_time.setRange(2, 3600)
+            spin_time.setFixedSize(72, 26)
+            spin_time.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            spin_time.valueChanged.connect(
+                lambda val, idx=i: self.on_aio_custom_sec(idx, val))
+            trow.addWidget(spin_time)
+            sec_lbl = QLabel("sec")
+            sec_lbl.setObjectName("dim")
+            trow.addWidget(sec_lbl)
+            trow.addStretch()
+            row_v.addLayout(trow)
+
             ac.addWidget(row_w)
             self.aio_rows.append(row_w)
             self.aio_edits.append(edit)
+            self.aio_time_checks.append(chk_time)
+            self.aio_time_spins.append(spin_time)
 
         a_hint = QLabel("Template 1-10: each button keeps its own set of "
                         "strings \u2013 switch layouts (gaming, music, "
@@ -957,9 +1138,13 @@ class AppsPageMixin:
         a_ph = QLabel("Everything the apps, the live info, the Custom Box "
                       "and your plugins produce can be used here as a "
                       "placeholder \u2013 the full list is under "
-                      "\u201cParameters\u201d below. Use \\n for a line "
-                      "break. The apps must be Active for their values to "
-                      "fill in.")
+                      "\u201cParameters\u201d below. Shift+Enter starts a "
+                      "new chatbox line (written as \\n), and dragging the "
+                      "bottom edge of a field sets its height. "
+                      "\u201cCustom time\u201d gives that one string its "
+                      "own time on screen instead of the shared rotation "
+                      "interval. The apps must be Active for their values "
+                      "to fill in.")
         a_ph.setObjectName("dim")
         a_ph.setWordWrap(True)
         ac.addWidget(a_ph)
@@ -986,6 +1171,37 @@ class AppsPageMixin:
         self.register_parameter_list(self.aio_param_layout)
 
         a_layout.addWidget(abox)
+        # everything above lives in here so Advanced mode can hide the
+        # whole normal UI in one go - the strings stay in the config
+        # untouched, this only takes them off screen
+        self.aio_normal_box = abox
+
+        # ---- what Advanced mode shows instead --------------------------
+        self.aio_advanced_box = QFrame()
+        self.aio_advanced_box.setObjectName("innerbox")
+        adv_layout = QVBoxLayout(self.aio_advanced_box)
+        adv_layout.setContentsMargins(14, 14, 14, 14)
+        adv_layout.setSpacing(10)
+        adv_hint = QLabel(
+            "Advanced mode is on \u2013 the AIO string is built on the "
+            "node canvas instead of in the fields here. Your typed "
+            "strings are kept and come back when you switch to Normal "
+            "mode.")
+        adv_hint.setObjectName("dim")
+        adv_hint.setWordWrap(True)
+        adv_layout.addWidget(adv_hint)
+        goto_row = QHBoxLayout()
+        self.aio_goto_btn = QPushButton("Go to Advanced mode  \u203A")
+        self.aio_goto_btn.setObjectName("sendbtn")
+        self.aio_goto_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.aio_goto_btn.setMinimumHeight(34)
+        self.aio_goto_btn.clicked.connect(
+            lambda: self.switch_page(self.PAGE_ADVANCED))
+        goto_row.addWidget(self.aio_goto_btn)
+        goto_row.addStretch()
+        adv_layout.addLayout(goto_row)
+        a_layout.addWidget(self.aio_advanced_box)
+        self.aio_advanced_box.setVisible(False)
 
         # add the cards in the saved order (drag the 3x3 dots to reorder;
         # the order also defines the line order in the VRChat chatbox)
@@ -1503,6 +1719,30 @@ class AppsPageMixin:
         self.update_timers()
         self.update_preview()
 
+    def on_aio_mode(self, key):
+        """Normal / Advanced. Only the UI changes here - nothing is
+        rewritten or thrown away, so this is always reversible."""
+        key = key if key in ("normal", "advanced") else "normal"
+        self.cfg["aio_mode"] = key
+        self.save_config()
+        self._apply_aio_mode()
+        # the two modes rarely have the same number of strings on
+        # rotation, so the index has to start over or it would point past
+        # the end of the new one
+        self.aio_index = 0
+        self.update_timers()
+        self.update_preview()
+        self.log(f"All in one: {key} mode")
+
+    def _apply_aio_mode(self):
+        """Shows the fields or the pointer to the node canvas, depending
+        on cfg['aio_mode']. Called on start and on every switch."""
+        advanced = self.cfg.get("aio_mode") == "advanced"
+        for k, b in self.aio_mode_buttons.items():
+            b.setChecked(k == ("advanced" if advanced else "normal"))
+        self.aio_normal_box.setVisible(not advanced)
+        self.aio_advanced_box.setVisible(advanced)
+
     def on_aio_count(self, val):
         if getattr(self, "_block_updating", False):
             return
@@ -1511,6 +1751,9 @@ class AppsPageMixin:
         self.save_config()
         for i, row in enumerate(self.aio_rows):
             row.setVisible(i < val)
+        # the Advanced page carries the same setting - mirror it there
+        # rather than letting the two drift apart
+        self._mirror_graph_rotation()
         self.aio_index = 0
         self.update_timers()
         self.update_preview()
@@ -1518,6 +1761,7 @@ class AppsPageMixin:
     def on_aio_rotate(self, on):
         self.cfg["aio_rotate"] = on
         self.save_config()
+        self._mirror_graph_rotation()
         self.aio_index = 0
         self.update_timers()
         self.update_preview()
@@ -1525,7 +1769,26 @@ class AppsPageMixin:
     def on_aio_rotate_sec(self, val):
         self.cfg["aio_rotate_sec"] = val
         self.save_config()
+        self._mirror_graph_rotation()
         self.update_timers()
+
+    def _mirror_graph_rotation(self):
+        """Repaints the copies of "Number of strings" / "Rotate every"
+        that live on the Advanced page. One setting, two places to see
+        it - the config is the single source, these are just views."""
+        if not hasattr(self, "graph_count_spin"):
+            return
+        for widget, value in ((self.graph_count_spin, self.cfg["aio_count"]),
+                              (self.graph_rotate_chk, self.cfg["aio_rotate"]),
+                              (self.graph_rotate_spin,
+                               self.cfg["aio_rotate_sec"])):
+            widget.blockSignals(True)
+            if widget is self.graph_rotate_chk:
+                widget.setChecked(bool(value))
+            else:
+                widget.setValue(int(value))
+            widget.blockSignals(False)
+        self._update_graph_slot_labels()
 
     def on_aio_text(self, idx, text):
         if getattr(self, "_block_updating", False):
@@ -1533,7 +1796,39 @@ class AppsPageMixin:
         self.cfg["aio_templates"][idx] = text
         self._sync_active_aio_set()
         self.save_config_later()
+        # a string going empty (or filling up) changes which strings are
+        # on rotation at all, and with it whose dwell time is next
+        self.update_timers()
         self.update_preview()
+
+    def on_aio_height(self, idx, px):
+        """Remembers the height the user dragged a field to. Purely
+        cosmetic, so it lives outside the template sets - switching
+        layouts should not make the fields jump around."""
+        if getattr(self, "_block_updating", False):
+            return
+        self.cfg["aio_heights"][idx] = int(px)
+        self.save_config_later()
+
+    def on_aio_custom_time(self, idx, on):
+        if getattr(self, "_block_updating", False):
+            return
+        self.cfg["aio_custom_time"][idx] = bool(on)
+        self._sync_active_aio_set()
+        self.save_config()
+        self.log(f"All in one: AIO {idx + 1} "
+                 + (f"stays on screen for {self.cfg['aio_custom_sec'][idx]} "
+                    "seconds" if on else "follows the shared rotation "
+                    "interval again"))
+        self.update_timers()
+
+    def on_aio_custom_sec(self, idx, val):
+        if getattr(self, "_block_updating", False):
+            return
+        self.cfg["aio_custom_sec"][idx] = int(val)
+        self._sync_active_aio_set()
+        self.save_config_later()
+        self.update_timers()
 
     def _sync_active_aio_set(self):
         """Writes the current strings/count back into the active AIO
@@ -1542,6 +1837,15 @@ class AppsPageMixin:
         idx = min(len(sets) - 1, max(0, self.cfg["aio_set_active"]))
         sets[idx]["templates"] = list(self.cfg["aio_templates"])
         sets[idx]["count"] = self.cfg["aio_count"]
+        sets[idx]["custom_time"] = list(self.cfg["aio_custom_time"])
+        sets[idx]["custom_sec"] = list(self.cfg["aio_custom_sec"])
+        # the canvases belong to the template as much as the strings do -
+        # switching template and keeping the old graphs would leave the
+        # two halves of one AIO string describing different things
+        if hasattr(self, "graph_canvas"):
+            self._store_current_graph()
+        sets[idx]["graphs"] = [dict(g) for g in (self.cfg.get("aio_graphs")
+                                                 or [])]
 
     def on_aio_set(self, idx):
         """Exclusive AIO template toggle: activates set idx and loads its
@@ -1551,14 +1855,35 @@ class AppsPageMixin:
         tpl = self.cfg["aio_sets"][idx]
         self.cfg["aio_templates"] = list(tpl["templates"])
         self.cfg["aio_count"] = tpl["count"]
+        self.cfg["aio_custom_time"] = list(tpl["custom_time"])
+        self.cfg["aio_custom_sec"] = list(tpl["custom_sec"])
+        graphs = tpl.get("graphs") or []
+        graphs = [dict(g) if isinstance(g, dict) else {"nodes": [],
+                                                       "edges": []}
+                  for g in graphs][:AIO_MAX]
+        graphs += [{"nodes": [], "edges": []}
+                   for _ in range(AIO_MAX - len(graphs))]
+        self.cfg["aio_graphs"] = graphs
         self._block_updating = True
         for i, edit in enumerate(self.aio_edits):
-            edit.setText(self.cfg["aio_templates"][i])
+            edit.setValue(self.cfg["aio_templates"][i])
+        for i, chk in enumerate(self.aio_time_checks):
+            chk.setChecked(self.cfg["aio_custom_time"][i])
+        for i, spin in enumerate(self.aio_time_spins):
+            spin.setValue(self.cfg["aio_custom_sec"][i])
         self.aio_count_spin.setValue(self.cfg["aio_count"])
         self._block_updating = False
         for i, row in enumerate(self.aio_rows):
             row.setVisible(i < self.cfg["aio_count"])
         self.aio_index = 0
+        if hasattr(self, "graph_canvas"):
+            # the canvas is showing a graph that just stopped being the
+            # current one, so it has to be reloaded rather than saved
+            self._graph_runtime_state = {}
+            self._show_graph_slot(min(self.graph_slot,
+                                      self.cfg["aio_count"] - 1))
+            self._mirror_graph_rotation()
+            self._sync_graph_set_buttons()
         self.save_config()
         self.update_timers()
         self.update_preview()
@@ -1567,11 +1892,71 @@ class AppsPageMixin:
     def advance_aio(self):
         self.aio_index += 1
         self.update_preview()
+        # The string that just came up decides how long it stays, so the
+        # interval is set per step rather than once. Restarting a running
+        # QTimer with a new interval is exactly what start() does.
+        self.aio_timer.start(self.aio_interval_ms())
+        if not self.aio_is_advanced():
+            # Rotation and sending run on independent timers, so without
+            # this the new string waits for the next send interval - a
+            # string with a 2 second Custom time could be gone again
+            # before VRChat ever saw it. Rate limited and coalesced by
+            # request_send(); Advanced mode is left alone because
+            # tick_graph() already notices the changed slot and would
+            # send the same text a second time.
+            self.request_send()
+
+    def aio_is_advanced(self):
+        return self.cfg.get("aio_mode") == "advanced"
+
+    def aio_graph(self, idx):
+        """The canvas of AIO string ``idx`` (0-based), or an empty one."""
+        graphs = self.cfg.get("aio_graphs") or []
+        if 0 <= idx < len(graphs) and isinstance(graphs[idx], dict):
+            return graphs[idx]
+        return {"nodes": [], "edges": []}
+
+    def _aio_active_indices(self):
+        """Slot numbers of the strings actually on rotation.
+
+        The slot number has to travel with the string: AIO 2 being empty
+        must not shift AIO 3's dwell time onto AIO 4."""
+        if self.aio_is_advanced():
+            # structural: a slot exists when the canvas has a Chatbox
+            # Output block for it. Deliberately NOT "the graph currently
+            # renders to something" - a slot that shows the song title
+            # would otherwise leave and rejoin the rotation every time
+            # the music is paused, and take the dwell times of the
+            # others with it.
+            return [i for i in range(self.cfg["aio_count"])
+                    if graph_has_output(self.aio_graph(i))]
+        return [i for i in range(self.cfg["aio_count"])
+                if self.cfg["aio_templates"][i].strip()]
 
     def _aio_active_templates(self):
-        tpls = [t for t in self.cfg["aio_templates"][:self.cfg["aio_count"]]
-                if t.strip()]
-        return tpls
+        if self.aio_is_advanced():
+            return [graph_literals(self.aio_graph(i))
+                    for i in self._aio_active_indices()]
+        return [self.cfg["aio_templates"][i]
+                for i in self._aio_active_indices()]
+
+    def current_aio_index(self):
+        """Slot number of the AIO string on screen right now, or -1."""
+        slots = self._aio_active_indices()
+        if not slots:
+            return -1
+        return slots[self.aio_index % len(slots)]
+
+    def aio_interval_ms(self):
+        """How long the string currently on screen stays there.
+
+        Its own "Custom time" when it has one, the shared rotation
+        interval otherwise - which is what makes the setting local to
+        one string instead of a second global switch."""
+        idx = self.current_aio_index()
+        if idx >= 0 and self.cfg["aio_custom_time"][idx]:
+            return max(2, int(self.cfg["aio_custom_sec"][idx])) * 1000
+        return max(2, int(self.cfg["aio_rotate_sec"])) * 1000
 
     # ================================================================
     # Parameters list (the expander under All in one)
@@ -1584,23 +1969,67 @@ class AppsPageMixin:
         ("Personal Status", "{text}  {text_1} \u2026 {text_20}",
          "{text} is the status text currently on rotation; the numbered "
          "ones address a specific slot."),
+        ("Personal Status \u2013 other templates",
+         "{text_t1} \u2026 {text_t10}   {text_t1_1} \u2026 {text_t10_20}",
+         "Reach into a template that is NOT the one selected above: "
+         "{text_t3} is the rotating text of template 3, {text_t3_5} is "
+         "its slot 5. {text_template3} and {text_tpl3} spell the same "
+         "thing. They work whether or not Personal Status is switched "
+         "on - naming a template is asking for that text, not for the "
+         "Status card - so the ten templates double as a text library "
+         "for All in one. An empty slot renders empty; a template that "
+         "is empty or has no such number falls back to the active one."),
         ("MediaPlay", "{artist}  {title}  {time}  {time_status}  "
                       "{time_end}  {bar}  {lyrics}  {lyrics_prefix}  "
                       "{icon_sound}  {media_idle}",
          "{bar} is the progress bar, {time_status} follows the time "
          "format you picked in MediaPlay. {media_idle} is the idle "
          "symbol while nothing plays and empty otherwise."),
-        ("Hardware", "{gpu_name}  {gpu_usage}  {gpu_temp}  {vram_usage}  "
-                     "{cpu_name}  {cpu_usage}  {cpu_temp}  {ram_usage}  "
-                     "{ram_type}  {temp_icon}  {icon_flame}",
+        ("Hardware", "{gpu_name}  {gpu_usage}  {gpu_temp}  {gpu_power}  "
+                     "{vram_usage}  {cpu_name}  {cpu_usage}  {cpu_temp}  "
+                     "{cpu_power}  {ram_usage}  {ram_type}  {temp_icon}  "
+                     "{icon_flame}",
+         "{gpu_power} / {cpu_power} are the power draw in watts "
+         "({gpu_watt} spells the same thing) and follow the "
+         "\u201cpower draw in watts\u201d checkboxes on the Hardware card, "
+         "which are off by default. NVIDIA always reports it; "
+         "AMD GPUs need amdgpu's hwmon node, and CPU watts need zenpower "
+         "or readable RAPL counters - on Windows both come from "
+         "LibreHardwareMonitor. Empty when nothing reports it, like every "
+         "other sensor here. "
          "With {temp_icon} in the string the temperatures drop their unit, "
          "because the icon already carries it."),
+        ("Formatting", "{sup}text{/sup}   {sub}text{/sub}   "
+                       "{super/\"word\"}   {sub/\"word\"}",
+         "Superscript and subscript. The tag pair styles a whole stretch "
+         "including the placeholders inside it; the slash form styles one "
+         "word (the older form, kept so existing strings work - the tag "
+         "pair does everything it does). Unicode has no complete "
+         "alphabet for either (superscript "
+         "lacks q, subscript lacks b c d f g q w y z) - those letters "
+         "pass through unchanged. Wrap a word in _\"quotes\"_ to keep it "
+         "out of the conversion. A tag left unclosed styles the rest of "
+         "the string."),
+        ("Chat / Speech to Text",
+         "{text_input}  {text_output}   {stt_*}  {ttt_*}  {chat_*}",
+         "The last message from the Chat card, Speech to Text or Text to "
+         "Text. {text_input} is what was typed or said, {text_output} "
+         "what actually goes out - the translation, when there is one. "
+         "{stt_input}/{stt_output}, {ttt_input}/{ttt_output} and "
+         "{chat_input}/{chat_output} are the same pair narrowed to one "
+         "source, so speech can go somewhere else than typing; exactly "
+         "one of the three is ever filled. They fill in every send mode; "
+         "set \u201cSend as\u201d to Variables on the Textbox page if "
+         "the message should show up ONLY where you place it here."),
         ("Live info", "{player_in_world}  {group_world}  {realtime}  "
                       "{instance_type}",
          "Read from the VRChat log by the bundled world_stats plugin."),
-        ("Custom Box", "{box_start}  {box_stop}",
-         "The two frame lines. Using them here places the frame yourself "
-         "instead of having it wrapped around the whole message."),
+        ("Custom Box", "{box_start}  {box_stop}  {box_text}",
+         "The two frame lines and the middle text on its own. With All "
+         "in one active these are the ONLY way the frame appears - the "
+         "card no longer wraps the whole message, because a wrap can "
+         "only ever be right for one of your strings and would sit "
+         "around the plugin lines as well."),
         ("Text styles", '{super/"word"}   {sub/"word"}',
          "Makes one part of the string small. The content may be a "
          "placeholder: {super/{cpu_usage}}. Superscript has no q and "
@@ -1664,6 +2093,9 @@ class AppsPageMixin:
         for layout in getattr(self, "_param_layouts", []):
             self._clear_layout(layout)
             self._fill_parameters(layout)
+        # the canvas offers the same vocabulary, so it is rebuilt from
+        # the same trigger instead of having its own refresh path
+        self.refresh_graph_variables()
 
     def refresh_aio_parameters(self):
         """Kept for callers that only mean the All-in-one list."""
@@ -1732,11 +2164,107 @@ class AppsPageMixin:
     def current_aio_template(self):
         """The AIO string that is on screen right now (rotation included),
         or "" when All in one has nothing to show. The Custom Box needs
-        this to see whether that string places the frame itself."""
-        tpls = self._aio_active_templates()
+        this to see whether that string places the frame itself.
+
+        In Advanced mode there is no template string, so this hands back
+        the literals of the blocks feeding that slot instead - which is
+        exactly what the two callers search: they look for placeholder
+        names like {box_start}, not for rendered text.
+        """
+        idx = self.current_aio_index()
+        if idx < 0:
+            return ""
+        if self.aio_is_advanced():
+            return graph_literals(self.aio_graph(idx))
+        return self.cfg["aio_templates"][idx]
+
+    # ================================================================
+    # cross-template placeholders: {text_tX} / {text_tX_N}
+    # ================================================================
+    def _template_slots(self, tpl):
+        """[(slot, text)] of the non-empty texts of ANY template dict.
+
+        The same rule _status_slots() uses for the active one: the slot
+        number travels with the text, because the styles are indexed by
+        text field and an empty slot 2 must not shift slot 3's style onto
+        slot 4.
+        """
+        texts = tpl.get("texts") or []
+        count = min(20, max(1, int(tpl.get("count", 1) or 1)))
+        return [(i, str(t).strip()) for i, t in enumerate(texts[:count])
+                if str(t).strip()]
+
+    @staticmethod
+    def _template_style(tpl, slot):
+        styles = tpl.get("styles") or []
+        if 0 <= slot < len(styles):
+            return normalize_style(styles[slot])
+        return STYLE_NORMAL
+
+    def resolve_status_template(self, key):
+        """{text_tX} and {text_tX_N} - reach into a template that is not
+        the one selected at the top of Personal Status.
+
+        {text_tX}     the rotating text of template X
+        {text_tX_N}   slot N of template X, whatever the rotation is doing
+
+        Two deliberate decisions in here:
+
+        * These resolve whether or not Personal Status is switched on,
+          unlike {text} and {text_N}. Naming a template explicitly is
+          asking for that text, not for the Status card's output - which
+          is what makes the ten templates usable as a text library from
+          All in one. {text} and {text_N} keep their old behaviour, so
+          nothing about an existing string changes.
+        * {text_tX} rotates on the SAME clock as the active template.
+          Only one rotation timer exists, and giving every template its
+          own would mean ten independent switches racing for one 144
+          character chatbox.
+
+        Returns None when the name is not one of ours, so the caller can
+        fall through to its normal miss handling.
+        """
+        m = _TEXT_T_RE.match(key)
+        if not m:
+            return None
+        tpls = self.cfg.get("status_templates") or []
         if not tpls:
             return ""
-        return tpls[self.aio_index % len(tpls)]
+        active = min(len(tpls) - 1,
+                     max(0, int(self.cfg.get("status_template_active", 0))))
+        idx = int(m.group(1)) - 1
+        if not 0 <= idx < len(tpls):
+            # a template number that does not exist falls back to the
+            # active one rather than to nothing - the same answer the
+            # user would get without the tX part at all
+            idx = active
+        tpl = tpls[idx]
+
+        if m.group(2) is not None:
+            # ---- a specific slot -------------------------------------
+            slot = int(m.group(2)) - 1
+            texts = tpl.get("texts") or []
+            if not 0 <= slot < len(texts):
+                return ""          # no such slot -> empty, never a guess
+            text = str(texts[slot]).strip()
+            if not text:
+                return ""          # an empty slot IS the answer
+            return self._render_status(
+                text, self._template_style(tpl, slot)) or None
+
+        # ---- the rotating text of that template ----------------------
+        slots = self._template_slots(tpl)
+        if not slots and idx != active:
+            # an empty template falls back to the active one, so a
+            # template you have not filled in yet does not silently blank
+            # the line it sits on
+            tpl = tpls[active]
+            slots = self._template_slots(tpl)
+        if not slots:
+            return ""
+        slot, text = slots[self.status_index % len(slots)]
+        return self._render_status(
+            text, self._template_style(tpl, slot)) or None
 
     def _template_values(self, probe=""):
         """The placeholder dict every custom string is rendered against:
@@ -1747,7 +2275,9 @@ class AppsPageMixin:
         containing {temp_icon} supplies its own unit, so the raw number
         goes in instead of the one with the unit baked on.
         """
-        vals = {}
+        vals = LazyStatusValues()
+        # {text_tX} / {text_tX_N} are answered on demand from here
+        vals.resolver = self.resolve_status_template
         # Personal Status texts
         if self.cfg["status_active"]:
             vals["text"] = self._render_status(
@@ -1784,6 +2314,24 @@ class AppsPageMixin:
             vals.update(hw)
         vals["temp_icon"] = "\U0001F525" if self.cfg["hw_flame"] else "\u00b0C"
         vals.setdefault("icon_flame", "\U0001F525")
+        # The Chat card's parked message. Present in every send mode, so
+        # a template using {text_output} keeps working if you switch the
+        # dropdown - it is only the Line mode that ALSO adds a line of
+        # its own. None rather than "" so an empty one collapses the
+        # separators around it like every other placeholder.
+        msg_in = (self.chat_text_input or "").strip() or None
+        msg_out = (self.chat_text_output or "").strip() or None
+        vals["text_input"] = msg_in
+        vals["text_output"] = msg_out
+        # The same pair narrowed to the source it came from. Exactly one
+        # of the three origins is ever filled, so a string can carry
+        # {stt_output} and {chat_output} side by side and only the one
+        # that applies shows up - the empty ones collapse with their
+        # separators like any other placeholder.
+        for origin in ORIGINS:
+            hit = origin == getattr(self, "chat_text_origin", ORIGIN_CHAT)
+            vals[f"{origin}_input"] = msg_in if hit else None
+            vals[f"{origin}_output"] = msg_out if hit else None
         # {<plugin_id>} and {<plugin_id>_<key>} of every active plugin,
         # plus any unprefixed name a plugin claimed (never overwriting
         # a value one of the apps above already produced)
@@ -1818,7 +2366,201 @@ class AppsPageMixin:
             return ""
         return (self.cfg.get("media_idle_text") or "").strip()
 
-    def build_aio_lines(self):
+    def _build_graph_lines(self, vals, idle):
+        """Advanced mode: the lines come out of the node canvas.
+
+        The canvas of the slot that is on screen right now is evaluated,
+        which keeps the rotation, the dwell times and the Custom Box
+        working exactly as they do for a typed string - from here down
+        the pipeline only ever sees text.
+
+        Text only - the blocks with side effects are handled by
+        run_graph_automation(), which walks every canvas rather than
+        just this one.
+        """
+        idx = self.current_aio_index()
+        if idx < 0:
+            return []
+        try:
+            raw = graph_evaluate(
+                self.aio_graph(idx), vals,
+                osc=getattr(self, "osc_in", None),
+                keys=getattr(self, "hotkey_in", None),
+                procs=self.procs, shown=True,
+                state=self._graph_state(idx))
+        except Exception as e:      # noqa: BLE001
+            # a broken graph must not take the send loop down with it -
+            # the message is worth more than the block that failed
+            self.log(f"Advanced mode: graph could not be evaluated ({e})")
+            return []
+        text = finish_template(raw)
+        if text:
+            return text.split("\n")
+        # empty result: same courtesy the typed strings get - a slot that
+        # is about the song answers with the idle symbol rather than
+        # disappearing
+        if idle and self._line_is_media(graph_literals(self.aio_graph(idx))):
+            return [idle]
+        return []
+
+    def run_graph_automation(self, vals=None, only=None):
+        """Runs the side-effect blocks of EVERY canvas.
+
+        Automation must not depend on which string happens to be on
+        rotation. A canvas holding nothing but Button -> Send Hotkey has
+        no Chatbox Output block at all, so it is never "the current
+        slot" - tying side effects to the visible canvas meant those
+        graphs silently did nothing, which is exactly what they looked
+        like they were doing.
+
+        Text is still the current canvas's job; this only walks the
+        blocks that act.
+        """
+        if self.cfg.get("aio_mode") != "advanced":
+            return
+        if vals is None:
+            vals = self._template_values("")
+            top, bottom = self.box_lines()
+            vals["box_start"] = top or None
+            vals["box_stop"] = bottom or None
+        slots = [only] if only is not None else range(AIO_MAX)
+        current = self.current_aio_index()
+        for idx in slots:
+            graph = self.aio_graph(idx)
+            # every canvas with anything on it, not just the ones with a
+            # side-effect block. Blocks that keep state (a pulse Timer, a
+            # Step) only move on during a commit, and skipping a canvas
+            # because it merely displays things left its Step sitting on
+            # page 1 forever.
+            if not graph.get("nodes"):
+                continue
+            try:
+                actions = graph_run_side_effects(
+                    graph, vals, osc=getattr(self, "osc_in", None),
+                    keys=getattr(self, "hotkey_in", None),
+                    procs=self.procs, shown=(idx == current),
+                    state=self._graph_state(idx))
+            except Exception as e:      # noqa: BLE001
+                self.log(f"Advanced mode: AIO {idx + 1} automation "
+                         f"failed ({e})")
+                continue
+            if actions:
+                self.run_graph_actions(actions)
+
+    def _graph_state(self, idx=None):
+        """Where the graph keeps what has to outlive one frame: when a
+        pulse timer last fired, what a Set parameter block last sent,
+        which Button is armed.
+
+        One namespace per canvas, because node ids are only unique
+        within a canvas - "n1" on AIO 1 and "n1" on AIO 2 are two
+        different blocks and must not share a timer.
+        """
+        if not hasattr(self, "_graph_runtime_state"):
+            self._graph_runtime_state = {}
+        if idx is None:
+            idx = getattr(self, "graph_slot", 0)
+        return self._graph_runtime_state.setdefault(int(idx), {})
+
+    def run_graph_actions(self, actions):
+        """Carries out what the commit pass asked for."""
+        for action in actions:
+            try:
+                if action[0] == "osc_set":
+                    self.send_avatar_parameter(action[1], action[2])
+                elif action[0] == "osc_raw":
+                    self.send_external_osc(action[1], action[2],
+                                           action[3], action[4])
+                elif action[0] == "hotkey":
+                    self.send_hotkey(action[1])
+                elif action[0] == "run_program":
+                    self.start_program(action[1], action[2])
+                elif action[0] == "aio_change":
+                    self._graph_change_aio(action[1])
+            except Exception as e:      # noqa: BLE001
+                self.log(f"Advanced mode: {action[0]} failed ({e})")
+
+    def _graph_change_aio(self, target):
+        """The Change AIO block. Jumps the rotation, and restarts the
+        dwell timer so the new string gets its full time on screen
+        instead of the remainder of the old one's."""
+        slots = self._aio_active_indices()
+        if not slots:
+            return
+        if target == "next":
+            self.aio_index += 1
+        elif target == "previous":
+            self.aio_index -= 1
+        else:
+            try:
+                wanted = int(target) - 1
+            except (TypeError, ValueError):
+                return
+            if wanted not in slots:
+                self.log(f"Change AIO: AIO {target} has no Chatbox Output "
+                         "block, staying where we are")
+                return
+            self.aio_index = slots.index(wanted)
+        self.aio_index %= max(1, len(slots))
+        if self.aio_timer.isActive():
+            self.aio_timer.start(self.aio_interval_ms())
+        self.log(f"Change AIO: now on AIO {self.current_aio_index() + 1}")
+
+    def send_external_osc(self, ip, port, address, value):
+        """One message to an arbitrary OSC target.
+
+        Clients are cached per (ip, port): a UDP socket per send would
+        work, but a graph that fires every few seconds would churn
+        through file descriptors for no reason.
+        """
+        ip = (ip or "").strip() or str(self.cfg.get("osc_ext_ip",
+                                                    "127.0.0.1"))
+        port = int(port) or int(self.cfg.get("osc_ext_port", 9002))
+        if not hasattr(self, "_ext_osc_clients"):
+            self._ext_osc_clients = {}
+        client = self._ext_osc_clients.get((ip, port))
+        if client is None:
+            if SimpleUDPClient is None:
+                self.log("External OSC: python-osc is not installed")
+                return
+            client = SimpleUDPClient(ip, port)
+            self._ext_osc_clients[(ip, port)] = client
+        client.send_message(address, value)
+        self.log(f"External OSC: {ip}:{port} {address} = {value!r}")
+
+    def reset_ext_osc_clients(self):
+        """Drops the cached clients so a changed default target is
+        picked up on the next send."""
+        self._ext_osc_clients = {}
+
+    def send_hotkey(self, combo):
+        """The Send Hotkey block. Failures are logged, not raised - a
+        missing key tool must not take the message down with it."""
+        if not hasattr(self, "hotkeys"):
+            self.hotkeys = HotkeySender(self.log)
+        ok, message = self.hotkeys.send(combo)
+        if ok:
+            self.log(f"Hotkey: {combo}")
+        else:
+            self.log(f"Hotkey {combo} failed: {message}")
+
+    def start_program(self, command, debug=False):
+        """The Start program block."""
+        ok, message = launch_program(command, debug)
+        if ok:
+            self.log(f"Started: {command}"
+                     + ("  (debug terminal)" if debug else ""))
+        else:
+            self.log(f"Could not start {command!r}: {message}")
+
+    def send_avatar_parameter(self, name, value):
+        """One /avatar/parameters/<name> write."""
+        if self.osc_client is None or not name:
+            return
+        self.osc_client.send_message(f"/avatar/parameters/{name}", value)
+        self.log(f"OSC out: /avatar/parameters/{name} = {value}")
+
+    def build_aio_lines(self, commit=False):
         """Builds the AIO output: one combined custom string with values
         from all active apps.
 
@@ -1829,7 +2571,16 @@ class AppsPageMixin:
         nothing be answered with the idle symbol instead of vanishing.
         """
         tpl = self.current_aio_template()
-        if not tpl:
+        advanced = self.aio_is_advanced()
+        if not tpl and not advanced:
+            return []
+        if advanced and self.current_aio_index() < 0:
+            # In Advanced mode "no literals" is not "nothing to show": a
+            # canvas whose only source is a Clock, a Timer or an Avatar
+            # parameter carries no written placeholder at all, and bailing
+            # on the empty string here made those graphs silently produce
+            # nothing. Whether the slot exists is the Output block's job
+            # to answer, and current_aio_index() already asks it.
             return []
         vals = self._template_values(tpl)
         # {box_start} / {box_stop}: place the Custom Box frame yourself
@@ -1839,8 +2590,15 @@ class AppsPageMixin:
         top, bottom = self.box_lines()
         vals["box_start"] = top or None
         vals["box_stop"] = bottom or None
+        # the middle text on its own, without the frame characters - for
+        # layouts that want the clock or the custom text but not the bar
+        # it usually sits in
+        vals["box_text"] = self._box_middle(SIDE_TOP) or \
+            self._box_middle(SIDE_BOTTOM) or None
 
         idle = self._aio_idle_text()
+        if self.aio_is_advanced():
+            return self._build_graph_lines(vals, idle)
         lines = []
         idle_used = False
         for tpl_line in tpl.split("\\n"):
@@ -2200,6 +2958,19 @@ class AppsPageMixin:
         return apply_style(name, c.get(f"hw_{which}_name_style",
                                        STYLE_NORMAL))
 
+    @staticmethod
+    def _watt_str(watts):
+        """Watts for a chatbox: no decimals above ten, one below.
+
+        A GPU at 213 W does not need a tenth of a watt, and an idle chip
+        at 4.2 W reads as a flat "4" without one.
+        """
+        try:
+            watts = float(watts)
+        except (TypeError, ValueError):
+            return None
+        return f"{watts:.0f}W" if watts >= 10 else f"{watts:.1f}W"
+
     def _hw_values(self, info):
         """Placeholder values for the custom string. They automatically
         follow the checkboxes above (unchecked -> empty / generic name)."""
@@ -2225,7 +2996,18 @@ class AppsPageMixin:
                 ram_parts.append(f"{ram['used']:.0f}/{ram['total']:.0f}GB")
             if c["hw_ram_pct"]:
                 ram_parts.append(f"{ram['pct']:.0f}%")
+        # Watts, behind their own checkboxes like every other sensor on
+        # the card. Both off by default - see ui/config_mixin.py. Empty
+        # whenever nothing reports a value: NVIDIA always does, AMD needs
+        # amdgpu's hwmon, and CPU watts need zenpower or readable RAPL
+        # counters (LibreHardwareMonitor on Windows).
+        gpu_power = gpu.get("power") if c["hw_gpu_power"] else None
+        cpu_power = info.get("cpu_power") if c["hw_cpu_power"] else None
         return {
+            "gpu_power": (self._watt_str(gpu_power)
+                          if gpu_power is not None else None),
+            "cpu_power": (self._watt_str(cpu_power)
+                          if cpu_power is not None else None),
             "gpu_name": gpu_name,
             "gpu_usage": (f"{gpu['usage']:.0f}%"
                           if c["hw_gpu_usage"] and gpu.get("usage") is not None else None),
@@ -2274,6 +3056,8 @@ class AppsPageMixin:
             vals.append(f"{gpu['usage']:.0f}%")
         if self.cfg["hw_gpu_temp"] and gpu.get("temp") is not None:
             vals.append(self._temp_str(gpu["temp"]))
+        if self.cfg["hw_gpu_power"] and gpu.get("power") is not None:
+            vals.append(self._watt_str(gpu["power"]))
         vram = []
         if self.cfg["hw_vram_used"] and gpu.get("vram_used") is not None and gpu.get("vram_total"):
             vram.append(f"{gpu['vram_used']:.0f}/{gpu['vram_total']:.0f}GB")
@@ -2293,6 +3077,8 @@ class AppsPageMixin:
             cvals.append(f"{info['cpu_usage']:.0f}%")
         if self.cfg["hw_cpu_temp"] and info.get("cpu_temp") is not None:
             cvals.append(self._temp_str(info["cpu_temp"]))
+        if self.cfg["hw_cpu_power"] and info.get("cpu_power") is not None:
+            cvals.append(self._watt_str(info["cpu_power"]))
         if cvals:
             lines.append(f"{cname}: " + " ".join(cvals))
         # ---------- RAM line ----------

@@ -148,6 +148,28 @@ PLACEHOLDER_ALIASES = {
     "groupworld": "group_world", "worldname": "group_world",
     "clock": "realtime", "time_now": "realtime", "pctime": "realtime",
     "instancetype": "instance_type", "instance": "instance_type",
+    # Power draw in watts. {gpu_watt} reads more naturally than
+    # {gpu_power} to most people, so both spellings work.
+    "gpu_watt": "gpu_power", "gpu_watts": "gpu_power",
+    "gpu_w": "gpu_power", "gpupower": "gpu_power",
+    "cpu_watt": "cpu_power", "cpu_watts": "cpu_power",
+    "cpu_w": "cpu_power", "cpupower": "cpu_power",
+    # Chat / Speech to Text / Text to Text (see the "Send as" dropdown on
+    # the Textbox page). {text_input} is what was typed or said,
+    # {text_output} what actually goes out - the translation, when there
+    # is one. {chat_*}, {stt_*} and {ttt_*} are the same pair narrowed to
+    # ONE source, so an All-in-one string can treat a spoken sentence
+    # differently from a typed one. They are real names of their own, not
+    # aliases - only the spellings below fold onto them.
+    "chatinput": "chat_input", "chat_in": "chat_input",
+    "chatoutput": "chat_output", "chat_out": "chat_output",
+    "chat": "chat_output", "chattext": "chat_output",
+    "sttinput": "stt_input", "stt_in": "stt_input",
+    "spoken": "stt_input", "said": "stt_input", "heard": "stt_input",
+    "sttoutput": "stt_output", "stt_out": "stt_output",
+    "tttinput": "ttt_input", "ttt_in": "ttt_input", "typed": "ttt_input",
+    "tttoutput": "ttt_output", "ttt_out": "ttt_output",
+    "textinput": "text_input", "textoutput": "text_output",
     # Custom Box frame lines (core/boxstyle.py). {box_start} is the line
     # above everything, {box_stop} the one below it.
     "box_top": "box_start", "box_open": "box_start", "boxstart": "box_start",
@@ -156,13 +178,39 @@ PLACEHOLDER_ALIASES = {
 }
 
 
-def apply_template(template: str, values: dict) -> str:
-    """Replaces {placeholders} (case-insensitive) and turns \\n into
-    real line breaks. Unknown/missing placeholders become empty.
+#: {text_t3}, {text_template3}, {text_tpl3_5}, {text_t03} - all the ways
+#: of naming "template 3" (and optionally slot 5 inside it). They are
+#: folded onto one canonical spelling, text_t<X>[_<N>], so the value side
+#: only has to answer one shape. See ui/pages/apps_page.py.
+_TEXT_TEMPLATE_RE = re.compile(
+    r"^text_(?:t|tpl|template)(\d{1,2})(?:_(\d{1,2}))?$")
 
-    {super/"word"} and {sub/"word"} are styled rather than substituted -
-    see core/textstyle.py. They are resolved after the placeholders, so
-    the content can be one: {super/{cpu_usage}} styles the value.
+
+def canonical_placeholder(key: str) -> str:
+    """The one spelling a placeholder name is looked up under.
+
+    A plain alias table cannot express the template placeholders: ten
+    templates times twenty slots is 200 names before counting the three
+    ways of writing "template", so they are matched with a pattern and
+    normalised here instead.
+    """
+    key = PLACEHOLDER_ALIASES.get(key, key)
+    m = _TEXT_TEMPLATE_RE.match(key)
+    if not m:
+        return key
+    slot = m.group(2)
+    return (f"text_t{int(m.group(1))}"
+            + (f"_{int(slot)}" if slot is not None else ""))
+
+
+def substitute_placeholders(template: str, values: dict) -> str:
+    """Replaces {placeholders} (case-insensitive) and nothing else.
+
+    Split out of apply_template so the node graph
+    (core/nodegraph_eval.py) can resolve a block's text without also
+    running the line clean-up on it: a Join separator of " | " has to
+    survive until the whole string is assembled, and the tidy pass would
+    eat it halfway through.
     """
     def rep(m):
         inner = m.group(1)
@@ -170,11 +218,17 @@ def apply_template(template: str, values: dict) -> str:
             # a style marker, not a placeholder name - hand it through
             # untouched or it would be looked up, missed and deleted
             return m.group(0)
-        key = inner.strip().lower().replace(" ", "_")
-        key = PLACEHOLDER_ALIASES.get(key, key)
+        key = canonical_placeholder(
+            inner.strip().lower().replace(" ", "_"))
         v = values.get(key)
         return "" if v is None else str(v)
-    text = re.sub(r"\{([^{}]+)\}", rep, template)
+    return re.sub(r"\{([^{}]+)\}", rep, template)
+
+
+def finish_template(text: str) -> str:
+    """The second half of apply_template: inline styles, \\n as a real
+    line break, and the per-line tidy that removes what empty
+    placeholders left behind."""
     text = apply_inline(text)
     text = text.replace("\\n", "\n")
     out = []
@@ -189,5 +243,16 @@ def apply_template(template: str, values: dict) -> str:
         if ln:
             out.append(ln)
     return "\n".join(out)
+
+
+def apply_template(template: str, values: dict) -> str:
+    """Replaces {placeholders} (case-insensitive) and turns \\n into
+    real line breaks. Unknown/missing placeholders become empty.
+
+    {super/"word"} and {sub/"word"} are styled rather than substituted -
+    see core/textstyle.py. They are resolved after the placeholders, so
+    the content can be one: {super/{cpu_usage}} styles the value.
+    """
+    return finish_template(substitute_placeholders(template, values))
 
 

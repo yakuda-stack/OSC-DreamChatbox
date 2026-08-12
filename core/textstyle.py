@@ -197,6 +197,63 @@ INLINE_KEY_RE = re.compile(
 
 INLINE_HINT = '{super/"word"}  {sub/"word"}'
 
+# --------------------------------------------------------------------
+# region tags:  {sup}...{/sup}   {sub}...{/sub}
+# --------------------------------------------------------------------
+# The slash form above styles ONE piece of content. That falls apart as
+# soon as the region should span several placeholders and the text
+# between them:
+#
+#     {super/{gpu_usage}} {super/"|"} {super/{gpu_temp}}     three markers
+#     {sup}{gpu_usage} | {gpu_temp}{/sup}                    one region
+#
+# It also cannot survive a value that contains a brace, because the slash
+# form has to stop at the first closing one. So the two forms coexist:
+# the slash form for a single word, the region tags for a stretch.
+#
+# An unclosed tag styles everything to the end of the string rather than
+# being dropped. Forgetting {/sup} in a 300 character field is easy, and
+# "the rest came out small" is a mistake you can see and fix instantly -
+# a marker that silently did nothing is not.
+_STYLE_WORD = r"(?:super(?:script)?|sup|sub(?:script)?)"
+REGION_TAG_RE = re.compile(
+    r"\{\s*(/?)\s*(" + _STYLE_WORD + r")\s*\}", re.IGNORECASE)
+
+#: recognises a bare {sup} / {/sup} so apply_template() leaves it alone
+#: instead of looking it up as a placeholder name and deleting it
+REGION_KEY_RE = re.compile(
+    r"^\s*/?\s*" + _STYLE_WORD + r"\s*$", re.IGNORECASE)
+
+REGION_HINT = '{sup}text{/sup}  {sub}text{/sub}'
+
+
+def apply_regions(text):
+    """Converts every {sup}...{/sup} / {sub}...{/sub} region.
+
+    Written as a scan rather than one regex because the interesting part
+    is the text BETWEEN the tags, and a nesting-free left-to-right walk
+    says exactly what happens: a tag switches the current style on or
+    off, everything passed over on the way is converted with whatever is
+    active. Tags are always removed, styled or not.
+    """
+    if not text or "{" not in text:
+        return text
+    out = []
+    pos = 0
+    style = None
+    for m in REGION_TAG_RE.finditer(text):
+        chunk = text[pos:m.start()]
+        out.append(apply_style(chunk, style) if style else chunk)
+        pos = m.end()
+        if m.group(1):                      # a closing tag
+            style = None
+        else:
+            style = STYLE_SUB if m.group(2).lower().startswith("sub") \
+                else STYLE_SUPER
+    tail = text[pos:]
+    out.append(apply_style(tail, style) if style else tail)
+    return "".join(out)
+
 
 def apply_inline(text):
     """Converts every {super/…} / {sub/…} marker in ``text``.
@@ -218,10 +275,20 @@ def apply_inline(text):
             content = content[1:-1]
         return apply_style(content, style)
 
-    return INLINE_RE.sub(rep, text)
+    # The slash form first: it is the innermost of the two, so a
+    # {super/"x"} sitting inside a {sup} region is already a finished
+    # string by the time the region walk reaches it. (Converting an
+    # already converted character is harmless anyway - modifier letters
+    # are not in the maps and pass straight through.)
+    return apply_regions(INLINE_RE.sub(rep, text))
 
 
 def is_inline_marker(inner):
     """True for the inside of a ``{...}`` that is a style marker rather
-    than a placeholder name."""
-    return bool(INLINE_KEY_RE.match(inner or ""))
+    than a placeholder name - either form.
+
+    apply_template() deletes what it cannot resolve, so without this a
+    bare {sup} would be gone before apply_inline() ever saw it.
+    """
+    inner = inner or ""
+    return bool(INLINE_KEY_RE.match(inner) or REGION_KEY_RE.match(inner))

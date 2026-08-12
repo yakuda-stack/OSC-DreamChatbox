@@ -1,9 +1,0 @@
-{
-  "_comment": "Plugin store catalogue. Paste the GitHub URL of a plugin folder - name, version, author, description and preview image are read from its own plugin.json. Refresh in the store always downloads this file from 'self_url' and caches it in ~/.config/OSC-DreamChatbox/plugins.json, so AppImage and AUR users get new plugins without updating the app. 'version' is optional and only matters if a later app release ships a newer catalogue than the cached one. Private additions belong in ~/.config/OSC-DreamChatbox/plugins_sources.json, which is never overwritten.",
-  "version": "1.0.0",
-  "self_url": "https://raw.githubusercontent.com/yakuda-stack/OSC-DreamChatbox/main/config/plugins.json",
-  "sources": [
-    "https://github.com/yakuda-stack/Dream-Chatbox-Plugins/tree/main/plugins/world_stats",
-    "https://github.com/yakuda-stack/Dream-Chatbox-Plugins/tree/main/template/hello_world"
-  ]
-}

@@ -16,7 +16,8 @@ image – is read from the plugin's own ``plugin.json``, the same file the
 author already maintains. Two extra keys are used by the store only:
 
     "image":   "logo.png"           file in the plugin folder, or a URL
-    "summary": "one-line teaser"    falls back to "description"
+    "short_description": "one-line teaser"   falls back to "description"
+                                    ("summary" is the older spelling)
 
 If ``image`` is missing or points at a file that isn't there, a handful of
 conventional names are tried before giving up, so a plugin folder with a
@@ -487,7 +488,11 @@ class PluginStore:
         except (TypeError, ValueError):
             entry.api_needed = 1
         entry.min_app = str(data.get("min_app") or "").strip()
-        entry.summary = str(data.get("summary") or entry.description)
+        # one line for the tiles. "short_description" is the documented
+        # key, "summary" the older spelling the catalogue started with -
+        # both mean the same, and the long description is the fallback.
+        entry.summary = str(data.get("short_description")
+                            or data.get("summary") or entry.description)
         image = str(data.get("image") or "").strip()
         if image:
             entry.image_url = image if image.startswith(("http://", "https://")) \

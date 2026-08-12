@@ -209,7 +209,7 @@ Types: `text` `bool` `int` `slider` `choice` `group`.
 {
   "name": "OSCLeash", "id": "oscleash", "version": "1.1.0",
   "author": "yakuda", "main": "main.py", "image": "logo.png",
-  "description": "...", "summary": "one line for the store",
+  "description": "...", "short_description": "one line for the list",
   "Github": "github.com/yakuda-stack",
   "enabled": false,
   "api": 2, "min_app": "v1.3.2",
@@ -224,6 +224,14 @@ Types: `text` `bool` `int` `slider` `choice` `group`.
 `id` must match the folder name and the `[a-z0-9_-]` rule — it is used as
 a python module name. `global_placeholders` claims names without the id
 prefix; a built-in value always wins, so a plugin cannot hijack one.
+
+`short_description` is optional and holds the one line the **Installed
+list** shows; `description` stays the full text and is what the info
+popup and the store detail page show. Without it the list falls back to
+`description`, so no existing manifest changes appearance — it only
+exists so a long description does not have to make the row tall.
+`summary`, the key the store has always read, is accepted as the same
+thing, so writing either one is enough.
 
 ---
 

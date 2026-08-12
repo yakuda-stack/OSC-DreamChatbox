@@ -81,12 +81,15 @@ Where a platform genuinely cannot do something, the value stays empty and the ca
 ### 🖥️ Hardware
 - Live **GPU / VRAM / CPU / RAM** stats (Linux: sysfs + nvidia-smi · Windows: Win32 API, nvidia-smi and GPU performance counters)
 - Auto-detected or custom GPU/CPU names, temps as `°C` or 🔥
+- **Power draw in watts** – one tick per section puts it on the line next to the temperature (`GPU: 68% 61°C 213W`) and fills `{gpu_power}` / `{cpu_power}`. Off by default, so no existing line gets longer without being asked. NVIDIA always reports it; AMD needs amdgpu's hwmon node, CPU watts need zenpower or readable RAPL counters, and on Windows both come from LibreHardwareMonitor
 - **FPS** – neither OS can read a game's frame rate on its own, so it comes from an overlay that already sits inside VRChat. **Linux:** MangoHud's log, point the card at the folder and add the launch options shown there. **Windows:** RTSS (ships with MSI Afterburner) – nothing to configure, the card links the download
-- Custom string with placeholders: `{gpu_name} {gpu_usage} {gpu_temp} {temp_icon} {vram_usage} {cpu_name} {cpu_usage} {cpu_temp} {ram_usage} {ram_type} {fps}`
+- Custom string with placeholders: `{gpu_name} {gpu_usage} {gpu_temp} {gpu_power} {temp_icon} {vram_usage} {cpu_name} {cpu_usage} {cpu_temp} {cpu_power} {ram_usage} {ram_type} {fps}`
 
 ### 🧩 All in one (AIO)
 - Combine **everything into one master string** – up to 5 rotating layouts
 - **10 switchable AIO templates**, each with its own set of strings – flip between a gaming, a music and a minimal layout with one click, same as the Personal Status templates
+- **Multi-line fields**: each string field is 3 rows tall and shows the message the way it comes out. **Shift+Enter** starts a new chatbox line (stored as `\n`, so existing strings and hand-typed `\n` keep working). The field grows with the text; drag the bottom edge to pin a height, double-click it to grow again
+- **Custom time per string**: tick it on a field and that one string stays on screen for its own number of seconds instead of the shared *Rotate strings every N sec* – the next string is back to the shared value unless it carries its own
 - All placeholders from every app work here, incl. `{text_1}…{text_20}`, `{time_status}`, `{time_end}`, plus every active plugin as `{plugin_id}`
 - **Parameters** – an expander at the bottom of the card listing the complete vocabulary: **Software parameters** (everything the app produces, grouped by app) and **External parameters** (every installed plugin with its `{<id>}` and `{<id>_<key>}` values). Selectable text, rebuilt whenever the plugin list changes
 

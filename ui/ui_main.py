@@ -190,6 +190,82 @@ QCheckBox::indicator {
 QCheckBox::indicator:checked { background: #5b8dc9; border-color: #5b8dc9; }
 QCheckBox::indicator:hover { border-color: #5b8dc9; }
 QPlainTextEdit { background: #0d0f13; }
+/* the multi-line AIO template fields - same look as a QLineEdit, with
+   room at the bottom for the drag-to-resize grip (ui/aio_edit.py) */
+#aioedit {
+    background: #14161c; border: 1px solid #333947; border-radius: 8px;
+    padding: 6px 8px 10px 8px; color: #e5e9ef;
+    selection-background-color: #5b8dc9;
+}
+#aioedit:focus { border-color: #5b8dc9; }
+#aioedit:hover { border-color: #444c5c; }
+/* Normal / Advanced switch at the top of the All in one card */
+#modebtn {
+    background: #232833; border: 1px solid #333947; border-radius: 8px;
+    padding: 6px 16px; color: #aeb4bf; font-weight: 600;
+}
+#modebtn:hover { border-color: #5b8dc9; }
+#modebtn:checked {
+    background: #5b8dc9; border-color: #5b8dc9; color: #ffffff;
+}
+/* AIO slot tabs above the node canvas (ui/pages/advanced_page.py).
+   Browser-tab shape: rounded on top, flat where they meet the canvas. */
+#slottab {
+    background: transparent; border: 1px solid transparent;
+    border-bottom: 2px solid #333947; border-radius: 8px;
+    border-bottom-left-radius: 0; border-bottom-right-radius: 0;
+    padding: 6px 8px; color: #7a8290; font-weight: 600;
+}
+/* collapse button inside a side panel's header row */
+#panelhide {
+    background: #232833; border: 1px solid #333947; border-radius: 5px;
+    color: #aeb4bf; font-size: 12px; font-weight: 700; padding: 0;
+}
+#panelhide:hover { background: #2f3542; color: #ffffff;
+                   border-color: #5b8dc9; }
+/* the folder / running-programs buttons on a picker field */
+#pickbtn {
+    background: #232833; border: 1px solid #333947; border-radius: 5px;
+    color: #aeb4bf; font-size: 12px; padding: 0;
+}
+#pickbtn:hover { background: #2f3542; color: #ffffff;
+                 border-color: #5b8dc9; }
+/* the record button on a hotkey field */
+#recordbtn {
+    background: #232833; border: 1px solid #333947; border-radius: 5px;
+    color: #aeb4bf; font-size: 12px; padding: 0;
+}
+#recordbtn:hover { border-color: #5b8dc9; color: #ffffff; }
+#recordbtn:checked {
+    background: #c95b5b; border-color: #c95b5b; color: #ffffff;
+}
+/* the tab that stays behind once a side panel is collapsed */
+#panelshow {
+    background: #232833; border: 1px solid #5b8dc9; border-radius: 6px;
+    color: #e5e9ef; font-size: 13px; font-weight: 700; padding: 0;
+}
+#panelshow:hover { background: #5b8dc9; color: #ffffff; }
+#slottab:hover { color: #e5e9ef; border-bottom-color: #444c5c; }
+#slottab:checked {
+    background: #232833; border-color: #333947;
+    border-bottom: 2px solid #5b8dc9; color: #ffffff;
+}
+#slottab:disabled { color: #3a3f4a; border-bottom-color: #2c313c; }
+/* node editor (ui/nodegraph.py). The canvas paints its own background
+   and items - only the frame around it is styled here. */
+#nodecanvas {
+    background: #14161c; border: 1px solid #333947; border-radius: 10px;
+}
+#nodepalette {
+    background: #14161c; border: 1px solid #333947; border-radius: 8px;
+    padding: 2px; color: #d7dbe2;
+}
+#nodepalette::item {
+    background: #232833; border: 1px solid #333947; border-radius: 6px;
+    padding: 4px 8px;
+}
+#nodepalette::item:hover { border-color: #5b8dc9; }
+#nodepalette::item:selected { background: #2f3542; color: #ffffff; }
 QScrollArea { border: none; background: #14161c; }
 QScrollBar:vertical {
     background: #14161c; width: 10px; margin: 0; border: none;

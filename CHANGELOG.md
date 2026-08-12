@@ -6,6 +6,157 @@ All notable changes to OSC-DreamChatbox are documented here.
 
 🟢 Linux Support: Complete & Stable (v1.2.6)
 
+## [v1.4.0] – 2026-08-10
+
+**A visual way to build the All-in-one string, a link to the avatar in
+both directions, and the app can now reach outside itself.** Everything
+since v1.3.2 in one release.
+
+### Added
+
+**Advanced mode — a node canvas for the All-in-one string**
+
+- A **Mode switch** at the top of the All in one card: *Normal* is the
+  text fields exactly as before, *Advanced* points at the new canvas.
+  Nothing is converted when you switch, so it is reversible at any time.
+- A new **Advanced tab** in the sidebar: blocks palette on the left, the
+  canvas in the middle, the selected block's values on the right. Both
+  side panels fold away. Drag a block out of the palette, drag from an
+  output dot to an input dot to wire it; middle mouse pans, the wheel
+  zooms, Delete removes the selection.
+- **One canvas per AIO string**, picked with tabs above the canvas, and
+  each of the ten AIO templates keeps its own set of canvases alongside
+  its strings and dwell times. Up to **10 strings** now, not 5.
+- **34 blocks.** Sources (Text, Placeholder, Personal Status, Status
+  text, GPU, CPU, RAM & System, MediaPlay, Chat/STT, Clock, Custom Box),
+  Text (Join with 2–10 inputs, Format, Info, Style, Truncate, Line
+  break), Logic (If/Else, Compare, Has value), Flow (Timer, Step,
+  Button, Change AIO), OSC, Output, System and Hotkeys.
+- **Info + Step** let several pages take turns in one Chatbox Output and
+  start over by themselves; **Chatbox Output → Shown?** into a **Timer**
+  times something from the moment a string appears.
+- Every placeholder a typed string can use is **draggable out of a
+  grouped Variables list**, plugins included.
+
+**Talking to VRChat and to everything else**
+
+- **OSC input**: a listener that keeps the last value of every avatar
+  parameter, with a picker so names are chosen rather than typed, plus
+  blocks to read them and to write bool/int/float back.
+- **External OSC in/out** for any address, so other tools on the machine
+  can drive the chatbox and be driven by it.
+- **Send Hotkey / Get Hotkey**: press a key combination at the operating
+  system, or react to one pressed anywhere. SendInput on Windows;
+  xdotool, wtype or ydotool on Linux, with python-evdev for watching.
+- **Program running / Start program**: notice that VRChat came up and
+  launch things with it, optionally in a terminal window for debugging.
+- Blocks with side effects run **only on a real send, never on the
+  preview**, and Advanced mode ticks once a second so a Timer keeps its
+  own time rather than the send interval's.
+
+**Elsewhere**
+
+- **`short_description` in plugin.json** — an optional one-liner for the
+  Installed list, so a plugin with a long `description` no longer makes
+  its row three lines tall. Missing means the list keeps showing
+  `description`, exactly as before, and the full text is still the
+  tooltip on the row and the body of the store page. `summary`, the key
+  the store already read, counts as the same thing.
+- **One-click update in the Installed list**: a plugin with a newer
+  version on GitHub gets an **Update to vX** button right in its row,
+  next to the version. It downloads and installs on the spot and keeps
+  the plugin's settings — no trip to the Store tab and no "Update all"
+  for a single plugin. Opening the Plugins page loads the catalogue once
+  per session in the background so the button can appear at all; if
+  GitHub is unreachable the page simply stays as it is.
+- **"Update all (n)" above the Installed list** when more than one
+  plugin has an update waiting — the same operation as the button on the
+  Store tab, reachable from the list it is about. Both buttons are
+  disabled while it runs and the tooltip names what is going to be
+  pulled in.
+- Which plugins count as "has an update" is now decided in **one place**
+  for the row buttons, both "Update all" buttons and the counter on the
+  Store tab, so they can no longer disagree. An entry that could not be
+  read is left out — the download would fail anyway — and so is one
+  whose new version does not run on this system, which previously meant
+  "Update all" could install a plugin straight into a greyed out row.
+- **`{box_text}`** — the Custom Box middle text on its own.
+- **Say when a translation is running** (on by default): the gap between
+  speaking and the translation arriving says `Translate …` instead of
+  leaving the previous message up. Shows in `{text_output}` too.
+- The **"+" placeholder picker** on the Hardware, MediaPlay and plugin
+  custom fields; **CPU and GPU watts**; multi-line All-in-one fields with
+  Shift+Enter; **per-string dwell times**; message placeholders split by
+  source (`{stt_input}`, `{chat_output}`, …); reaching into a Personal
+  Status template that is not the active one.
+
+### Changed
+
+- **With All in one active, the Custom Box no longer wraps the message.**
+  The frame appears exactly where `{box_start}`, `{box_stop}` or
+  `{box_text}` are, and nowhere else. Previously the wrap came back
+  around every string that did not carry the placeholders, and sat
+  outside the plugin lines as well. With All in one off, unchanged.
+- **The Chat card has no "Send as" dropdown any more — it is always
+  Standard.** Typing a message and pressing Send means "put this in the
+  chatbox now". The dropdown, *Position* and *Keep for* moved to the To
+  Text card, which is where the other two routes were ever useful. An
+  existing setting carries over on first load.
+- `apply_template()` is now `finish_template(substitute_placeholders(…))`
+  — same behaviour, split so the node evaluator can resolve placeholders
+  without running the line clean-up on a half-built string.
+- **`core/` had a second copy of the whole project committed inside it**
+  (`core/ui/`, `core/core/`, the README, the launcher, the requirements
+  files, and more). All of it stale, none of it imported. Removed.
+
+### Fixed
+
+- **Speech to Text could freeze the whole app, and on Wayland the
+  desktop**, when leaving VR. Device enumeration moved off the GUI
+  thread with timeout guards.
+- **CPU and GPU watts**: a GPU read could suppress the "no CPU power
+  sensor" warning; the hwmon lookup re-globbed sysfs on every poll; Zen
+  4/5 machines reported nothing where the counter exists; AMD sensors
+  could come from the integrated card instead of the discrete one; an
+  empty value now explains itself.
+- **A microphone that is gone is reported** instead of silently falling
+  back to the system default, and one that dies mid-recording is
+  noticed.
+- **stderr could vanish for the rest of the session** after the
+  ALSA-noise suppression.
+- **Hotkeys with named keys were sent in the wrong spelling** — X keysyms
+  are case sensitive where the people typing them are not, so F13–F24,
+  Escape, Return, the arrows, Delete and the media keys did nothing. On
+  Windows the keystroke carried no scan code and no extended-key flag,
+  which games ignore and which turned Delete into a numpad decimal
+  point.
+- **The process list was full of kernel threads**, and which backend
+  produced it depended on whether psutil happened to be installed.
+- A **canvas whose sources carry no written placeholder** (a Clock, a
+  Timer, an Avatar parameter) produced nothing at all.
+- A **canvas that only automates** — Button into Send Hotkey, with no
+  Chatbox Output — never ran.
+- A **second Chatbox Output block on the same canvas** was ignored
+  without saying so; the status line now says how many there are.
+- **All in one never rotated in Normal mode** — it stayed on AIO 1 no
+  matter what "Rotate strings every" said. The timer was started for the
+  rotation and then stopped again by the branch that starts the Advanced
+  mode tick, so only Advanced mode ever rotated. Rotation and the tick
+  are now decided separately, and switching All in one off is the only
+  thing that sends the rotation back to the first string.
+- **A rotated All-in-one string only reached VRChat at the next send
+  interval** in Normal mode, so a string with a short "Custom time"
+  could be over before it was ever shown. It now goes out as soon as the
+  rate limit allows, the way a rotated Personal Status text does.
+
+### Notes
+
+No existing config is touched. Every new key is absent from configs
+written before this release and falls back to the old behaviour, and the
+one shared "Send as" setting is carried over to the To Text card on first
+load. Node graphs are stored as ordinary JSON in the config file; an
+unknown block from a newer version costs that block, not the file.
+
 ## [v1.3.2] – 2026-08-03
 
 **Plugin settings got a real layout, and the chatbox got smaller letters.**

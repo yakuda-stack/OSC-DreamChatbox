@@ -177,6 +177,7 @@ class PluginsPageMixin:
         self.plugin_expanders = {}
         self.plugin_inputs = {}
         self.plugin_option_widgets = {}
+        self.plugin_update_btns = {}
 
         # ------------------------------------------------ actions card
         card = QFrame()
@@ -209,6 +210,23 @@ class PluginsPageMixin:
         install_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         install_btn.clicked.connect(self.on_install_plugin_zip)
         btn_row.addWidget(install_btn)
+
+        # ---- only appears when the catalogue knows of newer versions.
+        # Same job as the button on the Store tab, but reachable from the
+        # list it is actually about: somebody looking at three rows with
+        # an update badge should not have to change tab to press one
+        # button.
+        self.installed_update_btn = QPushButton("\u2B07  Update all")
+        self.installed_update_btn.setFixedHeight(34)
+        self.installed_update_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.installed_update_btn.setStyleSheet(
+            "QPushButton { background: #2b3a4d; border: 1px solid #5b8dc9;"
+            " border-radius: 8px; color: #cfe0f5; padding: 0 14px; }"
+            "QPushButton:hover { background: #34495f; }"
+            "QPushButton:disabled { border-color: #3a4152; color: #7a8290; }")
+        self.installed_update_btn.setVisible(False)
+        self.installed_update_btn.clicked.connect(self.on_store_update_all)
+        btn_row.addWidget(self.installed_update_btn)
 
         open_btn = QPushButton("\U0001F4C2  Open plugins folder")
         open_btn.setObjectName("linkbtn")
@@ -280,6 +298,8 @@ class PluginsPageMixin:
         self.plugin_expanders = {}
         self.plugin_inputs = {}
         self.plugin_dependents = {}
+        # pid -> the "Update to vX" button in that row
+        self.plugin_update_btns = {}
         # (pid, key) -> the widget showing that option, so a plugin
         # writing a value with api.set() is reflected on screen
         self.plugin_option_widgets = {}
@@ -295,6 +315,9 @@ class PluginsPageMixin:
         active = sum(1 for p in plugins if p.enabled)
         self.plugin_count_lbl.setText(
             f"{active} of {len(plugins)} active" if plugins else "")
+        # the row buttons were set while they were built; the one above
+        # the list counts them, so it is the list's job to update it
+        self._sync_update_all_button()
         # the Apps page lists the same plugins under All in one ->
         # Parameters; rebuilding it here is what keeps the two in step
         # after a rescan, an install or an enable/disable
@@ -370,12 +393,38 @@ class PluginsPageMixin:
             warn.setStyleSheet("color: #d9884a; font-size: 12px;")
             warn.setToolTip(plugin.error)
             head.addWidget(warn)
+        # ---- one-click update, hidden unless the store knows of a newer
+        # version. Built for every row (not only the ones with an update
+        # pending) so the catalogue arriving later can simply switch it
+        # on - see sync_plugin_update_buttons().
+        upd_btn = QPushButton("")
+        upd_btn.setFixedHeight(24)
+        upd_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        upd_btn.setStyleSheet(
+            "QPushButton { background: #2b3a4d; border: 1px solid #5b8dc9;"
+            " border-radius: 6px; color: #cfe0f5; padding: 0 10px;"
+            " font-size: 12px; }"
+            "QPushButton:hover { background: #34495f; }"
+            "QPushButton:disabled { border-color: #3a4152;"
+            " color: #7a8290; }")
+        upd_btn.setVisible(False)
+        upd_btn.clicked.connect(
+            lambda _, pid=plugin.pid: self.on_plugin_update(pid))
+        head.addWidget(upd_btn)
+        self.plugin_update_btns[plugin.pid] = upd_btn
+        self._sync_plugin_update_button(plugin.pid)
         head.addStretch()
         texts.addLayout(head)
 
-        sub = QLabel(plugin.description or "\u2013")
+        # the list shows the SHORT description when the manifest has one,
+        # so a row stays one line high no matter how much the author
+        # wrote. The long text is still reachable: as the tooltip here,
+        # and in full on the store page.
+        sub = QLabel(plugin.summary or "\u2013")
         sub.setObjectName("dim")
         sub.setWordWrap(True)
+        if plugin.description and plugin.description != plugin.summary:
+            sub.setToolTip(plugin.description)
         texts.addWidget(sub)
         if not plugin.supported:
             for lbl in (sub,):
@@ -451,6 +500,154 @@ class PluginsPageMixin:
         content.setVisible(False)
         return row
 
+    # ------------------------------------------------- updates per row
+    def _store_entry_for(self, pid):
+        """The catalogue entry belonging to an installed plugin, or None.
+
+        None is the normal state until the store has been loaded once -
+        the Installed tab must work offline, so everything built on this
+        is optional decoration, never a requirement.
+        """
+        store = getattr(self, "store", None)
+        if store is None or not pid:
+            return None
+        for entry in store.entries:
+            if entry.pid == pid:
+                return entry
+        return None
+
+    @staticmethod
+    def _update_pending(entry):
+        """Is this catalogue entry an update worth offering?
+
+        An entry that could not be read is skipped because the download
+        would fail anyway, and one whose NEW version does not run here is
+        skipped because installing it would only grey the plugin out -
+        entry.supported describes the version on GitHub, not the one on
+        disk.
+        """
+        return bool(entry is not None and entry.has_update
+                    and entry.supported and not entry.error)
+
+    def pending_updates(self):
+        """Catalogue entries that are installed AND worth updating.
+
+        One definition for all three places that ask (the row buttons,
+        "Update all" on either tab, the counter on the Store tab), so
+        they can never disagree about how many updates there are.
+        """
+        store = getattr(self, "store", None)
+        if store is None:
+            return []
+        return [e for e in store.entries if self._update_pending(e)]
+
+    def _sync_plugin_update_button(self, pid):
+        """Shows or hides one row's update button against the catalogue."""
+        btn = getattr(self, "plugin_update_btns", {}).get(pid)
+        if btn is None:
+            return
+        entry = self._store_entry_for(pid)
+        pending = self._update_pending(entry)
+        btn.setVisible(pending)
+        if not pending:
+            return
+        new = entry.version.lstrip("v")
+        btn.setText(f"\u2B06  Update to v{new}")
+        btn.setEnabled(not self._store_busy)
+        btn.setToolTip(
+            f"v{entry.installed_version.lstrip('v')} is installed, "
+            f"v{new} is on GitHub.\nDownloads and installs it right away - "
+            f"your settings for this plugin are kept.")
+
+    def _sync_update_all_button(self):
+        """The "Update all" button on the Installed tab."""
+        btn = getattr(self, "installed_update_btn", None)
+        if btn is None:
+            return
+        pending = self.pending_updates()
+        btn.setVisible(bool(pending))
+        if not pending:
+            return
+        btn.setText(f"\u2B07  Update all ({len(pending)})")
+        btn.setEnabled(not self._store_busy)
+        names = ", ".join(e.name for e in pending[:6])
+        btn.setToolTip(
+            f"Newer versions on GitHub: {names}"
+            f"{' \u2026' if len(pending) > 6 else ''}\n"
+            f"Downloads and installs all of them - your settings are kept.")
+
+    def sync_plugin_update_buttons(self):
+        """Re-checks every row after the catalogue changed.
+
+        Deliberately not refresh_plugin_list(): the store refresh lands
+        seconds after the page was opened, and rebuilding the rows then
+        would collapse a Settings block somebody just opened.
+        """
+        for pid in list(getattr(self, "plugin_update_btns", {})):
+            self._sync_plugin_update_button(pid)
+        self._sync_update_all_button()
+
+    def scan_plugin_updates(self):
+        """One quiet catalogue load per session, triggered by opening the
+        Plugins page. Without it the Installed tab could only ever show
+        an update after a visit to the Store tab.
+
+        Reuses on_store_refresh() so there is exactly one code path that
+        talks to GitHub - including its error handling and its image
+        cache, which is what keeps the Store tab instant afterwards.
+        """
+        if getattr(self, "_store_scanned", False) or self._store_busy:
+            return
+        if not self.plugins.plugins:
+            return          # nothing installed - nothing to compare
+        self._store_scanned = True
+        self.on_store_refresh()
+
+    def on_plugin_update(self, pid):
+        """The row button: download and install the newer version."""
+        entry = self._store_entry_for(pid)
+        if entry is None or not entry.has_update or self._store_busy:
+            return
+        self._store_busy = True
+        name = entry.name or pid
+        btn = self.plugin_update_btns.get(pid)
+        if btn is not None:
+            btn.setEnabled(False)
+            btn.setText("Updating \u2026")
+
+        def work():
+            try:
+                self.store.install(entry, self.plugins)
+                return (True, name, "")
+            except (StoreError, PluginError) as e:
+                return (False, name, str(e))
+            except Exception as e:     # noqa: BLE001 - never kill the window
+                return (False, name, f"{type(e).__name__}: {e}")
+
+        self.run_async(
+            work, self._on_plugin_updated, interval=250,
+            # the busy flag is set above, so a failure that never reaches
+            # work()'s own except has to clear it here or the Store tab
+            # stays frozen for the rest of the session
+            on_error=lambda e, n=name: self._on_plugin_updated(
+                (False, n, f"{type(e).__name__}: {e}")))
+
+    def _on_plugin_updated(self, result):
+        ok, name, err = result
+        self._store_busy = False
+        if ok:
+            self.log(f"Store: updated '{name}'")
+        else:
+            QMessageBox.warning(self, "Update failed",
+                                f"'{name}' could not be updated:\n\n{err}")
+            self.log(f"Store: update of '{name}' failed: {err}")
+        # no network: the catalogue is unchanged, only our own folder is
+        self.store.sync_installed(self._installed_versions())
+        self.refresh_plugin_list()
+        self._update_plugin_timer()
+        self.refresh_store_grid()
+        self.update_preview()
+
     def _build_plugin_settings(self, plugin):
         """The collapsible body: custom string + whatever the plugin
         declared under "settings" in its plugin.json."""
@@ -487,6 +684,20 @@ class PluginsPageMixin:
         edit.textChanged.connect(
             lambda text, pid=plugin.pid: self.plugins.set_template(pid, text))
         row.addWidget(edit, 1)
+
+        plus = QPushButton("+")
+        plus.setObjectName("iconbtn")
+        plus.setFixedSize(30, 30)
+        plus.setCursor(Qt.CursorShape.PointingHandCursor)
+        plus.setToolTip(
+            "Insert a placeholder or a formatting tag at the cursor.\n"
+            "Only plugin values are offered: a plugin template is rendered "
+            "against the plugin values alone, so a hardware or media name "
+            "would come out empty here.")
+        plus.clicked.connect(
+            lambda _=False, e=edit, b=plus, pid=plugin.pid:
+                self.open_placeholder_menu(e, b, scope="plugin", pid=pid))
+        row.addWidget(plus)
 
         reset = QPushButton("\u21BA")
         reset.setObjectName("iconbtn")
@@ -1020,7 +1231,7 @@ class PluginsPageMixin:
                                       i // per_row, i % per_row)
         # keep the tiles left-aligned instead of stretched apart
         self.store_grid.setColumnStretch(per_row, 1)
-        updates = sum(1 for e in entries if e.has_update)
+        updates = len(self.pending_updates())
         self.store_update_btn.setVisible(updates > 0)
         self.store_update_btn.setText(f"\u2B07  Update all ({updates})")
         if self.store.last_error:
@@ -1190,6 +1401,7 @@ class PluginsPageMixin:
         self.store.sync_installed(self._installed_versions())
         self.refresh_store_grid()
         self.show_store_detail()
+        self.sync_plugin_update_buttons()
 
     def on_store_open_github(self):
         entry = self._current_store_entry()
@@ -1234,6 +1446,9 @@ class PluginsPageMixin:
             btn = getattr(self, name, None)
             if btn is not None:
                 btn.setEnabled(True)
+        # the per-plugin buttons are disabled while a job runs, so they
+        # belong to "put the page back into a usable state" as well
+        self.sync_plugin_update_buttons()
         if message:
             self.log(f"Store: {message}")
             if getattr(self, "store_status", None) is not None:
@@ -1244,6 +1459,8 @@ class PluginsPageMixin:
         self.store_refresh_btn.setEnabled(True)
         self.refresh_store_grid()
         self.sync_catalogue_button()
+        # the Installed rows carry the same information now
+        self.sync_plugin_update_buttons()
 
     def sync_catalogue_button(self):
         """Shows the up-arrow only while an update is actually pending."""
@@ -1343,6 +1560,7 @@ class PluginsPageMixin:
             self.log(f"Store: plugin update check failed: {err}")
             return
         self.sync_catalogue_button()
+        self.sync_plugin_update_buttons()
         if not pending:
             self.log("Store: all plugins are up to date")
             return
@@ -1360,11 +1578,21 @@ class PluginsPageMixin:
             self.on_store_update_all()
 
     def on_store_update_all(self):
-        pending = [e for e in self.store.entries if e.has_update]
+        """Re-download every installed plugin with a newer version.
+
+        Reached from the Store tab and from the Installed tab; both
+        buttons are the same operation, so both are disabled while it
+        runs.
+        """
+        pending = self.pending_updates()
         if not pending or self._store_busy:
             return
         self._store_busy = True
         self.store_update_btn.setEnabled(False)
+        if getattr(self, "installed_update_btn", None) is not None:
+            self.installed_update_btn.setEnabled(False)
+            self.installed_update_btn.setText(
+                f"Updating {len(pending)} plugin(s) \u2026")
         self.store_status.setText(f"Updating {len(pending)} plugin(s) \u2026")
 
         def work():
@@ -1390,6 +1618,10 @@ class PluginsPageMixin:
         if failed:
             QMessageBox.warning(self, "Some updates failed",
                                 "\n".join(failed))
+        # mark what is on disk BEFORE the rows are rebuilt, or every row
+        # that was just updated would come back with its update button
+        # still on until the refresh below lands
+        self.store.sync_installed(self._installed_versions())
         self.refresh_plugin_list()
         self._update_plugin_timer()
         self.on_store_refresh()

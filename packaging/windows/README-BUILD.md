@@ -166,7 +166,7 @@ settings, plugins or themes with it when it disappears.
 iscc packaging\windows\installer.iss
 ```
 
-Produces `dist\OSC-DreamChatbox-1.3.0-setup.exe`.
+Produces `dist\OSC-DreamChatbox-1.4.0-setup.exe`.
 
 The script installs per-user (`PrivilegesRequired=lowest`), so there is
 no UAC prompt at install time. Start-menu entry, optional desktop icon,

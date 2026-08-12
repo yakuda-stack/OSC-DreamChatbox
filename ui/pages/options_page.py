@@ -21,6 +21,7 @@ from core.theming import (
     resolve_tokens, theme_ids, theme_name)
 from core.constants import (
     CHATBOX_INPUT, DISCORD_URL, DONATE_URL, GITHUB_REPO, OSC_MIN_SEND_GAP_SEC, OSC_RATE_MAX_SENDS, OSC_RATE_WINDOW_SEC, VERSION, VRCHAT_GROUP_URL)
+from core.oscin import DEFAULT_IN_PORT
 from core.oscquery import HAS_ZEROCONF
 from core.osinfo import IS_WINDOWS, OS_NAME
 from ui.ui_main import ToggleLabel, ToggleSwitch
@@ -83,6 +84,103 @@ class OptionsPageMixin:
         qc.addWidget(self.oscq_status)
         if not HAS_ZEROCONF:
             self.toggle_oscquery.setEnabled(False)
+
+        # ---- OSC input (core/oscin.py) -------------------------------
+        # Off by default and on purpose: this binds a port, and 9001 is
+        # exactly the port every other OSC tool wants as well. Switching
+        # it on is a decision, not a default.
+        iline = QFrame()
+        iline.setFrameShape(QFrame.Shape.HLine)
+        iline.setObjectName("hline")
+        qc.addWidget(iline)
+
+        itog_row = QHBoxLayout()
+        self.toggle_osc_in = ToggleSwitch()
+        self.toggle_osc_in.toggled.connect(self.on_osc_input_toggled)
+        itog_row.addWidget(self.toggle_osc_in)
+        itog_row.addWidget(ToggleLabel(
+            "Receive avatar parameters (OSC input)", self.toggle_osc_in))
+        itog_row.addSpacing(16)
+        itog_row.addWidget(QLabel("Port"))
+        self.osc_in_port = QSpinBox()
+        self.osc_in_port.setRange(1024, 65535)
+        self.osc_in_port.setFixedWidth(90)
+        self.osc_in_port.valueChanged.connect(self.on_osc_input_port)
+        itog_row.addWidget(self.osc_in_port)
+        itog_row.addStretch()
+        qc.addLayout(itog_row)
+
+        idesc = QLabel(
+            "Lets the Advanced mode canvas read your avatar's toggles, "
+            "sliders and menu values \u2013 the \u201cAvatar parameter\u201d "
+            "block. VRChat sends them to 9001 by default; with native "
+            "OSCQuery on, the dynamically negotiated port is used "
+            "instead. Nothing else in the app reads OSC, so leaving this "
+            "off costs you only those blocks.")
+        idesc.setObjectName("dim")
+        idesc.setWordWrap(True)
+        qc.addWidget(idesc)
+
+        ext_row = QHBoxLayout()
+        ext_row.addWidget(QLabel("External OSC target"))
+        self.osc_ext_ip = QLineEdit()
+        self.osc_ext_ip.setFixedWidth(140)
+        self.osc_ext_ip.setPlaceholderText("127.0.0.1")
+        self.osc_ext_ip.editingFinished.connect(self.on_osc_ext_ip)
+        ext_row.addWidget(self.osc_ext_ip)
+        ext_row.addWidget(QLabel("Port"))
+        self.osc_ext_port = QSpinBox()
+        self.osc_ext_port.setRange(1, 65535)
+        self.osc_ext_port.setFixedWidth(90)
+        self.osc_ext_port.valueChanged.connect(self.on_osc_ext_port)
+        ext_row.addWidget(self.osc_ext_port)
+        ext_row.addStretch()
+        qc.addLayout(ext_row)
+        ext_desc = QLabel(
+            "Where the \u201cExternal OSC out\u201d block sends when it "
+            "has no target of its own \u2013 a script, a smart home "
+            "bridge, anything that speaks OSC. Separate from the VRChat "
+            "target above on purpose, so pointing one somewhere else "
+            "cannot break the chatbox.")
+        ext_desc.setObjectName("dim")
+        ext_desc.setWordWrap(True)
+        qc.addWidget(ext_desc)
+
+        kline = QFrame()
+        kline.setFrameShape(QFrame.Shape.HLine)
+        kline.setObjectName("hline")
+        qc.addWidget(kline)
+
+        ktog_row = QHBoxLayout()
+        self.toggle_hotkey_in = ToggleSwitch()
+        self.toggle_hotkey_in.toggled.connect(self.on_hotkey_input_toggled)
+        ktog_row.addWidget(self.toggle_hotkey_in)
+        ktog_row.addWidget(ToggleLabel(
+            "Watch the keyboard (Get Hotkey block)", self.toggle_hotkey_in))
+        ktog_row.addStretch()
+        qc.addLayout(ktog_row)
+
+        kdesc = QLabel(
+            "Lets the \u201cGet Hotkey\u201d block on the Advanced canvas "
+            "react to a key combination pressed anywhere, not just in "
+            "VRChat. It watches which keys are down and never swallows "
+            "them or records what you type \u2013 but it is still the "
+            "keyboard, so it stays off until you switch it on. On Linux "
+            "it reads /dev/input, which usually means your user has to "
+            "be in the \u201cinput\u201d group.")
+        kdesc.setObjectName("dim")
+        kdesc.setWordWrap(True)
+        qc.addWidget(kdesc)
+
+        self.hotkey_in_status = QLabel("")
+        self.hotkey_in_status.setObjectName("dim")
+        self.hotkey_in_status.setWordWrap(True)
+        qc.addWidget(self.hotkey_in_status)
+
+        self.osc_in_status = QLabel("")
+        self.osc_in_status.setObjectName("dim")
+        self.osc_in_status.setWordWrap(True)
+        qc.addWidget(self.osc_in_status)
 
         qline = QFrame()
         qline.setFrameShape(QFrame.Shape.HLine)
@@ -937,6 +1035,95 @@ class OptionsPageMixin:
                        "(manual target used until found)")
             if self.oscq_status.text() != txt:
                 self.oscq_status.setText(txt)
+
+    def on_hotkey_input_toggled(self, on):
+        self.cfg["hotkey_input_enabled"] = bool(on)
+        self.save_config()
+        self.update_hotkey_input()
+
+    def update_hotkey_input(self):
+        """Starts or stops the global key watcher and repaints its
+        status line."""
+        want = bool(self.cfg.get("hotkey_input_enabled"))
+        if not want:
+            if self.hotkey_in.running:
+                self.hotkey_in.stop()
+                self.log("Hotkey input: stopped")
+            self._set_hotkey_in_status(
+                "Off \u2013 the Get Hotkey block has nothing to read.")
+            return
+        if self.hotkey_in.running:
+            return
+        if self.hotkey_in.start():
+            self._set_hotkey_in_status(
+                f"Watching via {self.hotkey_in.backend}.")
+        else:
+            self._set_hotkey_in_status(
+                f"Not watching: {self.hotkey_in.error}")
+
+    def _set_hotkey_in_status(self, text):
+        if hasattr(self, "hotkey_in_status") and \
+                self.hotkey_in_status.text() != text:
+            self.hotkey_in_status.setText(text)
+
+    def on_osc_ext_ip(self):
+        value = self.osc_ext_ip.text().strip() or "127.0.0.1"
+        if value == self.cfg.get("osc_ext_ip"):
+            return
+        self.cfg["osc_ext_ip"] = value
+        self.save_config()
+        self.reset_ext_osc_clients()
+
+    def on_osc_ext_port(self, val):
+        if getattr(self, "_block_updating", False):
+            return
+        self.cfg["osc_ext_port"] = int(val)
+        self.save_config()
+        self.reset_ext_osc_clients()
+
+    def on_osc_input_toggled(self, on):
+        self.cfg["osc_input_enabled"] = bool(on)
+        self.save_config()
+        self.update_osc_input()
+
+    def on_osc_input_port(self, val):
+        if getattr(self, "_block_updating", False):
+            return
+        self.cfg["osc_input_port"] = int(val)
+        self.save_config()
+        if self.cfg.get("osc_input_enabled"):
+            self.update_osc_input()
+
+    def update_osc_input(self):
+        """Starts or stops the parameter listener and repaints its
+        status line. Safe to call as often as you like - it returns
+        early when nothing has to change."""
+        want = bool(self.cfg.get("osc_input_enabled"))
+        if not want:
+            if self.osc_in.running:
+                self.osc_in.stop()
+                self.log("OSC input: stopped")
+            self._set_osc_in_status("Off \u2013 the Avatar parameter block "
+                                    "has nothing to read.")
+            return
+        if self.osc_in.running:
+            self._set_osc_in_status(
+                f"Listening on udp/{self.osc_in.port} \u2013 "
+                f"{len(self.osc_in.snapshot())} parameters seen.")
+            return
+        port = int(self.cfg.get("osc_input_port", DEFAULT_IN_PORT))
+        if self.osc_in.start(port):
+            self._set_osc_in_status(f"Listening on udp/{self.osc_in.port}.")
+        else:
+            self._set_osc_in_status(
+                f"Port {port} could not be opened: {self.osc_in.error}. "
+                "Another OSC app is probably using it \u2013 close it, or "
+                "pick a different port here and point VRChat at it.")
+
+    def _set_osc_in_status(self, text):
+        if hasattr(self, "osc_in_status") and \
+                self.osc_in_status.text() != text:
+            self.osc_in_status.setText(text)
 
     def on_oscquery_toggled(self, on):
         self.cfg["oscquery_enabled"] = bool(on)

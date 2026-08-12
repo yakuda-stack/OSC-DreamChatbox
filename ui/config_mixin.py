@@ -10,11 +10,12 @@ import shutil
 from core.theming import THEMES
 from core.textstyle import STYLE_NORMAL, normalize as normalize_style
 from core.constants import (
-    CONFIG_DIR, CONFIG_FILE, LYRICS_DIR, MIN_STATUS_CYCLE_SEC, OLD_CONFIG_FILE, TITLE_MAX_LEN)
+    AIO_MAX, CHAT_MODES, DEFAULT_TRANSLATE_NOTICE, CHAT_MODE_DIRECT, CONFIG_DIR, CONFIG_FILE, LYRICS_DIR, MIN_STATUS_CYCLE_SEC, OLD_CONFIG_FILE, TITLE_MAX_LEN)
 from core.boxstyle import (
     CLOCK_24_HM, DEFAULT_CUSTOM_BOX, MODE_CUSTOM as BOX_MODE_CUSTOM, normalize_clock_format, normalize_custom as normalize_box_custom, normalize_mode as normalize_box_mode, normalize_template as normalize_box_template, normalize_width as normalize_box_width)
 from core.textutils import DEFAULT_CUSTOM_BAR, TIME_POS_LINE
 from core.translators import METHOD_LINGVA
+from core.plugins import ANCHORS, DEFAULT_ANCHOR
 
 
 #: What the four rotation slots contain on a FIRST START only - i.e.
@@ -32,6 +33,95 @@ FIRST_RUN_STATUS_TEXTS = [
     "\u2615 Support on Ko-fi: ko-fi.com/yakuda_",
     "\U0001F4BB GitHub Repo: github.com/yakuda-stack",
 ]
+
+
+def _bool_list(value, size, fallback):
+    """A fixed-length list of bools out of whatever the config held."""
+    items = value if isinstance(value, list) else []
+    items = [bool(x) for x in items][:size]
+    return items + [fallback] * (size - len(items))
+
+
+def _int_list(value, size, fallback, low, high):
+    """A fixed-length list of clamped ints. A junk entry falls back to
+    the default rather than taking the whole list down - one unreadable
+    number should not cost a user their other four."""
+    items = value if isinstance(value, list) else []
+    out = []
+    for item in items[:size]:
+        try:
+            out.append(min(high, max(low, int(item))))
+        except (TypeError, ValueError):
+            out.append(fallback)
+    return out + [fallback] * (size - len(out))
+
+
+def _graph(value):
+    """The shape of one node canvas, and only the shape.
+
+    ui/nodegraph.py drops unknown node types and dangling edges when it
+    rebuilds the canvas, so a graph written by a newer version costs the
+    block it mentions rather than the whole file.
+    """
+    value = value if isinstance(value, dict) else {}
+    return {
+        "nodes": [n for n in (value.get("nodes") or [])
+                  if isinstance(n, dict)],
+        "edges": [e for e in (value.get("edges") or [])
+                  if isinstance(e, dict)],
+    }
+
+
+def _split_legacy_graph(graph):
+    """The one-canvas graph of the first Advanced-mode build, cut into one
+    canvas per AIO slot.
+
+    Back then a single canvas held several Chatbox Output blocks, each
+    carrying a "slot" value. Every block that feeds one of those outputs
+    moves into that slot's canvas; a block feeding two outputs is copied
+    into both, which is the only way to keep both slots working without
+    inventing a shared-node concept the new format does not have.
+    """
+    nodes = {}
+    for entry in graph.get("nodes") or []:
+        node_id = str(entry.get("id") or "")
+        if node_id:
+            nodes[node_id] = entry
+    incoming = {}
+    for edge in graph.get("edges") or []:
+        dst, src = str(edge.get("to") or ""), str(edge.get("from") or "")
+        if dst in nodes and src in nodes:
+            incoming.setdefault(dst, []).append((src, edge))
+
+    out = {}
+    for node_id, entry in nodes.items():
+        if entry.get("type") != "output":
+            continue
+        try:
+            slot = min(AIO_MAX, max(1, int((entry.get("values") or {}).get(
+                "slot", 1))))
+        except (TypeError, ValueError):
+            slot = 1
+        keep, edges, stack = set(), [], [node_id]
+        while stack:
+            current = stack.pop()
+            if current in keep:
+                continue
+            keep.add(current)
+            for src, edge in incoming.get(current, []):
+                edges.append(edge)
+                stack.append(src)
+        part = {"nodes": [], "edges": edges}
+        for kept in keep:
+            copy = dict(nodes[kept])
+            if copy.get("type") == "output":
+                # the slot lives in which canvas you are on now
+                copy["values"] = {k: v
+                                  for k, v in (copy.get("values") or {}).items()
+                                  if k != "slot"}
+            part["nodes"].append(copy)
+        out.setdefault(slot, part)
+    return out
 
 
 class ConfigMixin:
@@ -106,9 +196,55 @@ class ConfigMixin:
             "stt_libre_online_url": "",
             "stt_libre_online_key": "",
             "stt_block_saved": [],
+            # Block apps, extended (see ui/pages/textbox_page.py). Both
+            # default ON: "block everything" is what the toggle already
+            # promised, and the plugins/frame simply were not covered.
+            # stt_block_except names what keeps running anyway - the four
+            # app keys, "custombox", and "plugin:<id>" per plugin.
+            "stt_block_plugins": True,
+            "stt_block_box": True,
+            "stt_block_except": [],
+            # microphone: refuse to start when the chosen device is gone,
+            # instead of silently falling back to the system default -
+            # which on a machine that just lost an audio device (leaving
+            # VR) is frequently the device that hangs. See
+            # core/backends/mic_probe.py.
+            "stt_mic_strict": True,
+            # ---- chat routing (core/constants.py CHAT_MODES) ----------
+            # The Chat card is always Standard - it is the "take over the
+            # chatbox now" control, and the other two routes only ever
+            # made sense for the To Text card. This key is what Speech to
+            # Text and Text to Text go out as.
+            "stt_send_mode": CHAT_MODE_DIRECT,
+            "chat_anchor": "aio",
+            "chat_hold_sec": 0,      # 0 = keep until cleared/replaced
             "stt_mode": "stt",       # "stt" (speech->text) | "ttt" (text->text)
             "stt_show_both": False,  # send "source -> translation" in chat
             "aio_active": False,
+            # "normal" = the five template strings on the Apps page,
+            # "advanced" = the node canvas on the Advanced page
+            # (ui/pages/advanced_page.py). The strings are kept either
+            # way, so switching back and forth loses nothing.
+            "aio_mode": "normal",
+            # OSC input (core/oscin.py). Off by default: it binds a UDP
+            # port and 9001 is contested territory.
+            "osc_input_enabled": False,
+            # global keyboard watching for the Get Hotkey block. Off by
+            # default: it is the keyboard.
+            "hotkey_input_enabled": False,
+            # while a translation is still being fetched, say so in the
+            # chatbox instead of leaving the previous message up
+            "stt_translate_notice": True,
+            "stt_translate_notice_text": DEFAULT_TRANSLATE_NOTICE,
+            "osc_input_port": 9001,
+            # default target for the External OSC out block when it
+            # leaves IP/port empty - VRChat's own target stays separate
+            "osc_ext_ip": "127.0.0.1",
+            "osc_ext_port": 9002,
+            # one node canvas per AIO string, so AIO 1-5 each have their
+            # own graph exactly the way they each have their own text
+            # field in Normal mode
+            "aio_graphs": [{"nodes": [], "edges": []} for _ in range(AIO_MAX)],
             # FPS via MangoHud's log (see core/hardware.py)
             "hw_fps": False,
             "hw_mangohud_dir": "",
@@ -120,14 +256,26 @@ class ConfigMixin:
             "aio_count": 1,
             # 10 switchable AIO layouts, each with its own 1-5 strings
             "aio_sets": [
-                {"name": f"Template {i + 1}", "templates": [""] * 5,
-                 "count": 1} for i in range(10)
+                {"name": f"Template {i + 1}", "templates": [""] * AIO_MAX,
+                 "count": 1, "custom_time": [False] * AIO_MAX,
+                 "custom_sec": [10] * AIO_MAX,
+                 "graphs": [{"nodes": [], "edges": []}
+                            for _ in range(AIO_MAX)]} for i in range(10)
             ],
             "aio_set_active": 0,
             "aio_rotate": False,
             "aio_rotate_sec": 10,
-            "aio_templates": ["{text} \\n {artist} : {title} | {time} \\n {bar}",
-                              "", "", "", ""],
+            "aio_templates": (["{text} \\n {artist} : {title} | {time} \\n {bar}"]
+                              + [""] * (AIO_MAX - 1)),
+            # per-string dwell time: when custom_time[i] is on, AIO i+1
+            # stays on screen for custom_sec[i] instead of the shared
+            # aio_rotate_sec. Off everywhere by default, so an existing
+            # setup rotates exactly as it did.
+            "aio_custom_time": [False] * AIO_MAX,
+            "aio_custom_sec": [10] * AIO_MAX,
+            # height in px a field was dragged to (0 = grow with the
+            # text). Cosmetic, so it is not part of the template sets.
+            "aio_heights": [0] * AIO_MAX,
             # ---- Custom Box (core/boxstyle.py, ui/pages/custom_box.py) --
             # Off by default, on purpose. How wide a frame line can get
             # before the VRChat chatbox breaks it depends on the font and
@@ -176,6 +324,10 @@ class ConfigMixin:
             "hw_gpu_custom_name": "",
             "hw_gpu_name_style": STYLE_NORMAL,
             "hw_gpu_temp": True,
+            # Power draw. Off by default on both: the chatbox is 144
+            # characters, and switching this on for everybody would make
+            # an existing hardware line longer without being asked.
+            "hw_gpu_power": False,
             "hw_vram_used": True,
             "hw_vram_pct": False,
             "hw_ram_used": True,
@@ -187,6 +339,7 @@ class ConfigMixin:
             "hw_cpu_custom_name": "",
             "hw_cpu_name_style": STYLE_NORMAL,
             "hw_cpu_temp": True,
+            "hw_cpu_power": False,
             "send_to_vrchat": False,
             "interval_sec": 5,
             # push a changed text to VRChat right away instead of waiting
@@ -304,8 +457,8 @@ class ConfigMixin:
         defaults["textbox_order"] = torder
         aio = defaults.get("aio_templates")
         if not isinstance(aio, list):
-            aio = ["{text} \\n {artist} : {title} | {time} \\n {bar}", "", "", "", ""]
-        aio = [str(t) for t in aio][:5]
+            aio = ["{text} \\n {artist} : {title} | {time} \\n {bar}"] + [""] * (AIO_MAX - 1)
+        aio = [str(t) for t in aio][:AIO_MAX]
         if defaults.get("theme") not in THEMES:
             defaults["theme"] = "default"
         if not isinstance(defaults.get("theme_colors"), dict):
@@ -329,6 +482,35 @@ class ConfigMixin:
             defaults[key] = val.strip() if isinstance(val, str) else ""
         defaults["osc_instant_send"] = bool(
             defaults.get("osc_instant_send", True))
+        # ---- chat routing + the extended block --------------------------
+        # Every one of these is absent from configs written before v1.3.3,
+        # so each falls back to the default above and an existing setup
+        # behaves exactly as it did: Standard send mode, block covering
+        # everything, nothing excepted.
+        # up to v1.3.2 one key covered Chat, Speech to Text and Text to
+        # Text. Chat lost its dropdown, so the old value carries over to
+        # the two that kept theirs.
+        legacy_mode = defaults.pop("chat_send_mode", None)
+        # the old key only survives one load - it is popped here - so a
+        # config that still has it is by definition one that has never
+        # seen the new key set to anything but its default
+        if legacy_mode in CHAT_MODES and \
+                defaults.get("stt_send_mode") == CHAT_MODE_DIRECT:
+            defaults["stt_send_mode"] = legacy_mode
+        if defaults.get("stt_send_mode") not in CHAT_MODES:
+            defaults["stt_send_mode"] = CHAT_MODE_DIRECT
+        if defaults.get("chat_anchor") not in ANCHORS:
+            defaults["chat_anchor"] = DEFAULT_ANCHOR
+        try:
+            defaults["chat_hold_sec"] = min(3600, max(0, int(
+                defaults.get("chat_hold_sec", 0))))
+        except (TypeError, ValueError):
+            defaults["chat_hold_sec"] = 0
+        for key in ("stt_block_plugins", "stt_block_box", "stt_mic_strict"):
+            defaults[key] = bool(defaults.get(key, True))
+        exc = defaults.get("stt_block_except")
+        defaults["stt_block_except"] = sorted(
+            {str(x) for x in exc}) if isinstance(exc, list) else []
         # older configs may still carry a 2 s cycle from before the
         # 10 s minimum - lift those instead of leaving an out-of-range
         # value that the spin box cannot even display
@@ -338,18 +520,85 @@ class ConfigMixin:
                 min(3600, int(defaults.get("status_cycle_sec", 10))))
         except (TypeError, ValueError):
             defaults["status_cycle_sec"] = MIN_STATUS_CYCLE_SEC
-        defaults["aio_templates"] = aio + [""] * (5 - len(aio))
-        defaults["aio_count"] = min(5, max(1, int(defaults.get("aio_count", 1))))
+        defaults["aio_templates"] = aio + [""] * (AIO_MAX - len(aio))
+        defaults["aio_count"] = min(AIO_MAX, max(1, int(defaults.get("aio_count", 1))))
+        # per-string dwell time + field heights. All three are absent
+        # from configs written before v1.3.3, so each falls back to the
+        # default above: no custom time anywhere, every field auto-grown.
+        defaults["aio_custom_time"] = _bool_list(
+            defaults.get("aio_custom_time"), AIO_MAX, False)
+        defaults["aio_custom_sec"] = _int_list(
+            defaults.get("aio_custom_sec"), AIO_MAX, 10, 2, 3600)
+        defaults["aio_heights"] = _int_list(
+            defaults.get("aio_heights"), AIO_MAX, 0, 0, 1200)
+        # ---- AIO mode + node graph (v1.4.0) -----------------------------
+        # Both are absent from every older config, which lands on "normal"
+        # and an empty canvas - i.e. exactly the behaviour that setup had
+        # before the Advanced page existed.
+        defaults["osc_input_enabled"] = bool(
+            defaults.get("osc_input_enabled", False))
+        defaults["hotkey_input_enabled"] = bool(
+            defaults.get("hotkey_input_enabled", False))
+        defaults["stt_translate_notice"] = bool(
+            defaults.get("stt_translate_notice", True))
+        defaults["stt_translate_notice_text"] = str(
+            defaults.get("stt_translate_notice_text")
+            or DEFAULT_TRANSLATE_NOTICE)
+        try:
+            defaults["osc_input_port"] = min(65535, max(1024, int(
+                defaults.get("osc_input_port", 9001))))
+        except (TypeError, ValueError):
+            defaults["osc_input_port"] = 9001
+        defaults["osc_ext_ip"] = str(
+            defaults.get("osc_ext_ip") or "127.0.0.1").strip() or "127.0.0.1"
+        try:
+            defaults["osc_ext_port"] = min(65535, max(1, int(
+                defaults.get("osc_ext_port", 9002))))
+        except (TypeError, ValueError):
+            defaults["osc_ext_port"] = 9002
+        if defaults.get("aio_mode") not in ("normal", "advanced"):
+            defaults["aio_mode"] = "normal"
+
+        graphs = defaults.get("aio_graphs")
+        if not isinstance(graphs, list):
+            graphs = []
+        graphs = [_graph(g) for g in graphs][:AIO_MAX]
+        graphs += [{"nodes": [], "edges": []}
+                   for _ in range(AIO_MAX - len(graphs))]
+        # an early Advanced-mode build had a single canvas whose Output
+        # blocks carried a slot
+        # number. Split it apart: every Output block becomes the canvas
+        # of its own slot, so an early graph comes back where its author
+        # would look for it instead of vanishing.
+        legacy = defaults.pop("aio_graph", None)
+        if isinstance(legacy, dict) and legacy.get("nodes") \
+                and not any(g["nodes"] for g in graphs):
+            for slot, part in _split_legacy_graph(_graph(legacy)).items():
+                if 1 <= slot <= AIO_MAX:
+                    graphs[slot - 1] = part
+        defaults["aio_graphs"] = graphs
         # AIO template sets: normalise / migrate old single-list configs
         sets = defaults.get("aio_sets")
         if not isinstance(sets, list) or len(sets) != 10:
-            sets = [{"name": f"Template {i + 1}", "templates": [""] * 5,
-                     "count": 1} for i in range(10)]
+            sets = [{"name": f"Template {i + 1}", "templates": [""] * AIO_MAX,
+                     "count": 1, "custom_time": [False] * AIO_MAX,
+                     "custom_sec": [10] * AIO_MAX} for i in range(10)]
         for t in sets:
             t.setdefault("name", "Template")
             t["templates"] = ([str(x) for x in t.get("templates", [])]
-                              + [""] * 5)[:5]
-            t["count"] = min(5, max(1, int(t.get("count", 1))))
+                              + [""] * AIO_MAX)[:AIO_MAX]
+            t["count"] = min(AIO_MAX, max(1, int(t.get("count", 1))))
+            t["custom_time"] = _bool_list(t.get("custom_time"), AIO_MAX, False)
+            t["custom_sec"] = _int_list(t.get("custom_sec"), AIO_MAX, 10, 2,
+                                        3600)
+            # one canvas per string, per template. Absent in configs
+            # written before v1.4.0, which lands on empty canvases -
+            # i.e. exactly what those templates had.
+            tgraphs = t.get("graphs")
+            tgraphs = tgraphs if isinstance(tgraphs, list) else []
+            tgraphs = [_graph(g) for g in tgraphs][:AIO_MAX]
+            t["graphs"] = tgraphs + [{"nodes": [], "edges": []}
+                                     for _ in range(AIO_MAX - len(tgraphs))]
         defaults["aio_sets"] = sets
         aidx = min(9, max(0, int(defaults.get("aio_set_active", 0))))
         defaults["aio_set_active"] = aidx
@@ -359,9 +608,13 @@ class ConfigMixin:
                 not any(x.strip() for x in sets[aidx]["templates"]):
             sets[aidx]["templates"] = list(defaults["aio_templates"])
             sets[aidx]["count"] = defaults["aio_count"]
+            sets[aidx]["custom_time"] = list(defaults["aio_custom_time"])
+            sets[aidx]["custom_sec"] = list(defaults["aio_custom_sec"])
         else:
             defaults["aio_templates"] = list(sets[aidx]["templates"])
             defaults["aio_count"] = sets[aidx]["count"]
+            defaults["aio_custom_time"] = list(sets[aidx]["custom_time"])
+            defaults["aio_custom_sec"] = list(sets[aidx]["custom_sec"])
         # ---- Custom Box -------------------------------------------------
         # Configs written before v1.3.2 have none of these keys, so every
         # one of them falls back to the default above and an existing

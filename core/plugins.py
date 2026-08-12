@@ -279,7 +279,8 @@ KNOWN_ITEM_KEYS = frozenset({
     "expanded", "mode", "filters", "placeholder", "button", "style"})
 # same idea for the manifest and for config.json
 KNOWN_MANIFEST_KEYS = frozenset({
-    "id", "name", "version", "author", "description", "summary", "Github",
+    "id", "name", "version", "author", "description", "short_description",
+    "summary", "Github",
     "github", "main", "image", "enabled", "is_linux", "is_windows",
     "template", "placeholders", "global_placeholders", "settings", "api",
     "min_app"})
@@ -417,6 +418,9 @@ class Plugin:
     version: str = "?"
     author: str = ""
     description: str = ""
+    #: optional one-liner for lists. Never replaces "description" - the
+    #: long text is still what the store and the info popup show.
+    short_description: str = ""
     github: str = ""
     main: str = "main.py"
     default_enabled: bool = True
@@ -438,6 +442,19 @@ class Plugin:
     @property
     def loaded(self):
         return self.module is not None
+
+    @property
+    def summary(self):
+        """The one line a LIST should show: "short_description" from the
+        manifest when there is one, the full "description" otherwise.
+
+        Deliberately a fallback rather than a replacement: a plugin whose
+        description is already one sentence should not have to repeat it
+        in a second key, and no existing manifest changes appearance.
+        Places with room for the whole text (the info popup, the store
+        detail page) keep reading .description directly.
+        """
+        return self.short_description.strip() or self.description
 
     @property
     def platform_ok(self):
@@ -622,6 +639,23 @@ class PluginManager:
         self._snap = None          # cached snapshot for the current frame
 
     # ------------------------------------------------- per-plugin config
+        # pids silenced by "Block apps" - see set_blocked()
+        self._blocked = set()
+
+    def set_blocked(self, pids):
+        """Which plugins are silenced right now.
+
+        This is the Textbox page's "Block apps" reaching the plugins. It
+        is deliberately NOT the same as disabling them: a blocked plugin
+        keeps its state, its threads and its on_tick() heartbeat, it just
+        contributes nothing to the chatbox - so unblocking is instant and
+        a plugin that was counting something has not lost the count.
+        """
+        self._blocked = {str(p) for p in (pids or ())}
+
+    def blocked(self, pid):
+        return pid in self._blocked
+
     def entry(self, pid):
         """The settings block of one plugin (mirror of its config.json).
 
@@ -953,6 +987,12 @@ class PluginManager:
             version=str(data.get("version") or "?"),
             author=str(data.get("author") or "unknown"),
             description=str(data.get("description") or ""),
+            # optional short form for the Installed list. "summary" is
+            # accepted as a spelling of the same thing because the store
+            # has used that key since it existed - an author writes one
+            # of the two, not both.
+            short_description=str(data.get("short_description")
+                                  or data.get("summary") or "").strip(),
             github=str(github),
             main=main,
             default_enabled=bool(data.get("enabled", True)),
@@ -1437,6 +1477,11 @@ class PluginManager:
         is rendered against."""
         out = {}
         for pid, data in self.snapshot().items():
+            if pid in self._blocked:
+                # blocked -> contributes no placeholder either, so a
+                # {my_plugin} left in an All-in-one string renders empty
+                # instead of quietly ignoring the block
+                continue
             plugin = self.plugins.get(pid)
             out[pid] = data["text"] or None
             for key, val in data["values"].items():
@@ -1506,6 +1551,8 @@ class PluginManager:
         for plugin in self.ordered():
             if plugin.pid not in active:
                 continue
+            if plugin.pid in self._blocked:
+                continue
             entry = self.entry(plugin.pid)
             anchor = entry["anchor"] if entry["anchor"] in ANCHORS \
                 else DEFAULT_ANCHOR
@@ -1526,6 +1573,8 @@ class PluginManager:
         plugin returning something that isn't a string is ignored, so a
         sloppy plugin can't wipe the chatbox."""
         for plugin in self._active():
+            if plugin.pid in self._blocked:
+                continue      # blocked means blocked, on_text included
             ok, res = self._safe_call(plugin, "on_text", text)
             if ok and isinstance(res, str):
                 text = res

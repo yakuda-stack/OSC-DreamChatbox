@@ -57,6 +57,12 @@ class NullHardwareMonitor:
     def cpu_usage(self):
         return None
 
+    def cpu_power(self):
+        return None
+
+    def amd_gpu_power(self):
+        return None
+
     def cpu_temp(self):
         return None
 
@@ -81,6 +87,7 @@ class NullHardwareMonitor:
         special case: keys exist, values are None."""
         return {"cpu_usage": None,
                 "cpu_temp": None,
+                "cpu_power": None,
                 "ram": None,
                 "gpu": None,
                 "fps": None}
