@@ -49,7 +49,9 @@ $Dist  = Join-Path $ProjectRoot "dist"
 $Deps = @{}
 if ($SkipDeps) { $Deps["SkipDeps"] = $true }
 
-$artifacts = @()
+$artifacts        = @()
+$iscc             = $null
+$installerSkipped = $false
 
 # ----------------------------------------------------------- 1) Installer
 if (-not $SkipInstaller) {
@@ -62,16 +64,58 @@ if (-not $SkipInstaller) {
     # ab jetzt steht die venv - weitere Builds brauchen keine Deps mehr
     $Deps["SkipDeps"] = $true
 
-    $iscc = Get-Command iscc -ErrorAction SilentlyContinue
+    $iscc = $null
+
+    # 1) im PATH?
+    $cmd = Get-Command iscc -ErrorAction SilentlyContinue
+    if ($cmd) { $iscc = $cmd.Source }
+
+    # 2) Registry. Inno Setup ist eine 32-Bit-Anwendung, der Uninstall-Key
+    #    liegt auf 64-Bit-Windows also unter WOW6432Node. Der Setup-Scope
+    #    entscheidet zwischen HKLM (/ALLUSERS) und HKCU (per user).
     if (-not $iscc) {
-        foreach ($c in @("${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
-                         "$env:ProgramFiles\Inno Setup 6\ISCC.exe")) {
-            if (Test-Path $c) { $iscc = $c; break }
+        $roots = @("HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall",
+                   "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
+                   "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall")
+        foreach ($root in $roots) {
+            foreach ($key in @("Inno Setup 7_is1", "Inno Setup 6_is1", "Inno Setup 5_is1")) {
+                $loc = (Get-ItemProperty -Path (Join-Path $root $key) `
+                        -Name InstallLocation -ErrorAction SilentlyContinue).InstallLocation
+                if ($loc) {
+                    $c = Join-Path $loc "ISCC.exe"
+                    if (Test-Path $c) { $iscc = $c; break }
+                }
+            }
+            if ($iscc) { break }
         }
     }
+
+    # 3) uebliche Verzeichnisse, falls die Registry nichts hergibt
     if (-not $iscc) {
-        throw "iscc.exe nicht gefunden. Inno Setup 6 installieren: https://jrsoftware.org/isdl.php"
+        foreach ($base in @("${env:ProgramFiles(x86)}", "$env:ProgramFiles",
+                            "$env:LOCALAPPDATA\Programs")) {
+            if (-not $base) { continue }
+            foreach ($name in @("Inno Setup 7", "Inno Setup 6", "Inno Setup 5")) {
+                $c = Join-Path $base "$name\ISCC.exe"
+                if (Test-Path $c) { $iscc = $c; break }
+            }
+            if ($iscc) { break }
+        }
     }
+
+    if (-not $iscc) {
+        Write-Host ""
+        Write-Warning "ISCC.exe nicht gefunden - der Installer wird uebersprungen."
+        Write-Host "Inno Setup installieren, dann make-release.ps1 -SkipDeps nochmal:" -ForegroundColor Yellow
+        Write-Host "    winget install -e --id JRSoftware.InnoSetup" -ForegroundColor Yellow
+        Write-Host "  oder https://jrsoftware.org/isdl.php" -ForegroundColor Yellow
+        Write-Host "Danach eine NEUE PowerShell oeffnen, damit PATH neu eingelesen wird." -ForegroundColor Yellow
+        $installerSkipped = $true
+    }
+}
+
+if ($iscc -and -not $SkipInstaller) {
+    Write-Host "ISCC: $iscc" -ForegroundColor DarkGray
 
     Write-Host "`n--- Inno Setup ---" -ForegroundColor Green
     # Version per /D reinreichen, damit die .iss nicht gegen constants.py driftet
@@ -110,5 +154,10 @@ foreach ($a in $artifacts) {
     Write-Host ("  {0,-52} {1,6} MB" -f (Split-Path -Leaf $a), $mb) -ForegroundColor Green
 }
 Write-Host ""
-Write-Host "Beides auf die Release-Seite hochladen. Keinen ZIP des One-Folder-" -ForegroundColor Yellow
-Write-Host "Builds anhaengen - daraus entsteht der _internal-DLL-Fehler."      -ForegroundColor Yellow
+if ($installerSkipped) {
+    Write-Warning "UNVOLLSTAENDIG: setup.exe fehlt, Inno Setup war nicht installiert."
+    Write-Host "Das Release ist so nicht fertig - siehe die Meldung oben." -ForegroundColor Yellow
+    exit 1
+}
+Write-Host "Auf die Release-Seite hochladen. Keinen ZIP des One-Folder-Builds" -ForegroundColor Yellow
+Write-Host "anhaengen - daraus entsteht der _internal-DLL-Fehler."            -ForegroundColor Yellow
