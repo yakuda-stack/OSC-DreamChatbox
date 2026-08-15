@@ -160,13 +160,43 @@ settings, plugins or themes with it when it disappears.
 
 ---
 
-## 6. Installer (optional)
+## 6. Releases
 
 ```powershell
-iscc packaging\windows\installer.iss
+.\packaging\windows\make-release.ps1
 ```
 
-Produces `dist\OSC-DreamChatbox-1.4.0-setup.exe`.
+Builds both artifacts that belong on the releases page and nothing else:
+
+| Artifact | What it is |
+|---|---|
+| `OSC-DreamChatbox-<ver>-setup.exe` | Inno Setup installer, the default download |
+| `OSC-DreamChatbox-<ver>-portable.exe` | one-file build, for people who refuse installers |
+
+The version is read from `core/constants.py` and passed to Inno Setup with
+`/DAppVersion=`, so the `.iss` can no longer drift.
+
+### Never ship a zip of `dist\OSC-DreamChatbox\`
+
+That is where this bug report comes from:
+
+```
+Failed to load Python DLL 'C:\Users\...\Downloads\_internal\python314.dll'.
+LoadLibrary: Das angegebene Modul wurde nicht gefunden.
+```
+
+The user dragged `OSC-DreamChatbox.exe` out of the zip and left `_internal`
+behind, or ran it straight out of Explorer's zip preview, which extracts
+only the file that was double-clicked. The exe *is* the PyInstaller
+bootloader - it needs `_internal\pythonXXX.dll` sitting next to it, and it
+dies before a single line of our Python runs. There is no way to catch this
+in the app; the only fix is not to hand out that shape in the first place.
+
+### Building the installer by hand
+
+```powershell
+iscc /DAppVersion=1.4.0 packaging\windows\installer.iss
+```
 
 The script installs per-user (`PrivilegesRequired=lowest`), so there is
 no UAC prompt at install time. Start-menu entry, optional desktop icon,
