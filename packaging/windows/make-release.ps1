@@ -41,18 +41,26 @@ Write-Host "=== OSC-DreamChatbox $Version - Release-Build ===" -ForegroundColor 
 $Build = Join-Path $ScriptDir "build-exe.ps1"
 $Iss   = Join-Path $ScriptDir "installer.iss"
 $Dist  = Join-Path $ProjectRoot "dist"
-$Deps  = if ($SkipDeps) { @("-SkipDeps") } else { @() }
+# NICHT  $Deps = if ($SkipDeps) { @("-SkipDeps") } else { @() }
+# Ein leeres Array aus einem if-Statement wird beim Zuweisen aufgeloest und
+# landet als $null in der Variablen. @Deps splattet dann ein literales $null
+# als Positionsparameter -> "Es wurde kein Positionsparameter gefunden, der
+# das Argument "$null" akzeptiert." Eine Hashtable hat das Problem nicht.
+$Deps = @{}
+if ($SkipDeps) { $Deps["SkipDeps"] = $true }
 
 $artifacts = @()
 
 # ----------------------------------------------------------- 1) Installer
 if (-not $SkipInstaller) {
     Write-Host "`n--- One-Folder-Build (Basis fuer den Installer) ---" -ForegroundColor Green
+    # build-exe.ps1 wirft selbst bei Fehlern ($ErrorActionPreference = Stop),
+    # $LASTEXITCODE stammt hier noch vom letzten externen Prozess und taugt
+    # nicht als Erfolgsindikator - deshalb keine Abfrage darauf.
     & $Build -NoConsole -Clean @Deps
-    if ($LASTEXITCODE -ne 0) { throw "build-exe.ps1 (one-folder) fehlgeschlagen" }
 
     # ab jetzt steht die venv - weitere Builds brauchen keine Deps mehr
-    $Deps = @("-SkipDeps")
+    $Deps["SkipDeps"] = $true
 
     $iscc = Get-Command iscc -ErrorAction SilentlyContinue
     if (-not $iscc) {
@@ -87,7 +95,6 @@ if (-not $SkipPortable) {
 
     Write-Host "`n--- One-File-Build (portable) ---" -ForegroundColor Green
     & $Build -NoConsole -OneFile @Deps
-    if ($LASTEXITCODE -ne 0) { throw "build-exe.ps1 (one-file) fehlgeschlagen" }
 
     $src = Join-Path $Dist "OSC-DreamChatbox.exe"
     $dst = Join-Path $Dist "OSC-DreamChatbox-$Version-portable.exe"
