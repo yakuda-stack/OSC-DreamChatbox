@@ -57,6 +57,10 @@ Status rotation, now-playing, hardware stats, speech-to-text, live translation, 
 
 ---
 
+> 🤖 **Transparency Note:** This project and its documentation are proudly developed and optimized with the support of AI coding assistants (**Claude by Anthropic** & **Gemini**).
+
+---
+
 ## 📑 Contents
 
 - [Installation](#-installation)
