@@ -570,11 +570,15 @@ class AppsPageMixin:
         m_plus.setCursor(Qt.CursorShape.PointingHandCursor)
         m_plus.setToolTip(
             "Insert a MediaPlay placeholder or a formatting tag at the "
-            "cursor.\nSelect text first and the formatting entries wrap it.")
+            "cursor.\nSelect text first and the formatting entries wrap it.\n"
+            "Typing { and a letter or two suggests names directly in the "
+            "field.")
         m_plus.clicked.connect(
             lambda _=False, e=self.media_custom_input, b=m_plus:
                 self.open_placeholder_menu(e, b, scope="media"))
         m_custom_row.addWidget(m_plus)
+        self.attach_placeholder_completer(self.media_custom_input,
+                                          scope="media")
         m_ico = QPushButton("\U0001F600")
         m_ico.setObjectName("iconbtn")
         m_ico.setFixedSize(30, 30)
@@ -860,11 +864,15 @@ class AppsPageMixin:
         hw_plus.setCursor(Qt.CursorShape.PointingHandCursor)
         hw_plus.setToolTip(
             "Insert a hardware placeholder or a formatting tag at the "
-            "cursor.\nSelect text first and the formatting entries wrap it.")
+            "cursor.\nSelect text first and the formatting entries wrap it.\n"
+            "Typing { and a letter or two suggests names directly in the "
+            "field.")
         hw_plus.clicked.connect(
             lambda _=False, e=self.hw_custom_input, b=hw_plus:
                 self.open_placeholder_menu(e, b, scope="hardware"))
         hw_custom_row.addWidget(hw_plus)
+        self.attach_placeholder_completer(self.hw_custom_input,
+                                          scope="hardware")
         hw_ico = QPushButton("\U0001F600")
         hw_ico.setObjectName("iconbtn")
         hw_ico.setFixedSize(30, 30)
@@ -1066,7 +1074,9 @@ class AppsPageMixin:
             edit.setToolTip(
                 "Shift+Enter (or Ctrl+Enter) starts a new chatbox line \u2013 "
                 "stored as \\n.\nDrag the bottom edge to set the height, "
-                "double-click it to grow with the text again.")
+                "double-click it to grow with the text again.\n"
+                "Type { and a letter or two for a suggestion list; the \"+\" "
+                "opens the full menu with a search line.")
             edit.valueChanged.connect(
                 lambda t, idx=i: self.on_aio_text(idx, t))
             edit.heightChanged.connect(
@@ -1083,6 +1093,9 @@ class AppsPageMixin:
                 lambda _=False, e=edit, b=a_plus:
                     self.open_placeholder_menu(e, b))
             row.addWidget(a_plus, 0, top)
+            # the same vocabulary without opening the menu: "{gpu" and
+            # the list is under the cursor
+            self.attach_placeholder_completer(edit)
             a_ico = QPushButton("\U0001F600")
             a_ico.setObjectName("iconbtn")
             a_ico.setFixedSize(30, 30)

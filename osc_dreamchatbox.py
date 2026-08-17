@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-OSC-DreamChatbox v1.4.0
+OSC-DreamChatbox v1.4.1
 A clean VRChat OSC chatbox sender.
 
 Entry point only – the actual code lives in:
@@ -34,6 +34,7 @@ from core.osinfo import IS_LINUX, IS_WINDOWS  # noqa: E402
 _MIGRATION = osinfo.migrate_config_dir()
 
 from core.constants import APP_NAME  # noqa: E402
+from core import mic_host  # noqa: E402
 from core import pyextras  # noqa: E402
 
 # our own extras folder goes on sys.path before anything optional is
@@ -78,6 +79,17 @@ def _set_windows_app_id(app_id="yakuda-stack.OSC-DreamChatbox"):
 
 
 def main():
+    # Before ANYTHING else, and deliberately before Qt is imported: a
+    # frozen build has no python and no .py files to run, so the
+    # microphone helper is this same binary started with a marker
+    # argument. core/mic_host.py explains why the microphone runs in a
+    # process of its own at all. Nothing below this point may be reached
+    # in that mode - a helper that opened a window would be a very
+    # confusing bug.
+    if mic_host.HELPER_FLAG in sys.argv:
+        from core import stt_child
+        pos = sys.argv.index(mic_host.HELPER_FLAG)
+        sys.exit(stt_child.main(sys.argv[pos + 1:]))
     _set_process_name()
     _set_windows_app_id()
     from PyQt6.QtGui import QFont, QIcon

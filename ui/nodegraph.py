@@ -1285,29 +1285,61 @@ class BlockTree(QTreeWidget):
         self.setDragDropMode(QTreeWidget.DragDropMode.DragOnly)
         self.setIndentation(12)
         self.setMinimumHeight(220)
+        self.apply_filter("")
+
+    def apply_filter(self, text):
+        """Rebuilds the tree, keeping only the blocks that match.
+
+        Same shape as VariableTree.apply_filter() on purpose: two lists
+        in one panel that answer a search differently is one list too
+        many. A block is a hit on its title, on its description or on
+        its internal id - the description is where the words people
+        actually search for live ("battery", "vrchat", "key"), and the
+        title alone would miss all of them.
+        """
+        query = (text or "").strip().lower()
+        self.clear()
         for category, groups in PALETTE_TREE:
             top = QTreeWidgetItem([category])
             top.setFlags(Qt.ItemFlag.ItemIsEnabled)
-            self.addTopLevelItem(top)
+            kept = 0
             for subgroup, ids in groups:
                 parent = top
+                sub_item = None
                 if subgroup:
-                    parent = QTreeWidgetItem([subgroup])
-                    parent.setFlags(Qt.ItemFlag.ItemIsEnabled)
-                    top.addChild(parent)
+                    sub_item = QTreeWidgetItem([subgroup])
+                    sub_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+                    parent = sub_item
+                found = 0
                 for type_id in ids:
                     definition = NODE_DEFS.get(type_id)
                     if definition is None:
                         continue
+                    if query:
+                        hay = (f"{definition['title']} {definition['note']} "
+                               f"{type_id} {category} {subgroup or ''}").lower()
+                        if query not in hay:
+                            continue
                     item = QTreeWidgetItem([definition["title"]])
                     item.setData(0, Qt.ItemDataRole.UserRole, type_id)
                     item.setToolTip(0, definition["note"])
                     parent.addChild(item)
-                if subgroup:
-                    parent.setExpanded(False)
+                    found += 1
+                kept += found
+                if sub_item is not None:
+                    if not found:
+                        continue        # an empty subgroup is noise
+                    top.addChild(sub_item)
+                    # closed while browsing, open while searching - a
+                    # search that hides its hits behind a triangle is
+                    # not a search
+                    sub_item.setExpanded(bool(query))
+            if query and not kept:
+                continue
+            self.addTopLevelItem(top)
             # Sources open, the rest closed: the first block of any graph
             # comes from there, so it is the one worth costing a click
-            top.setExpanded(category == "Sources")
+            top.setExpanded(bool(query) or category == "Sources")
 
     def startDrag(self, actions):
         item = self.currentItem()

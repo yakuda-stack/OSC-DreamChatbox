@@ -850,6 +850,10 @@ class MainWindow(ConfigMixin, AppsPageMixin, AdvancedPageMixin,
         VRChat rate limit on repeats of the same text; sending on none
         of them would leave a Timer waiting for the ordinary send
         interval to notice it.
+
+        The automation keeps running with SendToVRChat off - a canvas
+        that presses a hotkey or starts a program is not about the
+        chatbox - but nothing goes on the wire in that state.
         """
         if not (self.cfg.get("aio_active")
                 and self.cfg.get("aio_mode") == "advanced"):
@@ -859,14 +863,28 @@ class MainWindow(ConfigMixin, AppsPageMixin, AdvancedPageMixin,
         before = self.current_aio_index()
         self.run_graph_automation()
         text = self.build_payload()
-        if (text and text != getattr(self, "_last_graph_text", None)) or \
-                self.current_aio_index() != before:
+        changed = (bool(text)
+                   and text != getattr(self, "_last_graph_text", None)) \
+            or self.current_aio_index() != before
+        if changed:
             self._last_graph_text = text
+        if changed and self.cfg.get("send_to_vrchat"):
             self.send_now()
         else:
             self.update_preview()
 
     def send_now(self):
+        # The one gate every automatic chatbox message has to pass. It
+        # used to live only in sending_live(), which the interval timer
+        # and the instant sends consult - but Advanced mode's one second
+        # tick and the Button block call send_now() directly. So with
+        # SendToVRChat off, the chatbox was cleared and a canvas with
+        # anything moving in it (a clock, a hardware value, a Timer) put
+        # the text straight back a second later.
+        # Typed messages are deliberately NOT affected: send_manual_text()
+        # is a manual action and has its own path.
+        if not self.cfg.get("send_to_vrchat"):
+            return
         if self.stt_recording:
             return  # speech to text is recording - sending is blocked
         if time.time() < self.manual_pause_until:
@@ -995,7 +1013,11 @@ class MainWindow(ConfigMixin, AppsPageMixin, AdvancedPageMixin,
         for name, step in (
                 ("clear_chatbox", self.clear_chatbox),
                 ("plugins.shutdown", self.plugins.shutdown),
-                ("stt.stop", self.stt.stop),
+                # shutdown(), not stop(): stop() only sets a flag and the
+                # thread that acts on it dies with the process, which
+                # would leave the microphone helper running for a window
+                # that is already gone (core/mic_host.py)
+                ("stt.shutdown", self.stt.shutdown),
                 # slowest one last - by now everything else is done and
                 # the config is safely on disk
                 ("libre_server.stop_sync", self.libre_server.stop_sync),

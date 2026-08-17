@@ -358,6 +358,20 @@ class AdvancedPageMixin:
         hint.setWordWrap(True)
         v.addWidget(hint)
 
+        # Thirty-four blocks in six collapsed categories: knowing that
+        # "Send Hotkey" is under System is a thing you learn, not a thing
+        # you can see, so the panel answers a word as well as a click.
+        self.graph_block_search = QLineEdit()
+        self.graph_block_search.setPlaceholderText("Search \u2026")
+        self.graph_block_search.setClearButtonEnabled(True)
+        self.graph_block_search.setToolTip(
+            "Filters the blocks by title, description or category \u2013 "
+            "\u201ckey\u201d finds the hotkey blocks, \u201cavatar\u201d "
+            "the ones that talk to VRChat.")
+        self.graph_block_search.textChanged.connect(
+            lambda t: self.graph_block_tree.apply_filter(t))
+        v.addWidget(self.graph_block_search)
+
         self.graph_block_tree = BlockTree()
         v.addWidget(self.graph_block_tree, 1)
 

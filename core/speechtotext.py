@@ -129,6 +129,10 @@ from core.backends import mic_sounddevice
 # every blocking PortAudio call in this module goes through here - see
 # core/backends/mic_probe.py for why nothing may run unguarded
 from core.backends import mic_probe
+# ... and, whenever it can, through a process of its own instead of a
+# thread of our own: PortAudio does not raise, it aborts. See
+# core/mic_host.py and core/stt_child.py.
+from core import mic_host
 
 
 def has_sounddevice():
@@ -159,6 +163,16 @@ def mic_driver():
     if has_sounddevice():
         return "sounddevice"
     return ""
+
+
+def microphone_mode():
+    """One line for the log: where the microphone is actually opened.
+
+    Worth having in every bug report - "the app crashed when I pressed
+    record" and "the helper process crashed" are two very different
+    reports, and the answer to which one you are reading is here.
+    """
+    return mic_host.describe()
 
 
 def has_microphone_driver():
@@ -198,7 +212,12 @@ _DEVICE_CACHE_AT = 0.0
 
 def _enumerate_devices(log=None):
     """The raw, BLOCKING enumeration. Never call this directly - go
-    through list_microphones(), which wraps it in the timeout guard."""
+    through list_microphones(), which wraps it in the timeout guard.
+
+    Only reached when the helper process is unavailable; see
+    core/mic_host.py for why enumerating in this process is a hazard
+    while a recording is running.
+    """
     if HAS_PYAUDIO:
         with _silence_stderr():
             names = sr.Microphone.list_microphone_names()
@@ -226,6 +245,25 @@ def list_microphones(log=None, timeout=None, force=False):
         return []
     if force:
         mic_probe.clear_stuck()
+    # Preferred path: a helper process does the enumeration. It cannot
+    # disturb a recording that is running (Pa_Terminate tears down every
+    # stream in ITS OWN process, and that process holds none), and if it
+    # wedges it can be killed rather than leaked. See core/mic_host.py.
+    if mic_host.available():
+        ok, res, answered = mic_host.list_devices(log)
+        if ok:
+            _DEVICE_CACHE = res
+            _DEVICE_CACHE_AT = time.time()
+            return res
+        if callable(log):
+            log(f"Speech to Text: microphones could not be listed ({res})")
+        if answered:
+            # The helper reached the audio stack and that is where the
+            # answer came from. Asking again in THIS process would only
+            # repeat the message - or repeat the crash, with the app.
+            return list(_DEVICE_CACHE)
+        # never got off the ground (no interpreter, spawn refused): fall
+        # through so a build that cannot spawn still fills the dropdown
     ok, res = mic_probe.guarded(
         lambda: _enumerate_devices(log),
         timeout=timeout or mic_probe.LIST_TIMEOUT,
@@ -294,6 +332,30 @@ def default_device_note(log=None):
     graph lost a node that lookup is one of the calls that blocks - so it
     happens here, inside the guard, rather than unprotected further down.
     """
+    if mic_host.available():
+        # Same reason as list_microphones(): asking PortAudio for its
+        # default input builds and tears down a PyAudio instance, and
+        # Pa_Terminate() aborts every open stream in the process it runs
+        # in. Doing that in the app while the app is recording is how a
+        # working session ends in a corrupted heap.
+        ok, res, answered = mic_host.default_device(log)
+        if ok:
+            return ""
+        if not answered:
+            # spawning failed outright - try the old in-process probe
+            # below rather than refusing to start over a missing helper
+            res = ""
+        elif "timed out" in str(res):
+            return ("The system default microphone did not answer. This "
+                    "usually means a device disappeared while it was still "
+                    "registered \u2013 leaving VR does exactly that. Pick a "
+                    "specific microphone from the list instead of "
+                    "\u201cSystem default\u201d, or press \u27F3 Refresh "
+                    "once it is back.")
+        elif res:
+            return (f"No usable system default microphone ({res}). Pick a "
+                    f"specific device from the list.")
+
     if HAS_PYAUDIO:
         def probe():
             with _silence_stderr():
@@ -385,6 +447,9 @@ class SpeechWorker:
         self.libre_online_key = ""   # optional, some instances need one
         self.google_key = ""  # optional Google Cloud Translation key
         self.mic_index = -1   # -1 = system default microphone
+        # the helper process currently holding the microphone, so
+        # shutdown() can end it instead of leaving an orphan behind
+        self._active_session = None
 
     @staticmethod
     def available():
@@ -435,6 +500,20 @@ class SpeechWorker:
 
     def stop(self):
         self._stop.set()
+
+    def shutdown(self):
+        """Stop AND make sure the helper process is gone before we
+        return. stop() only sets a flag; the thread that acts on it is a
+        daemon, so at application exit it can be killed halfway through
+        and leave a helper holding the microphone for a window that no
+        longer exists. Called from MainWindow.closeEvent()."""
+        self._stop.set()
+        sess = self._active_session
+        if sess is not None:
+            try:
+                sess.stop(grace=0.5)
+            except Exception:      # noqa: BLE001
+                pass
 
     # -------------------------------------------------------------- errors
     @staticmethod
@@ -496,65 +575,199 @@ class SpeechWorker:
             emit("stopped", "")
             return
 
+        # The microphone belongs in a process of its own whenever that is
+        # possible. PortAudio does not fail, it ABORTS - a corrupted heap
+        # inside PipeWire's ALSA plugin takes down whatever process it is
+        # in, and that must not be the one holding the user's window and
+        # their unsaved config. See core/mic_host.py.
+        if mic_host.available():
+            self._run_helper(stop, emit)
+            return
+        self._run_inprocess(stop, emit, me)
+
+    # --------------------------------------------------- helper process
+    #: what the helper's short status words mean in the UI
+    _HELPER_STATUS = {
+        "listening": "Listening \u2026",
+        "transcribing": "Transcribing \u2026",
+        "unknown": "Didn't catch that \u2013 listening \u2026",
+    }
+
+    def _run_helper(self, stop, emit):
+        """Supervise core/stt_child.py and translate what it heard."""
+        sess = mic_host.Session(language=self.language,
+                                mic_index=self.mic_index)
+        if not sess.start():
+            emit("error", f"The microphone helper could not start "
+                          f"({sess.error}).")
+            emit("stopped", "")
+            return
+
+        self._active_session = sess
+
+        def stopper():
+            # Stopping is a kill, not a join: a helper wedged inside
+            # PortAudio would otherwise keep the record button hostage.
+            stop.wait()
+            sess.stop()
+
+        threading.Thread(target=stopper, daemon=True,
+                         name="stt-stopper").start()
+
+        saw_error = False
+        try:
+            for msg in sess.messages():
+                if stop.is_set():
+                    break
+                kind = str(msg.get("kind") or "")
+                text = str(msg.get("text") or "")
+                if kind == "ready":
+                    emit("status", "Listening \u2026 speak now")
+                elif kind == "heard":
+                    self._deliver(text, emit)
+                elif kind == "status":
+                    emit("status", self._HELPER_STATUS.get(text, text))
+                elif kind == "error":
+                    saw_error = True
+                    emit("error", self._helper_error_text(text))
+                    break
+        except Exception as e:      # noqa: BLE001
+            emit("error", f"Recording error: {e}")
+            saw_error = True
+        finally:
+            requested = stop.is_set()
+            stop.set()
+            sess.stop()
+            if not requested and not saw_error:
+                if sess.crashed():
+                    # The exact failure this whole helper exists for.
+                    # Before 1.4.1 this line was the app disappearing.
+                    mic_probe.mark_stuck(
+                        "the audio driver aborted the microphone helper")
+                    emit("error",
+                         "The audio driver crashed the microphone helper "
+                         "process. The recording stopped, but the app is "
+                         "unaffected \u2013 this is a bug in PortAudio / "
+                         "PipeWire, not in the chatbox. Try a different "
+                         "device (a plain \u201cpipewire\u201d or "
+                         "\u201cpulse\u201d entry is the most reliable), "
+                         f"then press \u27F3 Refresh. Details: "
+                         f"{sess.exit_note()}")
+                else:
+                    emit("error", f"The microphone stopped "
+                                  f"({sess.exit_note()}).")
+            if self._active_session is sess:
+                self._active_session = None
+            emit("stopped", "")
+
+    @staticmethod
+    def _helper_error_text(text):
+        low = (text or "").lower()
+        if "no microphone driver" in low or "speechrecognition" in low:
+            return missing_dependency() or text
+        if "microphone" in low and ("open" in low or "setup" in low):
+            return (f"{text}. If you just left VR, its virtual microphone "
+                    f"is gone \u2013 pick another device and press "
+                    f"\u27F3 Refresh.")
+        return text
+
+    # ------------------------------------------------- translation side
+    def _deliver(self, text, emit):
+        """One recognised phrase: translate it if asked, then hand the
+        pair (spoken, sent) to the UI.
+
+        Shared by both paths on purpose - the microphone moved out of
+        the process, the language settings did not.
+        """
+        text = (text or "").strip()
+        if not text:
+            return
+        out = text
+        tgt = self.translate_to
+        if tgt and not self.language.lower().startswith(
+                tgt.lower().split("-")[0]):
+            emit("status", "Translating \u2026")
+            # its own event, not a status string the UI would have to
+            # pattern-match: the chatbox notice is a behaviour, and
+            # hanging it off the wording of a label would break the
+            # first time that label is reworded
+            emit("translating", text)
+            tr = translate_with_fallback(
+                self.method, text, self.language, tgt,
+                deepl_key=self.deepl_key,
+                libre_url=self.libre_url,
+                google_key=self.google_key,
+                libre_online_url=self.libre_online_url,
+                libre_online_key=self.libre_online_key,
+                log=lambda m: emit("status", m))
+            if tr:
+                emit("status", f'\"{text}\" \u2192 \"{tr}\"')
+                out = tr
+            else:
+                emit("status", "Translation failed \u2013 sending original")
+        # emit (source, final) so the UI can show both
+        emit("text", (text, out))
+
+    # ------------------------------------------------ in-process fallback
+    def _run_inprocess(self, stop, emit, me):
+        """The old path, for a build where no helper can be spawned.
+
+        Still worth having: a frozen build with a broken re-exec, or
+        somebody debugging with OSC_DREAMCHATBOX_STT_INPROCESS=1. It is
+        the same code as before except for one thing that mattered - the
+        stream is opened, calibrated and read on THIS thread now, not on
+        three different throwaway guard threads.
+        """
         # ---- 1. recognizer + microphone object -------------------------
         # sr.Microphone() is not a passive object: its constructor asks
         # PortAudio for the default device and the sample rate. On a
         # machine whose audio graph just lost a node that lookup is one
-        # of the calls that never returns, so even this runs guarded.
-        def build():
-            with _silence_stderr():
-                rec = sr.Recognizer()
-                rec.dynamic_energy_threshold = True
-                if HAS_PYAUDIO:
-                    device = (sr.Microphone(device_index=self.mic_index)
-                              if self.mic_index >= 0 else sr.Microphone())
-                else:
-                    device = mic_sounddevice.make_microphone(
-                        sr, self.mic_index)
-            return rec, device
-
-        ok, res = mic_probe.guarded(
-            build, timeout=mic_probe.OPEN_TIMEOUT, label="microphone setup")
-        if not ok:
-            me.dc_stalled = isinstance(res, mic_probe.MicTimeout)
-            emit("error", self._open_error_text(res))
+        # of the calls that never returns - so a watchdog reports it,
+        # but the call itself stays on this thread (see mic_probe.watched
+        # for why moving it was actively harmful).
+        try:
+            with mic_probe.watched("microphone setup") as late:
+                with _silence_stderr():
+                    r = sr.Recognizer()
+                    r.dynamic_energy_threshold = True
+                    if HAS_PYAUDIO:
+                        mic = (sr.Microphone(device_index=self.mic_index)
+                               if self.mic_index >= 0 else sr.Microphone())
+                    else:
+                        mic = mic_sounddevice.make_microphone(
+                            sr, self.mic_index)
+        except Exception as e:      # noqa: BLE001
+            me.dc_stalled = False
+            emit("error", self._open_error_text(e))
             emit("stopped", "")
             return
-        r, mic = res
+        if late.is_set():
+            me.dc_stalled = True
 
         # ---- 2. open the stream ----------------------------------------
-        def do_open():
-            with _silence_stderr():
-                return mic.__enter__()
-
-        ok, res = mic_probe.guarded(
-            do_open, timeout=mic_probe.OPEN_TIMEOUT, label="microphone open")
-        if not ok:
-            timed_out = isinstance(res, mic_probe.MicTimeout)
-            me.dc_stalled = timed_out
-            emit("error", self._open_error_text(res))
-            # On a timeout the open is STILL RUNNING in a parked thread.
-            # Closing a stream another thread is inside of is how you get
-            # a segfault instead of an error message, so leave it alone
-            # and let the process reclaim it at exit.
-            if not timed_out:
-                self._close(mic)
+        try:
+            with mic_probe.watched("microphone open") as late:
+                with _silence_stderr():
+                    source = mic.__enter__()
+        except Exception as e:      # noqa: BLE001
+            emit("error", self._open_error_text(e))
+            self._close(mic)
             emit("stopped", "")
             return
-        source = res
+        if late.is_set():
+            me.dc_stalled = True
 
         # ---- 3. calibrate ----------------------------------------------
-        ok, res = mic_probe.guarded(
-            lambda: r.adjust_for_ambient_noise(source, duration=0.4),
-            timeout=mic_probe.OPEN_TIMEOUT, label="microphone calibration")
-        if not ok:
-            timed_out = isinstance(res, mic_probe.MicTimeout)
-            me.dc_stalled = timed_out
-            emit("error", self._open_error_text(res))
-            if not timed_out:
-                self._close(mic)
+        try:
+            with mic_probe.watched("microphone calibration") as late:
+                r.adjust_for_ambient_noise(source, duration=0.4)
+        except Exception as e:      # noqa: BLE001
+            emit("error", self._open_error_text(e))
+            self._close(mic)
             emit("stopped", "")
             return
+        if late.is_set():
+            me.dc_stalled = True
 
         # ---- 4. the listen loop, watched --------------------------------
         # A device that dies WHILE recording does not raise - it simply
@@ -607,39 +820,10 @@ class SpeechWorker:
                 try:
                     text = r.recognize_google(audio, language=self.language)
                     tick()      # transcription is a network call
-                    text = text.strip()
-                    if text:
-                        out = text
-                        tgt = self.translate_to
-                        if tgt and not self.language.lower().startswith(
-                                tgt.lower().split("-")[0]):
-                            emit("status", "Translating \u2026")
-                            # its own event, not a status string the UI
-                            # would have to pattern-match: the chatbox
-                            # notice is a behaviour, and hanging it off
-                            # the wording of a label would break the
-                            # first time that label is reworded
-                            emit("translating", text)
-                            tr = translate_with_fallback(
-                                self.method, text,
-                                self.language, tgt,
-                                deepl_key=self.deepl_key,
-                                libre_url=self.libre_url,
-                                google_key=self.google_key,
-                                libre_online_url=self.libre_online_url,
-                                libre_online_key=self.libre_online_key,
-                                log=lambda m: emit("status", m))
-                            tick()  # so is translation
-                            if tr:
-                                emit("status",
-                                     f'\"{text}\" \u2192 \"{tr}\"')
-                                out = tr
-                            else:
-                                emit("status",
-                                     "Translation failed \u2013 "
-                                     "sending original")
-                        # emit (source, final) so the UI can show both
-                        emit("text", (text, out))
+                    # same delivery as the helper path - one place that
+                    # knows about the language settings
+                    self._deliver(text, emit)
+                    tick()      # so is the translation inside it
                     emit("status", "Listening \u2026")
                 except sr.UnknownValueError:
                     tick()

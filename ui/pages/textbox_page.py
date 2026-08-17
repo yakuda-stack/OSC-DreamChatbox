@@ -16,8 +16,8 @@ from core.constants import (
 from core.speechtotext import (
     LANGUAGES, OUTPUT_LANGUAGES, SpeechWorker, cached_microphones,
     clear_driver_stuck, default_device_note, driver_stuck, has_sr,
-    list_microphones, missing_dependency, reload_sr, resolve_device,
-    has_microphone_driver, reload_mic_driver)
+    list_microphones, microphone_mode, missing_dependency, reload_sr,
+    resolve_device, has_microphone_driver, reload_mic_driver)
 from core.plugins import ANCHOR_LABELS
 from core import pyextras
 from core.constants import EXTRAS_DIR
@@ -1450,6 +1450,11 @@ class TextboxPageMixin:
         self.stt_status_lbl.setStyleSheet("")
         self.log(f"Speech to Text: recording started "
                  f"({self.cfg['stt_language']}) \u2013 apps are blocked")
+        # Which side of core/mic_host.py we are on. A crash report that
+        # says "the app died" and one that says "the helper died" are two
+        # completely different bugs, and this line is what tells them
+        # apart afterwards.
+        self.log(f"Speech to Text: microphone runs {microphone_mode()}")
         self.stt.start(
             self.cfg["stt_language"], self.cfg["stt_output"],
             self.cfg["stt_method"],

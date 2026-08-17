@@ -27,7 +27,7 @@
 ; The fallback below only applies when you build the .iss by hand, so it can
 ; still drift from core/constants.py -> VERSION. Prefer make-release.ps1.
 #ifndef AppVersion
-  #define AppVersion   "1.4.0"
+  #define AppVersion   "1.4.1"
 #endif
 ; where build-exe.ps1 leaves the one-folder build
 #define SourceDir      "..\..\dist\OSC-DreamChatbox"

@@ -118,6 +118,70 @@ def _unleak():
         _leaked = max(0, _leaked - 1)
 
 
+def watched(label, timeout=OPEN_TIMEOUT, log=None):
+    """Context manager: run a blocking audio call ON THE CALLING THREAD
+    and have a watchdog report it if it never comes back.
+
+    ``guarded()`` above moves the call to a throwaway thread so the
+    CALLER can carry on. That is right for the GUI thread and wrong for
+    everything that touches a stream, because PortAudio's PipeWire path
+    keeps per-thread client state: opening a stream on one thread,
+    calibrating it on a second and reading it on a third - each of which
+    has exited by then - is how the reported
+
+        malloc(): mismatching next->prev_size
+
+    aborts happen. A recording session is already on a background
+    thread, so it does not need the hop; it needs the report.
+
+    ``with watched("microphone open") as timed_out:`` - afterwards
+    ``timed_out.is_set()`` says whether the deadline passed while the
+    call was running.
+    """
+    return _Watched(label, timeout, log)
+
+
+class _Watched:
+    def __init__(self, label, timeout, log=None):
+        self.label = label
+        self.timeout = timeout
+        self.log = log
+        self.timed_out = threading.Event()
+        self._done = threading.Event()
+
+    def __enter__(self):
+        def watch():
+            if self._done.wait(self.timeout):
+                return
+            self.timed_out.set()
+            _mark_stuck(f"{self.label} did not return within "
+                        f"{self.timeout:.0f}s")
+            if callable(self.log):
+                self.log(f"Speech to Text: {self.label} did not answer "
+                         f"within {self.timeout:.0f}s - the audio device is "
+                         f"most likely gone (VR session ended?).")
+
+        threading.Thread(target=watch, daemon=True,
+                         name=f"mic-watch:{self.label}").start()
+        return self.timed_out
+
+    def __exit__(self, exc_type, exc, tb):
+        self._done.set()
+        if self.timed_out.is_set():
+            # it came back after all - the driver is slow, not wedged
+            _unstick_if(f"{self.label} did not return within "
+                        f"{self.timeout:.0f}s")
+        return False
+
+
+def _unstick_if(reason):
+    """Clears the stuck flag only when it is still the one we set."""
+    global _stuck_reason
+    with _state_lock:
+        if _stuck_reason == reason:
+            _stuck_reason = None
+
+
 def guarded(fn, timeout=LIST_TIMEOUT, label="audio call", log=None,
             respect_stuck=True):
     """Run ``fn()`` on a daemon thread with a deadline.

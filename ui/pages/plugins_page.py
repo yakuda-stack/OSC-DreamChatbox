@@ -693,11 +693,15 @@ class PluginsPageMixin:
             "Insert a placeholder or a formatting tag at the cursor.\n"
             "Only plugin values are offered: a plugin template is rendered "
             "against the plugin values alone, so a hardware or media name "
-            "would come out empty here.")
+            "would come out empty here.\n"
+            "Typing { and a letter or two suggests names directly in the "
+            "field.")
         plus.clicked.connect(
             lambda _=False, e=edit, b=plus, pid=plugin.pid:
                 self.open_placeholder_menu(e, b, scope="plugin", pid=pid))
         row.addWidget(plus)
+        self.attach_placeholder_completer(edit, scope="plugin",
+                                          pid=plugin.pid)
 
         reset = QPushButton("\u21BA")
         reset.setObjectName("iconbtn")

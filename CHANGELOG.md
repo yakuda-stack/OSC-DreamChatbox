@@ -6,6 +6,117 @@ All notable changes to OSC-DreamChatbox are documented here.
 
 🟢 Linux Support: Complete & Stable (v1.2.6)
 
+## [v1.4.1] – 2026-08-17
+
+**Speech to Text no longer crashes the app, Send to VRChat really means
+off in Advanced mode, and the placeholder names can be typed instead of
+hunted for.**
+
+### Added
+
+**Advanced mode: a search line over the blocks**
+
+- The **Blocks palette** got the same search box the Variables list
+  below it has always had. Thirty-four blocks in six collapsed
+  categories means knowing that *Send Hotkey* lives under System is
+  something you learn rather than something you can see.
+- It matches the title, the description and the category, so "key"
+  brings up both hotkey blocks and "avatar" everything that talks to
+  VRChat. Categories and subgroups open themselves while a search is
+  running and fold back the moment the box is empty.
+
+**Type-ahead for placeholders**
+
+- Type `{` and a letter or two in an All-in-one string, the Hardware or
+  MediaPlay custom string or a plugin's own string, and a **suggestion
+  list drops under the cursor**. Enter or a click completes the whole
+  name, closing brace included; typing on narrows it; Escape drops it
+  for that word.
+- The list is ranked: names that *start* with what you typed first, then
+  names that contain it, then descriptions — so `{bat` reaches
+  `{hmd_battery}` without knowing which plugin named it, while `{time`
+  still puts `{time}` above `{time_status}`.
+- It is fed by the same index the picker menu uses, so a field only ever
+  suggests what it can actually resolve — no hardware names inside a
+  plugin string — and a plugin installed while the field is open shows
+  up on the next keystroke.
+
+**The "+" menu got a search line**
+
+- A **search box and a scope selector** sit at the top of the picker.
+  Typing filters everything down to a flat list of hits, each one
+  carrying the group it came from, so the answer to "where did
+  `{hmd_battery}` come from" is in the result rather than three folders
+  away.
+- The scope selector narrows the search: *Everywhere*, *This app*, one
+  of the **built-in sections** (Personal Status, Hardware, Media, Custom
+  Box, Chat / Speech to Text, Formatting) or **one specific plugin**.
+  Picking a plugin with the box empty simply lists everything that
+  plugin offers.
+- A plugin's short names — the ones it claimed without its own prefix —
+  moved into a **"Short names (n)"** submenu instead of sitting inline.
+  They are the same values under a second name, and fifteen lines of
+  "claimed by this plugin" was something to scroll past every time.
+
+### Fixed
+
+- **Speech to Text could take the whole app down with it.** Reported
+  from CachyOS with PipeWire 1.6 and PyAudio 0.2.14, on the AUR build,
+  the AppImage and a source checkout alike: pressing record ended the
+  process within a second, with `malloc(): mismatching next->prev_size`
+  or `free(): corrupted unsorted chunks` and a core dump. That is glibc
+  finding a corrupted heap — not a Python exception, so no amount of
+  error handling inside the app could have caught it. Two things on our
+  side made it happen, and both are gone:
+
+  - **Every PortAudio call ran on a throwaway thread.** The timeout
+    guard opened the stream on one thread, calibrated it on a second and
+    read it on a third — with each earlier one already exited by then.
+    PipeWire keeps per-thread client state, so the reader was working on
+    a stream whose creator no longer existed. That is why the faulting
+    thread in the reported core dumps is called `mic-probe:*`.
+  - **Filling the microphone dropdown could abort a running recording.**
+    Enumerating devices builds a PyAudio object and tears it down again,
+    and `Pa_Terminate()` closes *every* open stream in its process.
+
+- **The microphone now runs in a process of its own**
+  (`core/mic_host.py`, `core/stt_child.py`). It opens, calibrates, reads
+  and closes on one single thread, and nothing else in that process
+  touches audio. If the audio stack aborts anyway, it aborts a helper:
+  the recording stops, the app says so and stays open. Device lists and
+  the default-device check are separate short-lived helpers for the same
+  reason — which also means a wedged PortAudio can finally be
+  **killed** instead of leaking a thread that is parked forever.
+
+  The debug console logs which path is in use on every recording start,
+  so the next report says whether the app or the helper died. Setting
+  `OSC_DREAMCHATBOX_STT_INPROCESS=1` forces the old in-process path for
+  debugging; that path got the same-thread fix as well, plus a watchdog
+  that reports a hang instead of moving the call away from its stream.
+
+- Closing the window while recording now **ends the helper before the
+  app exits**. Stopping only set a flag, and the daemon thread that acts
+  on it dies with the process — which could leave a helper holding the
+  microphone for a window that was already gone.
+
+- **Advanced mode ignored the Send to VRChat switch.** With All in one
+  in *Advanced* mode and anything moving on a canvas — a clock, a
+  hardware value, a Timer — turning the sidebar switch off cleared the
+  chatbox as intended and then put the text straight back one to two
+  seconds later, over and over.
+
+  The one second Advanced tick (and the **Button** block) called the
+  send routine directly, while the switch was only consulted on the
+  paths the interval timer and the instant sends take. The check now
+  sits in the send routine itself, so every automatic chatbox message
+  passes it no matter which timer or block asked for it.
+
+- The canvas keeps running with the switch off — a graph whose job is a
+  hotkey, a program start or an avatar parameter is not about the
+  chatbox and should not stop — it just no longer reaches the chatbox.
+  Typed messages from the Chat card and Speech to Text are unaffected
+  as well; those are manual actions with their own path.
+
 ## [v1.4.0] – 2026-08-10
 
 **A visual way to build the All-in-one string, a link to the avatar in

@@ -99,6 +99,7 @@ class AioTextEdit(QPlainTextEdit):
         self._manual_h = 0        # 0 = grow with the content
         self._drag_from = None
         self._drag_h = 0
+        self._completer_popup = None   # set by PlaceholderCompleter
         self.document().documentLayout().documentSizeChanged.connect(
             self._on_doc_resized)
         self.textChanged.connect(self._on_text_changed)
@@ -181,7 +182,29 @@ class AioTextEdit(QPlainTextEdit):
         self._max_len = max(0, int(length))
 
     # --------------------------------------------------------- keyboard
+    def setCompleterPopup(self, popup):
+        """Tells the field that a completion list may be open above it.
+
+        QCompleter offers Return, Enter, Tab and Escape to the widget
+        FIRST and only acts on them if the widget leaves them alone -
+        and this widget swallows Return on purpose (see the docstring),
+        which meant a suggestion could be highlighted but never picked.
+        So while that list is up, those keys belong to it.
+        """
+        self._completer_popup = popup
+
+    #: keys that steer an open completion list rather than the text
+    _COMPLETION_KEYS = (Qt.Key.Key_Return, Qt.Key.Key_Enter,
+                        Qt.Key.Key_Tab, Qt.Key.Key_Backtab,
+                        Qt.Key.Key_Escape)
+
     def keyPressEvent(self, ev):
+        popup = getattr(self, "_completer_popup", None)
+        if (popup is not None and popup.isVisible()
+                and ev.key() in self._COMPLETION_KEYS):
+            # not accepted: that is the signal QCompleter waits for
+            ev.ignore()
+            return
         if ev.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
             mods = ev.modifiers()
             if (mods & Qt.KeyboardModifier.ShiftModifier

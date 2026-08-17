@@ -116,6 +116,12 @@ hiddenimports = [
     "core.backends.wintemp",
     "core.backends.media_windows",
     "core.backends.mic_sounddevice",
+    # the microphone helper. A frozen build re-runs itself with
+    # --stt-helper instead of spawning python (see core/mic_host.py), so
+    # this module has to be INSIDE the exe - and it is only imported at
+    # the top of main(), behind an argv check the analysis cannot follow.
+    "core.mic_host",
+    "core.stt_child",
     # sounddevice talks to PortAudio through CFFI
     "_cffi_backend",
     # ctypes/winreg/mmap back the Windows hardware sources; winreg in
