@@ -8,6 +8,7 @@ window class stays small. All `self.*` refer to the MainWindow instance.
 import json
 import shutil
 from core.theming import THEMES
+from core.audiolevel import THRESHOLD_DEFAULT, clamp_threshold
 from core.textstyle import STYLE_NORMAL, normalize as normalize_style
 from core.constants import (
     AIO_MAX, CHAT_MODES, DEFAULT_TRANSLATE_NOTICE, CHAT_MODE_DIRECT, CONFIG_DIR, CONFIG_FILE, LYRICS_DIR, MIN_STATUS_CYCLE_SEC, OLD_CONFIG_FILE, TITLE_MAX_LEN)
@@ -33,6 +34,23 @@ FIRST_RUN_STATUS_TEXTS = [
     "\u2615 Support on Ko-fi: ko-fi.com/yakuda_",
     "\U0001F4BB GitHub Repo: github.com/yakuda-stack",
 ]
+
+
+def _clamp_float(value, fallback, low, high):
+    """A float from the config, forced into range.
+
+    Its own helper because the sensitivity timings all need it and a
+    config that a user edited by hand is the normal case here - the
+    values are seconds with one decimal, which is exactly the kind of
+    setting people try in a text editor.
+    """
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        return float(fallback)
+    if value != value:      # NaN survives min/max, so it is caught here
+        return float(fallback)
+    return float(max(low, min(high, value)))
 
 
 def _bool_list(value, size, fallback):
@@ -210,6 +228,30 @@ class ConfigMixin:
             # VR) is frequently the device that hangs. See
             # core/backends/mic_probe.py.
             "stt_mic_strict": True,
+            # ---- microphone list + sensitivity (v1.4.2) ---------------
+            # PortAudio's device list is a list of ALSA PCMs: HDMI
+            # outputs, four copies of one headset, and no VR microphone
+            # at all. The dropdown therefore shows the sound server's
+            # grouped source list (see core/micgroups.py) and hides the
+            # raw hw: entries unless they are asked for.
+            "stt_mic_show_raw": False,
+            # Sensitivity - SpeechRecognition knobs that were previously
+            # left at their defaults. Automatic re-learns the room
+            # continuously, which is right in a quiet one and drifts in a
+            # noisy one (fans, game audio, a headset next to the mic);
+            # the manual value is what the level meter's marker shows.
+            "stt_energy_auto": True,
+            "stt_energy_threshold": THRESHOLD_DEFAULT,
+            # how much silence ends a phrase. Too short cuts sentences
+            # in half mid-word, too long delays every message.
+            "stt_pause_sec": 0.8,
+            # how long a sound has to last before it counts as speech at
+            # all - what keeps a keyboard click or a door from becoming
+            # a transcription request
+            "stt_min_phrase_sec": 0.3,
+            # hard cap on one phrase, so a stuck open microphone cannot
+            # record forever before anything is sent
+            "stt_phrase_limit": 12,
             # ---- chat routing (core/constants.py CHAT_MODES) ----------
             # The Chat card is always Standard - it is the "take over the
             # chatbox now" control, and the other two routes only ever
@@ -508,6 +550,29 @@ class ConfigMixin:
             defaults["chat_hold_sec"] = 0
         for key in ("stt_block_plugins", "stt_block_box", "stt_mic_strict"):
             defaults[key] = bool(defaults.get(key, True))
+        # ---- microphone list + sensitivity (v1.4.2) -------------------
+        # All five are absent from every older config and land on their
+        # defaults, which is exactly the behaviour those versions had:
+        # automatic sensitivity and SpeechRecognition's own timings.
+        defaults["stt_mic_show_raw"] = bool(
+            defaults.get("stt_mic_show_raw", False))
+        defaults["stt_energy_auto"] = bool(
+            defaults.get("stt_energy_auto", True))
+        defaults["stt_energy_threshold"] = clamp_threshold(
+            defaults.get("stt_energy_threshold", THRESHOLD_DEFAULT))
+        defaults["stt_pause_sec"] = _clamp_float(
+            defaults.get("stt_pause_sec"), 0.8, 0.2, 3.0)
+        # non_speaking_duration is derived from pause_sec in
+        # core/stt_child.py and must never exceed it, which is why the
+        # lower bound here is not zero: a pause under 0.2 s slices into
+        # the phrase itself and produces half-words.
+        defaults["stt_min_phrase_sec"] = _clamp_float(
+            defaults.get("stt_min_phrase_sec"), 0.3, 0.05, 2.0)
+        try:
+            defaults["stt_phrase_limit"] = min(60, max(3, int(
+                defaults.get("stt_phrase_limit", 12))))
+        except (TypeError, ValueError):
+            defaults["stt_phrase_limit"] = 12
         exc = defaults.get("stt_block_except")
         defaults["stt_block_except"] = sorted(
             {str(x) for x in exc}) if isinstance(exc, list) else []

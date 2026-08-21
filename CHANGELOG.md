@@ -6,6 +6,133 @@ All notable changes to OSC-DreamChatbox are documented here.
 
 🟢 Linux Support: Complete & Stable (v1.2.6)
 
+## [v1.4.2] – 2026-08-21
+
+**The microphone dropdown finally lists microphones instead of ALSA
+PCMs, and there is a level bar that tells you whether the one you picked
+can actually hear you.**
+
+### Added
+
+**A microphone list you can read**
+
+- The dropdown is **grouped**: *Microphones*, *Virtual sources*,
+  *Monitors*, and — folded away at the bottom — *Direct hardware*. Each
+  group header explains what it is, so "a monitor records what your
+  speakers are playing, not your voice" is said once instead of never.
+- The entries come from **PipeWire/PulseAudio** (`pactl`) rather than
+  from PortAudio. That is the whole difference: PortAudio's list is a
+  list of ALSA PCMs, which is why it showed four copies of one headset,
+  half a dozen HDMI **outputs** as if they were inputs, and **no VR
+  microphone at all** — a WiVRn or PipeWeaver source is a PipeWire node
+  with no ALSA device behind it, so it could not appear.
+- Those sources are opened by pointing the microphone helper's
+  environment at the node (`PULSE_SOURCE` / `PIPEWIRE_NODE`), which only
+  works because the microphone has lived in its own process since 1.4.1.
+- The **default source is marked** with ●, the node name is in the
+  tooltip, and the raw `hw:` devices are one toggle away for the cases
+  where bypassing the sound server is genuinely the answer.
+- No `pactl`: everything falls back to the previous plain device list.
+  It is an optional dependency, not a requirement.
+
+**Windows gets its own version of the same problem solved**
+
+- There is no `pactl` on Windows, but PortAudio has the duplication
+  problem there too: every microphone is reported once per audio API
+  (MME, DirectSound, WASAPI, WDM-KS), so two microphones become eight
+  entries. The list now keeps **one entry per device** – WASAPI where
+  there is one, because MME truncates names at 31 characters and turns
+  a microphone into `Mikrofon (HyperX QuadCa`.
+- Those truncated MME names are **folded back onto the full ones**
+  rather than left sitting there as a near-identical extra line.
+- The other routes are behind the same toggle the direct-hardware group
+  uses on Linux, worded for Windows – worth a try when a device
+  refuses to open on WASAPI.
+- The level meter, the microphone test and all sensitivity settings work
+  the same on Windows. Only the *“Recording from”* read-back is
+  Linux-only, since it asks the sound server a question Windows has no
+  equivalent for.
+
+**Proof that the right thing is being recorded**
+
+- After a recording starts, the app **reads back out of the audio graph**
+  which source the helper actually ended up attached to and shows it:
+  *✅ Recording from: PipeWeaver VR-Mic*.
+- Pointing an environment variable at a node is a request, not a
+  guarantee. A node that disappeared between the dropdown and the click
+  produces a recording that works perfectly and listens to the wrong
+  thing — and you would find that out from the people in the instance.
+  Now you find it out from the status line.
+
+**Microphone test and a level meter**
+
+- A new **Microphone test & sensitivity** panel under the device
+  dropdown, with a **🎧 Test** button that opens the selected device and
+  shows its input level without recording or transcribing anything.
+- The bar keeps running **while a recording is going**, fed from inside
+  the helper's own read path — so it shows the audio the recogniser is
+  actually working with, not a second stream that might be attached
+  somewhere else entirely.
+- The scale is dBFS, because speech sits at 1-3 % of full scale and a
+  linear bar is a twitch at the left edge and nothing else.
+
+**Sensitivity settings**
+
+- **Automatic sensitivity** (on by default, the previous behaviour) can
+  be switched off. Automatic re-learns the room continuously, which is
+  right in a quiet one and drifts upward next to a fan, in a game with
+  sound, or with a headset whose own audio bleeds into the microphone —
+  until nothing counts as speech any more.
+- **Speech starts above** — the threshold, drawn as a dashed line in the
+  level bar so the setting and the meter are the same scale. Below it
+  the bar fills grey (audio that will be ignored), above it accent
+  coloured.
+- **📏 Measure** listens to your room for three seconds while you stay
+  quiet and puts the threshold above what it heard.
+- **Silence ends a phrase after** — too short cuts sentences in half at
+  every breath, too long delays every message.
+- **Ignore sounds shorter than** — what keeps a keyboard click, a mouse
+  or a door from becoming a transcription request.
+- **Longest single phrase** — a hard cap, so an open mic in a loud
+  instance still sends something instead of recording forever.
+- All of it has a **Reset to defaults**, and none of it exists in older
+  configs — those load on the defaults, i.e. exactly the behaviour they
+  had before.
+
+### Changed
+
+- `stt_mic` now stores an id (`pulse:<node>`, `pa:<device>`, or empty
+  for the system default). **Existing configs need no migration**: a
+  bare device name is read as `pa:` and keeps working, and so does
+  downgrading.
+- The saved device is still kept in the list when it is temporarily
+  gone, marked *(not available)* — a refresh while VR is off does not
+  quietly reset the choice.
+- Calibration is **skipped in manual mode**. `adjust_for_ambient_noise()`
+  writes what it measured into the threshold, so running it would have
+  discarded the value you just set and left you adjusting a slider that
+  did nothing.
+- The AUR package gained `libpulse` as an **optional** dependency
+  (that is where `pactl` lives).
+
+### Fixed
+
+- **Two settings quietly destroying each other.** The new "silence ends
+  a phrase" field was built as `self.pause_spin` — a name the Presets
+  card already used for the chatbox pause. Loading the config pushed the
+  10-second chatbox pause into a field whose maximum is 3 seconds, which
+  clamped it and wrote 3.0 back into the speech setting on **every
+  start**, while the chatbox pause never applied at all. Caught before
+  release; the speech fields are now `stt_*` throughout.
+- **An empty microphone dropdown after loading the config.** The config
+  step still repainted the list the old way, with raw PortAudio pairs
+  instead of grouped entries, wiping the entry the build step had just
+  put there.
+- The level meter, the test and any running recording are stopped when
+  the panel is collapsed, when Text to Text is selected, and when the
+  window closes — an open microphone behind a hidden panel is exactly
+  what this release is about noticing.
+
 ## [v1.4.1] – 2026-08-17
 
 **Speech to Text no longer crashes the app, Send to VRChat really means

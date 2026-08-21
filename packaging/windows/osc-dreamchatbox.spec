@@ -122,6 +122,13 @@ hiddenimports = [
     # the top of main(), behind an argv check the analysis cannot follow.
     "core.mic_host",
     "core.stt_child",
+    # The microphone list and level meter (v1.4.2). mic_pactl is a no-op
+    # on Windows but is imported unconditionally by mic_host/micgroups,
+    # and audiolevel is only reached from inside the helper - both are
+    # exactly the kind of module the analysis walks past.
+    "core.micgroups",
+    "core.audiolevel",
+    "core.backends.mic_pactl",
     # sounddevice talks to PortAudio through CFFI
     "_cffi_backend",
     # ctypes/winreg/mmap back the Windows hardware sources; winreg in

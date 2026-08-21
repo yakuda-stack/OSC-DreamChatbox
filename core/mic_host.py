@@ -101,12 +101,30 @@ def available():
     return helper_argv("list") is not None
 
 
-def _popen(argv, stdin=None):
+def _popen(argv, stdin=None, node=""):
+    """Start the helper, optionally pointed at a specific audio node.
+
+    `node` is where the separate process finally pays off twice over.
+    PipeWire and PulseAudio pick the source for a new ALSA client from
+    the environment (PULSE_SOURCE / PIPEWIRE_NODE), read once when the
+    stream opens - so selecting "the WiVRn microphone" means setting a
+    variable for the process that opens it. Doing that in-process would
+    mean mutating the app's own environment, which every future stream
+    (and any child it spawns) would then inherit.
+
+    The variables are also actively REMOVED when no node is given: a
+    user who exported PULSE_SOURCE in their shell would otherwise have
+    it quietly override "System default" here, and the app would be
+    recording from something it never offered.
+    """
+    from core.backends import mic_pactl
+    env = mic_pactl.clean_env()
+    env.update(mic_pactl.env_for(node))
     return subprocess.Popen(
         argv,
         stdin=stdin if stdin is not None else subprocess.DEVNULL,
         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        text=True, bufsize=1,
+        text=True, bufsize=1, env=env,
         **osinfo.subprocess_flags(new_group=True))
 
 
@@ -249,12 +267,18 @@ class Session:
     GRACE = 3.0
 
     def __init__(self, language="en-US", mic_index=-1, phrase_limit=12,
-                 calibrate=0.4, log=None):
+                 calibrate=0.4, log=None, node="", sensitivity=None,
+                 mode="listen"):
         self.language = language
         self.mic_index = -1 if mic_index is None else int(mic_index)
         self.phrase_limit = phrase_limit
         self.calibrate = calibrate
         self.log = log
+        #: sound-server source to route the helper at, "" = the default
+        self.node = node or ""
+        #: {energy_auto, energy_threshold, pause_sec, min_phrase_sec}
+        self.sensitivity = dict(sensitivity or {})
+        self.mode = mode
         self.proc = None
         self.stopped = False
         self.error = ""
@@ -262,12 +286,12 @@ class Session:
         self._stderr_lock = threading.Lock()
 
     def start(self):
-        argv = helper_argv("listen")
+        argv = helper_argv(self.mode)
         if argv is None:
             self.error = "the microphone helper is not available"
             return False
         try:
-            self.proc = _popen(argv, stdin=subprocess.PIPE)
+            self.proc = _popen(argv, stdin=subprocess.PIPE, node=self.node)
         except Exception as e:      # noqa: BLE001
             self.error = f"could not start the microphone helper ({e})"
             return False
@@ -276,6 +300,7 @@ class Session:
         cfg = {"language": self.language, "mic_index": self.mic_index,
                "phrase_limit": self.phrase_limit,
                "calibrate": self.calibrate}
+        cfg.update(self.sensitivity)
         try:
             self.proc.stdin.write(json.dumps(cfg) + "\n")
             self.proc.stdin.flush()
@@ -329,6 +354,29 @@ class Session:
         with self._stderr_lock:
             lines = list(self._stderr)
         return _exit_note(self.proc, lines)
+
+    def attached_source(self):
+        """The source the helper is REALLY recording from, or ''.
+
+        Setting PULSE_SOURCE is a request, not a guarantee: a node that
+        disappeared between the dropdown and the click, a server that
+        does not honour it, an ALSA path that never went through the
+        sound server at all - each of those produces a recording that
+        works perfectly and listens to the wrong thing. That is the
+        worst possible failure for this feature, because the user finds
+        out from the people in the instance.
+
+        So the routing is read back out of the audio graph and shown.
+        Best effort by design: no pactl, no answer, no harm done.
+        """
+        proc = self.proc
+        if proc is None or proc.poll() is not None:
+            return ""
+        try:
+            from core.backends import mic_pactl
+            return mic_pactl.active_source(proc.pid, self.log)
+        except Exception:      # noqa: BLE001
+            return ""
 
     def crashed(self):
         """True when the helper died on a signal - the abort this module
@@ -384,6 +432,26 @@ class Session:
         _kill(proc)
 
 
+class LevelSession(Session):
+    """A helper that only measures - the microphone test.
+
+    Same process, same routing, same kill switch; it just never builds a
+    recogniser, so it starts immediately and costs nothing on the
+    network. Splitting it out of Session rather than adding a flag keeps
+    the recording path from growing a second meaning: this one is
+    started and stopped by a button the user is holding, and it must be
+    safe to do that fifty times in a row.
+    """
+
+    #: nothing is in flight, so there is nothing to wait for
+    GRACE = 0.5
+
+    def __init__(self, mic_index=-1, node="", threshold=0, log=None):
+        super().__init__(mic_index=mic_index, node=node, log=log,
+                         mode="level",
+                         sensitivity={"energy_threshold": threshold})
+
+
 def describe():
     """One line for the log, so a bug report says which path was used."""
     if in_process_forced():
@@ -396,5 +464,5 @@ def describe():
 
 
 # also exported for the entry point, which must not import Qt first
-__all__ = ["HELPER_FLAG", "Session", "available", "default_device",
-           "describe", "list_devices", "in_process_forced"]
+__all__ = ["HELPER_FLAG", "LevelSession", "Session", "available",
+           "default_device", "describe", "list_devices", "in_process_forced"]

@@ -8,16 +8,21 @@ window class stays small. All `self.*` refer to the MainWindow instance.
 import time
 from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtWidgets import (
-    QCheckBox, QComboBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QSpinBox, QVBoxLayout, QWidget)
+    QCheckBox, QComboBox, QDoubleSpinBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QSlider, QSpinBox, QVBoxLayout, QWidget)
 from core.constants import (
     CHATBOX_INPUT, CHATBOX_LIMIT, CHAT_MODE_DIRECT, CHAT_MODE_LINE,
     CHAT_MODE_VARS, DEFAULT_TRANSLATE_NOTICE, ORIGIN_CHAT, ORIGIN_LABELS, ORIGIN_STT, ORIGIN_TTT,
     SLIM_SUFFIX)
+from core import audiolevel, micgroups
+from core.osinfo import IS_WINDOWS
+from core.backends import mic_pactl
 from core.speechtotext import (
     LANGUAGES, OUTPUT_LANGUAGES, SpeechWorker, cached_microphones,
-    clear_driver_stuck, default_device_note, driver_stuck, has_sr,
-    list_microphones, microphone_mode, missing_dependency, reload_sr,
-    resolve_device, has_microphone_driver, reload_mic_driver)
+    clear_driver_stuck, default_device_note, describe_entry, driver_stuck,
+    has_sr, list_microphone_groups, list_microphones, microphone_mode,
+    missing_dependency, reload_sr, resolve_entry, has_microphone_driver,
+    reload_mic_driver)
+from ui.miclevel import LevelMeter
 from core.plugins import ANCHOR_LABELS
 from core import pyextras
 from core.constants import EXTRAS_DIR
@@ -455,6 +460,28 @@ class TextboxPageMixin:
         mic_row.addWidget(mic_refresh)
         sc.addWidget(self.mic_row_w)
 
+        # ---- what the dropdown is allowed to show ----
+        self.mic_raw_w = QWidget()
+        raw_row = QVBoxLayout(self.mic_raw_w)
+        raw_row.setContentsMargins(0, 0, 0, 0)
+        raw_row.setSpacing(4)
+        rr = QHBoxLayout()
+        rr.setContentsMargins(0, 0, 0, 0)
+        self.toggle_mic_raw = ToggleSwitch()
+        self.toggle_mic_raw.toggled.connect(self.on_mic_show_raw)
+        rr.addWidget(self.toggle_mic_raw)
+        rr.addWidget(ToggleLabel(
+            "Also show duplicate host-API entries" if IS_WINDOWS
+            else "Also show direct hardware devices",
+            self.toggle_mic_raw))
+        rr.addStretch()
+        raw_row.addLayout(rr)
+        self.mic_raw_hint = QLabel("")
+        self.mic_raw_hint.setObjectName("dim")
+        self.mic_raw_hint.setWordWrap(True)
+        raw_row.addWidget(self.mic_raw_hint)
+        sc.addWidget(self.mic_raw_w)
+
         # ---- what to do when the chosen device is gone ----
         self.mic_strict_w = QWidget()
         strict_row = QVBoxLayout(self.mic_strict_w)
@@ -478,6 +505,192 @@ class TextboxPageMixin:
         strict_hint.setWordWrap(True)
         strict_row.addWidget(strict_hint)
         sc.addWidget(self.mic_strict_w)
+
+        # ---- microphone test + sensitivity ----
+        # Collapsed by default: two thirds of the people using Speech to
+        # Text never need to touch a threshold, and the ones who DO need
+        # it are the ones for whom nothing gets transcribed - who go
+        # looking. What they find is a bar that answers the actual
+        # question ("is this device hearing me at all") before any
+        # setting has to be understood.
+        self.mic_tune_w = QWidget()
+        tune_outer = QVBoxLayout(self.mic_tune_w)
+        tune_outer.setContentsMargins(0, 0, 0, 0)
+        tune_outer.setSpacing(4)
+        self.mic_tune_expander = self.make_settings_expander(
+            lambda on: self.on_mic_tune_expanded(on),
+            "Microphone test & sensitivity")
+        tune_outer.addWidget(self.mic_tune_expander)
+
+        self.mic_tune_box = QWidget()
+        tb = QVBoxLayout(self.mic_tune_box)
+        tb.setContentsMargins(8, 4, 0, 4)
+        tb.setSpacing(6)
+
+        meter_row = QHBoxLayout()
+        meter_row.setContentsMargins(0, 0, 0, 0)
+        self.mic_meter = LevelMeter()
+        meter_row.addWidget(self.mic_meter, 1)
+        self.mic_test_btn = QPushButton("\U0001F3A7  Test")
+        self.mic_test_btn.setObjectName("linkbtn")
+        self.mic_test_btn.setCheckable(True)
+        self.mic_test_btn.setFixedHeight(30)
+        self.mic_test_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.mic_test_btn.setToolTip(
+            "Opens the selected device and shows its level, without "
+            "recording or transcribing anything.\n\nThis is the check "
+            "worth doing before you rely on a device in an instance: if "
+            "the bar does not move when you speak, the wrong source is "
+            "selected \u2013 and that is a lot easier to notice here "
+            "than from the reactions of the people around you.")
+        self.mic_test_btn.toggled.connect(self.on_mic_test)
+        meter_row.addWidget(self.mic_test_btn)
+        tb.addLayout(meter_row)
+
+        self.mic_meter_lbl = QLabel("")
+        self.mic_meter_lbl.setObjectName("dim")
+        self.mic_meter_lbl.setWordWrap(True)
+        tb.addWidget(self.mic_meter_lbl)
+
+        # ---- automatic vs manual sensitivity ----
+        auto_row = QHBoxLayout()
+        auto_row.setContentsMargins(0, 0, 0, 0)
+        self.toggle_energy_auto = ToggleSwitch()
+        self.toggle_energy_auto.toggled.connect(self.on_energy_auto)
+        auto_row.addWidget(self.toggle_energy_auto)
+        auto_row.addWidget(ToggleLabel("Automatic sensitivity",
+                                       self.toggle_energy_auto))
+        auto_row.addStretch()
+        tb.addLayout(auto_row)
+        auto_hint = QLabel(
+            "ON: the app keeps re-learning how loud your room is. Right "
+            "for a quiet one. OFF: the threshold below is used as-is \u2013 "
+            "which is what you want next to a fan, in a game with sound, "
+            "or with a VR headset whose own audio bleeds into the "
+            "microphone, because in those the automatic value drifts "
+            "upwards until nothing counts as speech any more.")
+        auto_hint.setObjectName("dim")
+        auto_hint.setWordWrap(True)
+        tb.addWidget(auto_hint)
+
+        self.energy_row_w = QWidget()
+        er = QVBoxLayout(self.energy_row_w)
+        er.setContentsMargins(0, 0, 0, 0)
+        er.setSpacing(4)
+        slider_row = QHBoxLayout()
+        slider_row.setContentsMargins(0, 0, 0, 0)
+        slider_row.addWidget(QLabel("Speech starts above:"))
+        self.energy_slider = QSlider(Qt.Orientation.Horizontal)
+        self.energy_slider.setMinimum(audiolevel.THRESHOLD_MIN)
+        self.energy_slider.setMaximum(audiolevel.THRESHOLD_MAX)
+        self.energy_slider.setSingleStep(10)
+        self.energy_slider.setPageStep(100)
+        self.energy_slider.valueChanged.connect(self.on_energy_threshold)
+        slider_row.addWidget(self.energy_slider, 1)
+        self.energy_value_lbl = QLabel("")
+        self.energy_value_lbl.setFixedWidth(46)
+        slider_row.addWidget(self.energy_value_lbl)
+        self.energy_measure_btn = QPushButton("\U0001F4CF  Measure")
+        self.energy_measure_btn.setObjectName("linkbtn")
+        self.energy_measure_btn.setFixedHeight(30)
+        self.energy_measure_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.energy_measure_btn.setToolTip(
+            "Listens to your room for a moment WITHOUT you talking and "
+            "puts the threshold just above what it heard.\n\nStay quiet "
+            "while it runs \u2013 it is measuring the noise you want "
+            "ignored, so anything you say during it raises the bar "
+            "against you.")
+        self.energy_measure_btn.clicked.connect(self.on_energy_measure)
+        slider_row.addWidget(self.energy_measure_btn)
+        er.addLayout(slider_row)
+        energy_hint = QLabel(
+            "The dashed line in the bar. Everything below it is treated "
+            "as background noise; the first chunk above it starts a "
+            "phrase. Too low and every keystroke gets transcribed, too "
+            "high and quiet speech is dropped without a trace.")
+        energy_hint.setObjectName("dim")
+        energy_hint.setWordWrap(True)
+        er.addWidget(energy_hint)
+        tb.addWidget(self.energy_row_w)
+
+        # ---- timing ----
+        timing_row = QHBoxLayout()
+        timing_row.setContentsMargins(0, 0, 0, 0)
+        timing_row.addWidget(QLabel("Silence ends a phrase after:"))
+        # stt_pause_spin, NOT pause_spin: the Presets card above already
+        # owns self.pause_spin (the chatbox pause, textbox_pause_sec).
+        # Reusing the name silently replaced it - so apply_config_to_ui()
+        # pushed a 10-second chatbox pause into a 0.2-3.0 s speech
+        # setting, which clamped to 3.0 and wrote THAT back to the
+        # config on every single start. Two settings, both broken, no
+        # error message anywhere.
+        self.stt_pause_spin = QDoubleSpinBox()
+        self.stt_pause_spin.setRange(0.2, 3.0)
+        self.stt_pause_spin.setSingleStep(0.1)
+        self.stt_pause_spin.setDecimals(1)
+        self.stt_pause_spin.setSuffix(" s")
+        self.stt_pause_spin.setFixedWidth(80)
+        self.stt_pause_spin.setToolTip(
+            "How long you have to stop talking before the phrase is sent "
+            "off to be transcribed.\n\nShort = the chatbox keeps up with "
+            "you but sentences get cut at every breath. Long = whole "
+            "sentences, arriving later.")
+        self.stt_pause_spin.valueChanged.connect(self.on_pause_sec)
+        timing_row.addWidget(self.stt_pause_spin)
+        timing_row.addSpacing(12)
+        timing_row.addWidget(QLabel("Ignore sounds shorter than:"))
+        self.stt_min_phrase_spin = QDoubleSpinBox()
+        self.stt_min_phrase_spin.setRange(0.05, 2.0)
+        self.stt_min_phrase_spin.setSingleStep(0.05)
+        self.stt_min_phrase_spin.setDecimals(2)
+        self.stt_min_phrase_spin.setSuffix(" s")
+        self.stt_min_phrase_spin.setFixedWidth(85)
+        self.stt_min_phrase_spin.setToolTip(
+            "A sound has to last at least this long before it counts as "
+            "speech at all.\n\nThis is the setting that keeps a "
+            "keyboard, a mouse click or a door from turning into a "
+            "transcription request.")
+        self.stt_min_phrase_spin.valueChanged.connect(self.on_min_phrase_sec)
+        timing_row.addWidget(self.stt_min_phrase_spin)
+        timing_row.addStretch()
+        tb.addLayout(timing_row)
+
+        limit_row = QHBoxLayout()
+        limit_row.setContentsMargins(0, 0, 0, 0)
+        limit_row.addWidget(QLabel("Longest single phrase:"))
+        self.stt_phrase_limit_spin = QSpinBox()
+        self.stt_phrase_limit_spin.setRange(3, 60)
+        self.stt_phrase_limit_spin.setSuffix(" s")
+        self.stt_phrase_limit_spin.setFixedWidth(80)
+        self.stt_phrase_limit_spin.setToolTip(
+            "A hard cap, so a microphone that never goes quiet (an open "
+            "mic in a loud instance) still sends something instead of "
+            "recording forever.")
+        self.stt_phrase_limit_spin.valueChanged.connect(self.on_phrase_limit)
+        limit_row.addWidget(self.stt_phrase_limit_spin)
+        limit_row.addStretch()
+        tb.addLayout(limit_row)
+
+        reset_row = QHBoxLayout()
+        reset_row.setContentsMargins(0, 0, 0, 0)
+        reset_row.addStretch()
+        self.mic_tune_reset_btn = QPushButton("Reset to defaults")
+        self.mic_tune_reset_btn.setObjectName("linkbtn")
+        self.mic_tune_reset_btn.setFixedHeight(28)
+        self.mic_tune_reset_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.mic_tune_reset_btn.clicked.connect(self.on_mic_tune_reset)
+        reset_row.addWidget(self.mic_tune_reset_btn)
+        tb.addLayout(reset_row)
+
+        self.mic_tune_box.setVisible(False)
+        tune_outer.addWidget(self.mic_tune_box)
+        sc.addWidget(self.mic_tune_w)
+        # "Measure" state: the deadline it runs until, and the loudest
+        # thing heard so far. Plain attributes rather than a small class
+        # because the whole interaction is three seconds long and lives
+        # entirely inside _feed_meter().
+        self._measure_until = 0.0
+        self._measure_peak = 0.0
 
         # ---- translation method (four-tier system) ----
         method_row = QHBoxLayout()
@@ -1027,18 +1240,39 @@ class TextboxPageMixin:
         if getattr(self, "_mic_scan_busy", False):
             return
         self._mic_scan_busy = True
-        self._apply_mic_list(cached_microphones(), scanning=True)
+        show_raw = bool(self.cfg.get("stt_mic_show_raw", False)) \
+            if hasattr(self, "cfg") else False
+        want = self.cfg.get("stt_mic", "") if hasattr(self, "cfg") else ""
+        self._apply_mic_list(self._cached_entries(show_raw, want),
+                             scanning=True)
 
         def work():
-            return list_microphones(self.log, force=force)
+            entries, _devices, _sources = list_microphone_groups(
+                self.log, force=force, show_raw=show_raw, selected=want)
+            return entries
 
         self.run_async(
             work, self._on_mic_list, interval=150,
-            on_error=lambda _e: self._on_mic_list(cached_microphones()))
+            on_error=lambda _e: self._on_mic_list(
+                self._cached_entries(show_raw, want)))
 
-    def _on_mic_list(self, devices):
+    @staticmethod
+    def _cached_entries(show_raw, selected):
+        """The last known list, built without touching anything.
+
+        Both halves are cached separately (core/speechtotext.py), so a
+        scan that hangs or fails still leaves a dropdown with the user's
+        own choice in it rather than a single "System default".
+        """
+        from core.speechtotext import cached_sources
+        return micgroups.build(cached_microphones(),
+                               sources=cached_sources(),
+                               show_raw=show_raw, selected=selected)
+
+    def _on_mic_list(self, entries):
         self._mic_scan_busy = False
-        self._apply_mic_list(devices or [])
+        self._apply_mic_list(entries or [])
+        self._update_mic_raw_hint(entries or [])
         stuck = driver_stuck()
         if stuck:
             self.stt_status_lbl.setText(
@@ -1047,28 +1281,111 @@ class TextboxPageMixin:
                 f"to try again.")
             self.stt_status_lbl.setStyleSheet("color: #d9884a;")
 
-    def _apply_mic_list(self, devices, scanning=False):
+    def _apply_mic_list(self, entries, scanning=False):
         """Paints the dropdown. GUI thread only, and it never touches
-        PortAudio - `devices` is already resolved."""
-        want = self.cfg.get("stt_mic", "") if hasattr(self, "cfg") else ""
+        PortAudio - `entries` is already resolved.
+
+        The groups are real, non-selectable rows in the model rather
+        than a prefix on every label. That is the whole point of the
+        rewrite: a flat list of forty ALSA PCMs cannot be read, and
+        naming the group on each line just makes each line longer. The
+        headers also carry the explanation of what the group IS, which
+        is where "a monitor records your speakers, not your voice" can
+        be said once instead of forty times.
+        """
+        want = micgroups.normalize(
+            self.cfg.get("stt_mic", "") if hasattr(self, "cfg") else "")
         self.mic_combo.blockSignals(True)
         self.mic_combo.clear()
-        self.mic_combo.addItem(
-            "System default" + (" \u2013 scanning \u2026" if scanning else ""),
-            "")
-        names = set()
-        for name, _idx in devices:
-            self.mic_combo.addItem(name, name)
-            names.add(name)
-        # A configured device that is not in the list right now still has
-        # to be selectable, or a refresh while VR is off would silently
-        # reset the choice to "System default" and the setting would be
-        # lost by the time VR comes back.
-        if want and want not in names:
-            self.mic_combo.addItem(f"{want}  (not available)", want)
+        model = self.mic_combo.model()
+        by_group = {}
+        for item in entries or ():
+            by_group.setdefault(item["group"], []).append(item)
+        first = True
+        for group in micgroups.GROUP_ORDER:
+            rows = by_group.get(group)
+            if not rows:
+                continue
+            if group != micgroups.G_SYSTEM:
+                self.mic_combo.addItem(
+                    f"\u2014 {micgroups.LABELS.get(group, group)} \u2014",
+                    None)
+                pos = self.mic_combo.count() - 1
+                self.mic_combo.setItemData(
+                    pos, micgroups.HINTS.get(group, ""),
+                    Qt.ItemDataRole.ToolTipRole)
+                try:
+                    # a header is a label, not a choice - Qt only knows
+                    # that if the row itself says so
+                    model.item(pos).setFlags(Qt.ItemFlag.NoItemFlags)
+                except Exception:      # noqa: BLE001 - custom model
+                    pass
+            for item in rows:
+                label = item["label"]
+                if item["default"]:
+                    label = f"\u25CF  {label}"
+                if first and scanning:
+                    label += " \u2013 scanning \u2026"
+                first = False
+                self.mic_combo.addItem(label, item["id"])
+                tip = item.get("detail") or ""
+                note = item.get("note") or ""
+                if note:
+                    tip = f"{tip}\n\n{note}" if tip else note
+                if tip:
+                    self.mic_combo.setItemData(
+                        self.mic_combo.count() - 1, tip,
+                        Qt.ItemDataRole.ToolTipRole)
         pos = self.mic_combo.findData(want)
         self.mic_combo.setCurrentIndex(pos if pos >= 0 else 0)
         self.mic_combo.blockSignals(False)
+
+    def _update_mic_raw_hint(self, entries):
+        """Says what the hidden half of the list is, and whether the
+        grouped list is available at all."""
+        if not hasattr(self, "mic_raw_hint"):
+            return
+        if IS_WINDOWS:
+            # Windows has no pactl, so the grouping there is a different
+            # job: PortAudio reports every microphone once per host API
+            # (MME, DirectSound, WASAPI, WDM-KS), and the toggle decides
+            # whether those duplicates are shown.
+            self.mic_raw_w.setVisible(True)
+            self.mic_raw_hint.setText(
+                "Windows offers every microphone through several audio "
+                "APIs, so PortAudio lists each one three or four times. "
+                "The list above keeps one entry per device (WASAPI where "
+                "there is one, because MME cuts names off at 31 "
+                "characters). Turn this on to see the other routes - "
+                "worth trying if a device refuses to open.")
+            return
+        if not mic_pactl.available():
+            self.mic_raw_w.setVisible(False)
+            return
+        self.mic_raw_w.setVisible(True)
+        if entries is None:
+            return          # visibility only - keep whatever it says
+        grouped = sum(1 for e in entries
+                      if str(e.get("id", "")).startswith("pulse:"))
+        if grouped:
+            self.mic_raw_hint.setText(
+                "The list above comes from PipeWire, so it has your "
+                "virtual sources in it (VR microphone, echo-cancel, "
+                "routing apps) and only counts each real device once. "
+                "Direct hardware means ALSA devices opened past the "
+                "sound server \u2013 exclusive access, HDMI outputs "
+                "listed as if they were inputs, and no VR microphone. "
+                "Only needed when the list above does not work.")
+        else:
+            self.mic_raw_hint.setText(
+                "PipeWire is there but returned no sources, so the plain "
+                "device list is being shown. Turn this on if the "
+                "microphone you want is missing.")
+
+    def on_mic_show_raw(self, on):
+        self.cfg["stt_mic_show_raw"] = bool(on)
+        self.save_config()
+        self._fill_mic_combo()
 
     def on_mic_refresh(self):
         """The \u27F3 button. Forces a fresh scan even after a previous
@@ -1080,14 +1397,285 @@ class TextboxPageMixin:
         self._fill_mic_combo(force=True)
 
     def on_mic_changed(self, idx):
-        self.cfg["stt_mic"] = self.mic_combo.itemData(idx) or ""
+        data = self.mic_combo.itemData(idx)
+        if data is None:
+            return          # a group header; the model should prevent it
+        self.cfg["stt_mic"] = data or ""
         self.save_config()
         self.log("Speech to Text: microphone = "
-                 + (self.cfg["stt_mic"] or "system default"))
+                 + (describe_entry(self.cfg["stt_mic"]) or "system default"))
+        # a running test belongs to the device that WAS selected, so it
+        # is restarted rather than left measuring the previous one
+        if self.mic_test.running:
+            self._start_mic_test()
 
     def on_mic_strict(self, on):
         self.cfg["stt_mic_strict"] = bool(on)
         self.save_config()
+
+    # ------------------------------------------- microphone test + meter
+    def _sensitivity(self):
+        """The settings block handed to the microphone helper."""
+        return {
+            "energy_auto": bool(self.cfg.get("stt_energy_auto", True)),
+            "energy_threshold": audiolevel.clamp_threshold(
+                self.cfg.get("stt_energy_threshold",
+                             audiolevel.THRESHOLD_DEFAULT)),
+            "pause_sec": float(self.cfg.get("stt_pause_sec", 0.8) or 0.8),
+            "min_phrase_sec": float(
+                self.cfg.get("stt_min_phrase_sec", 0.3) or 0.3),
+            "phrase_limit": int(self.cfg.get("stt_phrase_limit", 12) or 12),
+        }
+
+    def on_mic_tune_expanded(self, on):
+        self.set_expanded(self.mic_tune_expander, self.mic_tune_box, on,
+                          "Microphone test & sensitivity")
+        if not on and self.mic_test.running:
+            # closing the panel stops the test: an open microphone the
+            # user cannot see is exactly the thing this feature exists
+            # to prevent
+            self.mic_test_btn.setChecked(False)
+
+    def on_mic_test(self, on):
+        if on:
+            if not SpeechWorker.available():
+                self.mic_test_btn.blockSignals(True)
+                self.mic_test_btn.setChecked(False)
+                self.mic_test_btn.blockSignals(False)
+                self._set_meter_note(missing_dependency(), warn=True)
+                return
+            if self.stt_recording:
+                # The recording already has the microphone open and is
+                # already feeding the meter. A second stream on the same
+                # device would at best duplicate it and at worst fight it
+                # for a raw ALSA card.
+                self.mic_test_btn.blockSignals(True)
+                self.mic_test_btn.setChecked(False)
+                self.mic_test_btn.blockSignals(False)
+                self._set_meter_note(
+                    "A recording is running \u2013 the bar is already "
+                    "showing its input.")
+                return
+            self._start_mic_test()
+        else:
+            self.mic_test.stop()
+            self.mic_test_btn.setText("\U0001F3A7  Test")
+            self._measure_until = 0.0
+            self._measure_peak = 0.0
+            self.mic_meter.set_idle()
+            self._set_meter_note("")
+            self._sync_mic_meter()
+
+    def _start_mic_test(self):
+        """Resolve the selected entry, then open it in the helper."""
+        eid = self.cfg.get("stt_mic", "")
+        self.mic_test_btn.setText("\u23F9  Stop")
+        self._set_meter_note("Opening the device \u2026")
+
+        def work():
+            return resolve_entry(eid, self.log)
+
+        self.run_async(
+            work, self._on_mic_test_resolved, interval=120,
+            on_error=lambda e: self._on_mic_test_resolved(
+                (None, "", f"The device could not be resolved ({e}).")))
+
+    def _on_mic_test_resolved(self, result):
+        index, node, note = result
+        if not self.mic_test_btn.isChecked():
+            return          # switched off while we were resolving
+        if index is None:
+            self._set_meter_note(note or "The device is not available.",
+                                 warn=True)
+            self.mic_test_btn.setChecked(False)
+            return
+        self.mic_test.start(
+            mic_index=index, node=node,
+            threshold=(0 if self.cfg.get("stt_energy_auto", True)
+                       else audiolevel.clamp_threshold(
+                           self.cfg.get("stt_energy_threshold"))),
+            log=self.log)
+        self._set_meter_note("Speak normally \u2013 the bar should clearly "
+                             "pass the dashed line.")
+        self._sync_mic_meter()
+
+    def on_energy_measure(self):
+        """Sample the room for a moment and put the threshold above it.
+
+        Runs through the ordinary test session, so it needs no second
+        way of opening a microphone; it just watches the levels for a
+        couple of seconds and takes the loudest thing it saw.
+        """
+        self.cfg["stt_energy_auto"] = False
+        self.toggle_energy_auto.blockSignals(True)
+        self.toggle_energy_auto.setChecked(False)
+        self.toggle_energy_auto.blockSignals(False)
+        self._sync_sensitivity_ui()
+        self._measure_peak = 0.0
+        self._measure_until = time.monotonic() + 3.0
+        if not self.mic_test.running:
+            self.mic_test_btn.setChecked(True)
+        self._set_meter_note("\U0001F4CF Measuring the room \u2013 stay "
+                             "quiet for three seconds \u2026")
+        self._sync_mic_meter()
+
+    def _finish_measure(self):
+        """Threshold = the loudest background moment, with headroom.
+
+        The factor is deliberately generous. A threshold sitting exactly
+        on the noise floor triggers on the noise floor - every fan spike
+        becomes a phrase, and the recogniser sends an empty string or a
+        hallucinated word into the chatbox. Speech is far louder than
+        room noise, so there is plenty of room to be safe here.
+        """
+        self._measure_until = 0.0
+        floor = self._measure_peak
+        if floor <= 0:
+            self._set_meter_note(
+                "Nothing was measured \u2013 the device did not deliver "
+                "any audio. That usually means the wrong source is "
+                "selected.", warn=True)
+            return
+        value = audiolevel.clamp_threshold(max(floor * 1.8, floor + 120))
+        self.cfg["stt_energy_threshold"] = value
+        self.save_config()
+        self._sync_sensitivity_ui()
+        self.log(f"Speech to Text: sensitivity measured \u2013 background "
+                 f"peak {floor:.0f}, threshold set to {value}")
+        self._set_meter_note(
+            f"Threshold set to {value} (background peaked at "
+            f"{floor:.0f}). Now say something and check that the bar "
+            f"passes the line.")
+
+    def _set_meter_note(self, text, warn=False):
+        if not hasattr(self, "mic_meter_lbl"):
+            return
+        self.mic_meter_lbl.setText(text or "")
+        self.mic_meter_lbl.setStyleSheet("color: #d9884a;" if warn else "")
+
+    def _sync_mic_meter(self):
+        """Starts the meter timer while something is holding the
+        microphone and stops it the rest of the time. A timer running
+        against an idle queue is not expensive, but it is a poll on the
+        GUI thread twelve times a second for no reason."""
+        want = bool(self.stt_recording or self.mic_test.running)
+        if want and not self.mic_meter_timer.isActive():
+            self.mic_meter.apply_tokens(self.current_theme_tokens())
+            self.mic_meter_timer.start(80)
+        elif not want and self.mic_meter_timer.isActive():
+            self.mic_meter_timer.stop()
+            self.mic_meter.set_idle()
+
+    def poll_mic_level(self):
+        """One frame of the level bar, from whichever side is live."""
+        for kind, payload in self._drain_mic_test():
+            if kind == "level":
+                rms, peak, threshold = payload
+                self._feed_meter(rms, peak, threshold)
+            elif kind == "ready":
+                if payload:
+                    self._set_meter_note(
+                        f"\u2705 Recording from: "
+                        f"{mic_pactl.describe_source(payload)}")
+            elif kind == "error":
+                self._set_meter_note(payload, warn=True)
+                self.log(f"Speech to Text: microphone test - {payload}")
+                self.mic_test_btn.setChecked(False)
+            elif kind == "stopped":
+                if self.mic_test_btn.isChecked():
+                    self.mic_test_btn.setChecked(False)
+        if self.stt_recording:
+            level = self.stt.latest_level()
+            if level is not None:
+                self._feed_meter(*level)
+        self._sync_mic_meter()
+
+    def _drain_mic_test(self):
+        out = []
+        while not self.mic_test.messages.empty():
+            try:
+                out.append(self.mic_test.messages.get_nowait())
+            except Exception:      # noqa: BLE001 - queue.Empty
+                break
+        return out
+
+    def _feed_meter(self, rms, peak, threshold):
+        if not self.cfg.get("stt_energy_auto", True):
+            # in manual mode the marker is the user's own value, not
+            # whatever the recogniser happens to be using
+            threshold = audiolevel.clamp_threshold(
+                self.cfg.get("stt_energy_threshold"))
+        self.mic_meter.set_level(rms, peak, threshold)
+        if self._measure_until and time.monotonic() < self._measure_until:
+            self._measure_peak = max(self._measure_peak, float(rms))
+        elif self._measure_until:
+            self._finish_measure()
+
+    # ------------------------------------------------------ sensitivity
+    def on_energy_auto(self, on):
+        self.cfg["stt_energy_auto"] = bool(on)
+        self.save_config()
+        self._sync_sensitivity_ui()
+        if self.stt_recording:
+            self._set_meter_note(
+                "Sensitivity changes apply to the next recording \u2013 "
+                "stop and start to use them now.")
+
+    def on_energy_threshold(self, value):
+        self.cfg["stt_energy_threshold"] = audiolevel.clamp_threshold(value)
+        self.save_config_later()
+        self.energy_value_lbl.setText(str(self.cfg["stt_energy_threshold"]))
+        self.mic_meter.set_threshold(self.cfg["stt_energy_threshold"])
+
+    def on_pause_sec(self, value):
+        self.cfg["stt_pause_sec"] = round(float(value), 2)
+        self.save_config_later()
+
+    def on_min_phrase_sec(self, value):
+        self.cfg["stt_min_phrase_sec"] = round(float(value), 2)
+        self.save_config_later()
+
+    def on_phrase_limit(self, value):
+        self.cfg["stt_phrase_limit"] = int(value)
+        self.save_config_later()
+
+    def on_mic_tune_reset(self):
+        self.cfg["stt_energy_auto"] = True
+        self.cfg["stt_energy_threshold"] = audiolevel.THRESHOLD_DEFAULT
+        self.cfg["stt_pause_sec"] = 0.8
+        self.cfg["stt_min_phrase_sec"] = 0.3
+        self.cfg["stt_phrase_limit"] = 12
+        self.save_config()
+        self._sync_sensitivity_ui()
+        self._set_meter_note("Sensitivity back to the defaults.")
+
+    def _sync_sensitivity_ui(self):
+        """Pushes the config into the widgets without re-triggering their
+        handlers. Called on load, after Measure and after Reset."""
+        auto = bool(self.cfg.get("stt_energy_auto", True))
+        threshold = audiolevel.clamp_threshold(
+            self.cfg.get("stt_energy_threshold",
+                         audiolevel.THRESHOLD_DEFAULT))
+        for widget, value in ((self.toggle_energy_auto, auto),
+                              (self.energy_slider, threshold),
+                              (self.stt_pause_spin,
+                               float(self.cfg.get("stt_pause_sec", 0.8))),
+                              (self.stt_min_phrase_spin,
+                               float(self.cfg.get("stt_min_phrase_sec",
+                                                  0.3))),
+                              (self.stt_phrase_limit_spin,
+                               int(self.cfg.get("stt_phrase_limit", 12)))):
+            widget.blockSignals(True)
+            if isinstance(value, bool):
+                widget.setChecked(value)
+            else:
+                widget.setValue(value)
+            widget.blockSignals(False)
+        self.energy_value_lbl.setText(str(threshold))
+        # In automatic mode the slider is not the value in use, so it is
+        # disabled rather than left there quietly doing nothing.
+        self.energy_row_w.setEnabled(not auto)
+        self.mic_meter.set_threshold(0 if auto else threshold)
 
     def on_tr_test(self):
         """Tests the currently selected translation service with a
@@ -1297,6 +1885,16 @@ class TextboxPageMixin:
         ok = SpeechWorker.available()
         self.stt_button.setEnabled(ok)
         self.mic_combo.setEnabled(ok)
+        for widget in ("mic_test_btn", "toggle_mic_raw",
+                       "toggle_energy_auto", "stt_pause_spin",
+                       "stt_min_phrase_spin", "stt_phrase_limit_spin",
+                       "energy_measure_btn"):
+            w = getattr(self, widget, None)
+            if w is not None:
+                w.setEnabled(ok)
+        if not ok and getattr(self, "mic_test", None) is not None \
+                and self.mic_test.running:
+            self.mic_test_btn.setChecked(False)
         self.stt_button.setToolTip("" if ok else missing_dependency())
         self.mic_combo.setToolTip("" if ok else missing_dependency())
         # Two things can be missing, and the button now covers both:
@@ -1381,33 +1979,47 @@ class TextboxPageMixin:
             self._stt_preflight = getattr(self, "_stt_preflight_seq", 0) + 1
             self._stt_preflight_seq = self._stt_preflight
             token = self._stt_preflight
-            name = self.cfg.get("stt_mic", "")
+            eid = self.cfg.get("stt_mic", "")
             strict = bool(self.cfg.get("stt_mic_strict", True))
+            show_raw = bool(self.cfg.get("stt_mic_show_raw", False))
             self.stt_button.setText("\u23F3  Checking microphone \u2026")
             self.stt_status_lbl.setText(
                 "Checking that the microphone is available \u2026")
             self.stt_status_lbl.setStyleSheet("")
+            # a test holding the device would be a second stream on it
+            if self.mic_test.running:
+                self.mic_test_btn.setChecked(False)
 
             def work():
                 # the user just asked for this explicitly, so a previous
                 # timeout must not make the attempt fail on the spot
                 clear_driver_stuck()
-                if name:
-                    devices = list_microphones(self.log, force=True)
-                    index, note = resolve_device(name, self.log,
-                                                 devices=devices)
-                    if index is None and not strict:
-                        note = ""
-                        index = -1
-                    return index, note, devices
-                return -1, default_device_note(self.log), None
+                entries, devices, sources = list_microphone_groups(
+                    self.log, force=True, show_raw=show_raw, selected=eid)
+                index, node, note = resolve_entry(
+                    eid, self.log, devices=devices, sources=sources)
+                if index is None and not strict:
+                    # not strict: fall back to the system default rather
+                    # than refuse - and say so, because a message that
+                    # says which device is being used is the difference
+                    # between "it works" and "it works, wrongly"
+                    self.log(f"Speech to Text: {note} Falling back to the "
+                             f"system default.")
+                    note = ""
+                    index, node = -1, ""
+                if index == -1 and not node:
+                    # "system default" is the one choice that can be
+                    # broken without being missing, so it gets its own
+                    # check inside the guard (see default_device_note)
+                    note = note or default_device_note(self.log)
+                return index, node, note, entries
 
             self.run_async(
                 work,
                 lambda res, t=token: self._on_stt_preflight(t, res),
                 interval=150,
                 on_error=lambda e, t=token: self._on_stt_preflight(
-                    t, (None, f"Microphone check failed: {e}", None)))
+                    t, (None, "", f"Microphone check failed: {e}", None)))
         else:
             self._stt_preflight = 0
             self.stt.stop()
@@ -1415,6 +2027,7 @@ class TextboxPageMixin:
             self.stt_timer.stop()
             self.stt_button.setText("\U0001F3A4  Start recording")
             self.log("Speech to Text: recording stopped \u2013 apps resume")
+            self._sync_mic_meter()
             self.update_preview()
 
     def _abort_stt_start(self):
@@ -1426,6 +2039,7 @@ class TextboxPageMixin:
         self.stt_button.setChecked(False)
         self.stt_button.blockSignals(False)
         self.stt_button.setText("\U0001F3A4  Start recording")
+        self._sync_mic_meter()
 
     def _on_stt_preflight(self, token, result):
         """Back on the GUI thread with a device index, or a reason why
@@ -1433,9 +2047,9 @@ class TextboxPageMixin:
         if token != getattr(self, "_stt_preflight", 0):
             return          # the user already toggled again
         self._stt_preflight = 0
-        index, note, devices = result
-        if devices is not None:
-            self._apply_mic_list(devices)
+        index, node, note, entries = result
+        if entries is not None:
+            self._apply_mic_list(entries)
         if note:
             self.log(f"Speech to Text: {note}")
             self.stt_status_lbl.setText(f"\u26A0 {note}")
@@ -1450,6 +2064,8 @@ class TextboxPageMixin:
         self.stt_status_lbl.setStyleSheet("")
         self.log(f"Speech to Text: recording started "
                  f"({self.cfg['stt_language']}) \u2013 apps are blocked")
+        self.log(f"Speech to Text: microphone = "
+                 f"{describe_entry(self.cfg.get('stt_mic', '')) or 'system default'}")
         # Which side of core/mic_host.py we are on. A crash report that
         # says "the app died" and one that says "the helper died" are two
         # completely different bugs, and this line is what tells them
@@ -1463,8 +2079,11 @@ class TextboxPageMixin:
             index if index is not None else -1,
             google_key=self.cfg.get("stt_google_key", ""),
             libre_online_url=self.cfg.get("stt_libre_online_url", ""),
-            libre_online_key=self.cfg.get("stt_libre_online_key", ""))
+            libre_online_key=self.cfg.get("stt_libre_online_key", ""),
+            mic_node=node or "",
+            sensitivity=self._sensitivity())
         self.stt_timer.start(200)
+        self._sync_mic_meter()
 
     def poll_stt(self):
         while not self.stt.messages.empty():
@@ -1482,6 +2101,12 @@ class TextboxPageMixin:
                 self.show_translating_notice("Speech")
             elif kind == "status":
                 self.stt_status_lbl.setText(payload)
+            elif kind == "source":
+                # what the helper is REALLY attached to, read back out of
+                # the audio graph - see mic_host.Session.attached_source()
+                pretty = mic_pactl.describe_source(payload) or payload
+                self.log(f"Speech to Text: recording from \"{pretty}\"")
+                self._set_meter_note(f"\u2705 Recording from: {pretty}")
             elif kind == "error":
                 self.stt_status_lbl.setText(payload)
                 self.log(f"Speech to Text ERROR: {payload}")
@@ -1504,9 +2129,16 @@ class TextboxPageMixin:
         text mode. Shared settings (languages, service) stay visible."""
         ttt = self.cfg.get("stt_mode", "stt") == "ttt"
         self.stt_mode_lbl.setText("Text to Text" if ttt else "Speech to Text")
-        for w in (self.stt_speech_desc, self.mic_row_w, self.mic_strict_w,
-                  self.rec_row_w):
+        for w in (self.stt_speech_desc, self.mic_row_w, self.mic_raw_w,
+                  self.mic_strict_w, self.mic_tune_w, self.rec_row_w):
             w.setVisible(not ttt)
+        if ttt and self.mic_test.running:
+            # Text to Text does not use the microphone at all; leaving a
+            # test running behind a hidden panel would hold the device
+            # open for a card the user cannot even see.
+            self.mic_test_btn.setChecked(False)
+        if not ttt:
+            self._update_mic_raw_hint(None)
         self.stt_text_box.setVisible(ttt)
 
     def on_translate_notice(self, on):

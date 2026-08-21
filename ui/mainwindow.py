@@ -25,7 +25,7 @@ from core.procwatch import ProcessWatcher
 from core.oscquery import HAS_ZEROCONF, OSCQueryService
 from core.theming import build_style, resolve_tokens
 from core.plugins import ANCHORS, DEFAULT_ANCHOR, PluginManager
-from core.speechtotext import SpeechWorker, cached_microphones
+from core.speechtotext import MicTest, SpeechWorker
 from core.textstyle import STYLE_NORMAL, apply_style
 from core.textutils import (
     CUSTOM_STYLE_INDEX, DEFAULT_CUSTOM_BAR, TIME_POS_LINE, fmt_time, fmt_time_hm)
@@ -107,6 +107,11 @@ class MainWindow(ConfigMixin, AppsPageMixin, AdvancedPageMixin,
         self.aio_index = 0
         self.stt = SpeechWorker()
         self.stt_recording = False
+        # The microphone test (core/speechtotext.py MicTest). Its own
+        # worker rather than a mode of self.stt, because it is started
+        # and stopped by a panel opening and closing and must never be
+        # able to disturb a recording that is running.
+        self.mic_test = MicTest()
         self.oscq = OSCQueryService(APP_NAME, self.log)
         # the receiving half (core/oscin.py). Only started when the
         # option is on: binding 9001 is the kind of thing that fights
@@ -155,6 +160,12 @@ class MainWindow(ConfigMixin, AppsPageMixin, AdvancedPageMixin,
         self._box_clock_last = None
         self.stt_timer = QTimer(self)
         self.stt_timer.timeout.connect(self.poll_stt)
+        # The level meter. Faster than every other poller here (a bar
+        # updated five times a second reads as broken, not as calm) and
+        # only running while something is actually holding the
+        # microphone - see _sync_mic_meter().
+        self.mic_meter_timer = QTimer(self)
+        self.mic_meter_timer.timeout.connect(self.poll_mic_level)
         self.hw_timer = QTimer(self)
         self.hw_timer.timeout.connect(self.poll_hw)
         # refreshes the preview so live plugin values (clocks, world info)
@@ -523,6 +534,12 @@ class MainWindow(ConfigMixin, AppsPageMixin, AdvancedPageMixin,
         self.toggle_mic_strict.setChecked(
             bool(self.cfg.get("stt_mic_strict", True)))
         self.toggle_mic_strict.blockSignals(False)
+        self.toggle_mic_raw.blockSignals(True)
+        self.toggle_mic_raw.setChecked(
+            bool(self.cfg.get("stt_mic_show_raw", False)))
+        self.toggle_mic_raw.blockSignals(False)
+        # the sensitivity block (v1.4.2) - see ui/pages/textbox_page.py
+        self._sync_sensitivity_ui()
         self.toggle_stt_block.setChecked(self.cfg["stt_block"])
         self.toggle_stt_mode.blockSignals(True)
         self.toggle_stt_mode.setChecked(
@@ -558,10 +575,17 @@ class MainWindow(ConfigMixin, AppsPageMixin, AdvancedPageMixin,
             self.cfg.get("stt_libre_online_key", ""))
         self.libre_online_key_input.blockSignals(False)
         self._sync_libre_online_ui()
-        # the dropdown is filled from a worker thread (PortAudio blocks),
-        # so this only paints what we already know and lets the scan that
-        # build_textbox_page() kicked off fill in the rest
-        self._apply_mic_list(cached_microphones())
+        # The dropdown is filled from a worker thread (PortAudio blocks),
+        # so this only repaints what we already know and lets the scan
+        # that build_textbox_page() kicked off fill in the rest.
+        #
+        # It has to go through _apply_mic_list's OWN cache helper: the
+        # list is grouped entries now, not [(name, index)] pairs, and
+        # handing it the raw PortAudio list produced a silently EMPTY
+        # dropdown - build painted one entry, this line then wiped it.
+        self._apply_mic_list(self._cached_entries(
+            bool(self.cfg.get("stt_mic_show_raw", False)),
+            self.cfg.get("stt_mic", "")))
         self._update_tr_method_ui()
         self.toggle_osc_in.setChecked(self.cfg.get("osc_input_enabled", False))
         self.osc_in_port.setValue(int(self.cfg.get("osc_input_port", 9001)))
@@ -1018,6 +1042,9 @@ class MainWindow(ConfigMixin, AppsPageMixin, AdvancedPageMixin,
                 # would leave the microphone helper running for a window
                 # that is already gone (core/mic_host.py)
                 ("stt.shutdown", self.stt.shutdown),
+                # same reason: a level helper that outlives the window
+                # keeps the microphone busy for a process nobody can see
+                ("mic_test.stop", self.mic_test.stop),
                 # slowest one last - by now everything else is done and
                 # the config is safely on disk
                 ("libre_server.stop_sync", self.libre_server.stop_sync),

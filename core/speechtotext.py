@@ -133,6 +133,11 @@ from core.backends import mic_probe
 # thread of our own: PortAudio does not raise, it aborts. See
 # core/mic_host.py and core/stt_child.py.
 from core import mic_host
+# What PortAudio calls a device list is a list of ALSA PCMs; what the
+# user is looking for is a PipeWire source. These two turn one into the
+# other - see core/backends/mic_pactl.py and core/micgroups.py.
+from core.backends import mic_pactl
+from core import micgroups
 
 
 def has_sounddevice():
@@ -296,6 +301,173 @@ def clear_driver_stuck():
     mic_probe.clear_stuck()
 
 
+#: Last successful pactl source list, for the same reason _DEVICE_CACHE
+#: exists: the dropdown should keep showing what it last knew instead of
+#: emptying itself while the audio graph is in flux.
+_SOURCE_CACHE = []
+
+
+def list_sources(log=None):
+    """The sound server's sources, grouped (see core/backends/mic_pactl.py).
+
+    Cheap and safe: pactl talks over a unix socket and cannot wedge in a
+    driver the way PortAudio can. Still not called from the GUI thread,
+    because it is a subprocess and the dropdown is already filled
+    asynchronously anyway.
+    """
+    global _SOURCE_CACHE
+    try:
+        sources = mic_pactl.list_sources(log)
+    except Exception as e:      # noqa: BLE001
+        if callable(log):
+            log(f"Speech to Text: the source list failed ({e}) - using the "
+                f"plain device list.")
+        return list(_SOURCE_CACHE)
+    if sources:
+        _SOURCE_CACHE = sources
+    return sources
+
+
+def cached_sources():
+    return list(_SOURCE_CACHE)
+
+
+def list_microphone_groups(log=None, force=False, show_raw=False,
+                           selected=""):
+    """The whole dropdown, ready to paint: grouped entries with ids.
+
+    NEVER CALL THIS ON THE GUI THREAD - it goes through
+    list_microphones(), which is the blocking part.
+    """
+    devices = list_microphones(log, force=force)
+    sources = list_sources(log)
+    return micgroups.build(devices, sources=sources, show_raw=show_raw,
+                           selected=selected, log=log), devices, sources
+
+
+def resolve_entry(eid, log=None, devices=None, sources=None):
+    """Turn a stored ``stt_mic`` id into ``(index, node, note)``.
+
+    The successor to resolve_device(), which only ever knew about
+    PortAudio names. Bare names still work - see core/micgroups.py.
+    """
+    if devices is None:
+        devices = list_microphones(log)
+    if sources is None:
+        sources = list_sources(log)
+    return micgroups.resolve(eid, devices, sources=sources, log=log)
+
+
+def describe_entry(eid):
+    """The friendly name of a stored id, for log lines and labels."""
+    return micgroups.label_for_id(eid)
+
+
+class MicTest:
+    """The microphone test: open a device and report how loud it is.
+
+    Its own tiny worker rather than a mode of SpeechWorker, because the
+    two have opposite lifetimes - a recording runs for as long as the
+    user talks and must survive a bumpy audio graph, while this one is
+    started and stopped by a panel opening and closing and must be
+    instant and disposable in both directions.
+
+    Messages arrive in ``self.messages`` as (kind, payload):
+      "level"  -> (rms, peak, threshold)
+      "ready"  -> the source it is actually attached to, or ""
+      "error"  -> a sentence for the user
+      "stopped"
+    """
+
+    def __init__(self):
+        self.messages = queue.Queue()
+        self._stop = threading.Event()
+        self._thread = None
+        self._session = None
+        self._seq = 0
+
+    @property
+    def running(self):
+        return self._thread is not None and self._thread.is_alive()
+
+    def start(self, mic_index=-1, node="", threshold=0, log=None):
+        self.stop()
+        while not self.messages.empty():
+            try:
+                self.messages.get_nowait()
+            except Exception:      # noqa: BLE001
+                break
+        self._stop = threading.Event()
+        self._seq += 1
+        self._thread = threading.Thread(
+            target=self._run,
+            args=(self._stop, self._seq, mic_index, node, threshold, log),
+            daemon=True, name="stt-mictest")
+        self._thread.start()
+
+    def stop(self):
+        self._stop.set()
+        sess = self._session
+        if sess is not None:
+            try:
+                sess.stop(grace=0.2)
+            except Exception:      # noqa: BLE001
+                pass
+            self._session = None
+
+    def _run(self, stop, seq, mic_index, node, threshold, log):
+        def emit(kind, payload):
+            if seq == self._seq:
+                self.messages.put((kind, payload))
+
+        if not mic_host.available():
+            # No helper means the test would have to open PortAudio in
+            # THIS process - the one thing 1.4.1 moved out of it. A
+            # missing level bar is a much smaller problem than an app
+            # that aborts because somebody opened a settings panel.
+            emit("error", "The microphone test needs the helper process, "
+                          "which is not available in this build.")
+            emit("stopped", "")
+            return
+        sess = mic_host.LevelSession(mic_index=mic_index, node=node,
+                                     threshold=threshold, log=log)
+        if not sess.start():
+            emit("error", f"The microphone test could not start "
+                          f"({sess.error}).")
+            emit("stopped", "")
+            return
+        self._session = sess
+
+        def stopper():
+            stop.wait()
+            sess.stop(grace=0.2)
+
+        threading.Thread(target=stopper, daemon=True,
+                         name="stt-mictest-stop").start()
+        try:
+            for msg in sess.messages():
+                if stop.is_set():
+                    break
+                kind = str(msg.get("kind") or "")
+                if kind == "level":
+                    emit("level", (float(msg.get("rms") or 0.0),
+                                   float(msg.get("peak") or 0.0),
+                                   float(msg.get("threshold") or 0.0)))
+                elif kind == "ready":
+                    emit("ready", sess.attached_source())
+                elif kind == "error":
+                    emit("error", str(msg.get("text") or ""))
+                    break
+        except Exception as e:      # noqa: BLE001
+            emit("error", f"The microphone test failed ({e}).")
+        finally:
+            stop.set()
+            sess.stop(grace=0.2)
+            if self._session is sess:
+                self._session = None
+            emit("stopped", "")
+
+
 def resolve_device(name, log=None, devices=None):
     """Turn a saved microphone NAME into a currently valid device index.
 
@@ -447,6 +619,17 @@ class SpeechWorker:
         self.libre_online_key = ""   # optional, some instances need one
         self.google_key = ""  # optional Google Cloud Translation key
         self.mic_index = -1   # -1 = system default microphone
+        # sound-server source to point the helper at ("" = the default).
+        # Separate from mic_index on purpose: the index says WHICH DOOR
+        # (the "pipewire" PCM), the node says which room behind it.
+        self.mic_node = ""
+        # {energy_auto, energy_threshold, pause_sec, min_phrase_sec,
+        #  phrase_limit} - see core/stt_child.py _apply_sensitivity()
+        self.sensitivity = {}
+        # levels for the UI meter, so the bar keeps moving while a
+        # recording is running instead of going dark exactly when it
+        # matters most
+        self.levels = queue.Queue(maxsize=64)
         # the helper process currently holding the microphone, so
         # shutdown() can end it instead of leaving an orphan behind
         self._active_session = None
@@ -464,7 +647,8 @@ class SpeechWorker:
 
     def start(self, language, translate_to="", method=METHOD_LINGVA,
               deepl_key="", libre_url="", mic_index=-1,
-              google_key="", libre_online_url="", libre_online_key=""):
+              google_key="", libre_online_url="", libre_online_key="",
+              mic_node="", sensitivity=None):
         # A previous recording thread has to finish before the new one
         # opens the microphone. It used to be joined RIGHT HERE - on the
         # GUI thread, for up to 6 seconds, because r.listen() only checks
@@ -489,6 +673,13 @@ class SpeechWorker:
         self.libre_online_key = libre_online_key or ""
         self.google_key = google_key or ""
         self.mic_index = mic_index if mic_index is not None else -1
+        self.mic_node = mic_node or ""
+        self.sensitivity = dict(sensitivity or {})
+        while not self.levels.empty():
+            try:
+                self.levels.get_nowait()
+            except Exception:      # noqa: BLE001
+                break
         # a fresh Event per session: clearing the shared one would also
         # un-stop the thread we just asked to quit
         self._stop = threading.Event()
@@ -595,8 +786,14 @@ class SpeechWorker:
 
     def _run_helper(self, stop, emit):
         """Supervise core/stt_child.py and translate what it heard."""
+        sensitivity = dict(self.sensitivity)
+        sensitivity.setdefault("levels", True)
+        phrase_limit = sensitivity.pop("phrase_limit", 12)
         sess = mic_host.Session(language=self.language,
-                                mic_index=self.mic_index)
+                                mic_index=self.mic_index,
+                                node=self.mic_node,
+                                phrase_limit=phrase_limit,
+                                sensitivity=sensitivity)
         if not sess.start():
             emit("error", f"The microphone helper could not start "
                           f"({sess.error}).")
@@ -620,9 +817,22 @@ class SpeechWorker:
                 if stop.is_set():
                     break
                 kind = str(msg.get("kind") or "")
+                if kind == "level":
+                    # Its own queue, not the message queue: levels arrive
+                    # twenty times a second and the UI drains messages
+                    # every 200 ms, so mixing them would bury a "heard"
+                    # under two hundred meter updates.
+                    self._push_level(msg)
+                    continue
                 text = str(msg.get("text") or "")
                 if kind == "ready":
                     emit("status", "Listening \u2026 speak now")
+                    # What it is ACTUALLY recording from, which is not
+                    # always what was asked for - see
+                    # mic_host.Session.attached_source().
+                    actual = sess.attached_source()
+                    if actual:
+                        emit("source", actual)
                 elif kind == "heard":
                     self._deliver(text, emit)
                 elif kind == "status":
@@ -659,6 +869,31 @@ class SpeechWorker:
             if self._active_session is sess:
                 self._active_session = None
             emit("stopped", "")
+
+    def _push_level(self, msg):
+        """Newest level wins. The queue is bounded and the OLDEST entry
+        is dropped when it is full, because a meter showing what the
+        microphone did two seconds ago is not a meter."""
+        item = (float(msg.get("rms") or 0.0), float(msg.get("peak") or 0.0),
+                float(msg.get("threshold") or 0.0))
+        try:
+            self.levels.put_nowait(item)
+        except Exception:      # noqa: BLE001 - queue.Full
+            try:
+                self.levels.get_nowait()
+                self.levels.put_nowait(item)
+            except Exception:      # noqa: BLE001
+                pass
+
+    def latest_level(self):
+        """The most recent (rms, peak, threshold), or None. Drains the
+        queue - the UI paints one frame, not a backlog."""
+        item = None
+        while True:
+            try:
+                item = self.levels.get_nowait()
+            except Exception:      # noqa: BLE001 - queue.Empty
+                return item
 
     @staticmethod
     def _helper_error_text(text):
@@ -708,6 +943,43 @@ class SpeechWorker:
         # emit (source, final) so the UI can show both
         emit("text", (text, out))
 
+    def _apply_sensitivity(self, rec):
+        """The same four knobs the helper sets, for the fallback path.
+
+        Deliberately duplicated rather than imported from
+        core/stt_child.py: that module is a standalone script that must
+        not import the app, and this one must not import a script whose
+        whole purpose is to run in a different process. Four assignments
+        are a cheaper price than tangling the two.
+        """
+        cfg = self.sensitivity or {}
+        rec.dynamic_energy_threshold = bool(cfg.get("energy_auto", True))
+        try:
+            rec.energy_threshold = float(
+                cfg.get("energy_threshold", 300) or 300)
+        except Exception:      # noqa: BLE001
+            rec.energy_threshold = 300.0
+        try:
+            pause = float(cfg.get("pause_sec", 0.8) or 0.8)
+        except Exception:      # noqa: BLE001
+            pause = 0.8
+        pause = max(0.2, min(3.0, pause))
+        rec.pause_threshold = pause
+        try:
+            rec.phrase_threshold = max(0.05, min(2.0, float(
+                cfg.get("min_phrase_sec", 0.3) or 0.3)))
+        except Exception:      # noqa: BLE001
+            rec.phrase_threshold = 0.3
+        rec.non_speaking_duration = min(pause, 0.5)
+        return rec
+
+    def _phrase_limit(self):
+        try:
+            return max(3, min(60, int(
+                (self.sensitivity or {}).get("phrase_limit", 12) or 12)))
+        except Exception:      # noqa: BLE001
+            return 12
+
     # ------------------------------------------------ in-process fallback
     def _run_inprocess(self, stop, emit, me):
         """The old path, for a build where no helper can be spawned.
@@ -729,7 +1001,7 @@ class SpeechWorker:
             with mic_probe.watched("microphone setup") as late:
                 with _silence_stderr():
                     r = sr.Recognizer()
-                    r.dynamic_energy_threshold = True
+                    self._apply_sensitivity(r)
                     if HAS_PYAUDIO:
                         mic = (sr.Microphone(device_index=self.mic_index)
                                if self.mic_index >= 0 else sr.Microphone())
@@ -758,16 +1030,20 @@ class SpeechWorker:
             me.dc_stalled = True
 
         # ---- 3. calibrate ----------------------------------------------
-        try:
-            with mic_probe.watched("microphone calibration") as late:
-                r.adjust_for_ambient_noise(source, duration=0.4)
-        except Exception as e:      # noqa: BLE001
-            emit("error", self._open_error_text(e))
-            self._close(mic)
-            emit("stopped", "")
-            return
-        if late.is_set():
-            me.dc_stalled = True
+        # Only in automatic mode: adjust_for_ambient_noise() writes what
+        # it measured into energy_threshold, so running it would silently
+        # discard a manually set sensitivity.
+        if self.sensitivity.get("energy_auto", True):
+            try:
+                with mic_probe.watched("microphone calibration") as late:
+                    r.adjust_for_ambient_noise(source, duration=0.4)
+            except Exception as e:      # noqa: BLE001
+                emit("error", self._open_error_text(e))
+                self._close(mic)
+                emit("stopped", "")
+                return
+            if late.is_set():
+                me.dc_stalled = True
 
         # ---- 4. the listen loop, watched --------------------------------
         # A device that dies WHILE recording does not raise - it simply
@@ -810,7 +1086,8 @@ class SpeechWorker:
             while not stop.is_set() and not stalled.is_set():
                 tick()
                 try:
-                    audio = r.listen(source, timeout=1, phrase_time_limit=12)
+                    audio = r.listen(source, timeout=1,
+                                     phrase_time_limit=self._phrase_limit())
                 except sr.WaitTimeoutError:
                     continue
                 tick()
