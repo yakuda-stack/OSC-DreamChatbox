@@ -6,6 +6,126 @@ All notable changes to OSC-DreamChatbox are documented here.
 
 🟢 Linux Support: Complete & Stable (v1.2.6)
 
+## [v1.4.3] – 2026-08-22
+
+**FPS setup no longer means hunting for a folder, a colon you typed
+stays a colon, and the mouse wheel scrolls the page instead of quietly
+changing the dropdown it rolls over.**
+
+### Added
+
+**FPS setup that finds itself**
+
+- Linux: an **Auto-detect** button next to the MangoHud log folder. It
+  reads `output_folder` out of your MangoHud configs — including the
+  per-game ones and the ones **GOverlay** writes, which is how most
+  people set logging up without ever seeing the path — and falls back to
+  the usual folders (`~/mangologs`, `~/mangohud`, …). A folder holding
+  VRChat logs wins over one holding somebody else's benchmark, and a
+  fresh log wins over a stale one.
+- When it finds nothing it says which step is missing rather than just
+  "not found": MangoHud not installed, installed but no config enables
+  logging (with the GOverlay route and the launch options), or configured
+  but the folder does not exist yet.
+- Windows: a **Check RTSS** button beside the download button. An empty
+  FPS field means either "RTSS is not installed" or "RTSS is installed
+  but not running", and those need different next steps — the button
+  tells them apart, offers to start RTSS when it is only idle, and opens
+  the download page when it is genuinely missing.
+
+### Hinzugefügt
+
+**FPS-Einrichtung, die sich selbst findet**
+
+- Linux: ein **Auto-detect**-Knopf neben dem MangoHud-Log-Ordner. Er
+  liest `output_folder` aus deinen MangoHud-Configs — auch aus den
+  spielspezifischen und aus denen, die **GOverlay** schreibt, womit die
+  meisten das Logging einrichten, ohne den Pfad je zu sehen — und fällt
+  sonst auf die üblichen Ordner zurück (`~/mangologs`, `~/mangohud`, …).
+  Ein Ordner mit VRChat-Logs schlägt einen mit fremden Benchmarks, ein
+  frisches Log schlägt ein altes.
+- Findet er nichts, sagt er, welcher Schritt fehlt, statt nur „nicht
+  gefunden": MangoHud nicht installiert, installiert aber keine Config
+  schaltet das Logging ein (mit GOverlay-Weg und Launch-Options), oder
+  konfiguriert, aber der Ordner existiert noch nicht.
+- Windows: ein **Check-RTSS**-Knopf neben dem Download-Knopf. Ein leeres
+  FPS-Feld heißt entweder „RTSS ist nicht installiert" oder „RTSS läuft
+  nicht" — das sind zwei verschiedene nächste Schritte. Der Knopf
+  unterscheidet sie, bietet an RTSS zu starten, wenn es nur nicht läuft,
+  und öffnet sonst die Download-Seite.
+
+### Fixed
+
+**Punctuation you typed is no longer eaten**
+
+- A line like `fps:` in an All in one string, a Custom Box or a plugin
+  template lost its colon — and `-----` lost its dashes, and a leading
+  `|` disappeared. The clean-up pass that removes what an empty
+  placeholder leaves behind (`GPU: {gpu_usage}` with the Hardware card
+  off) decided by punctuation alone, so it could not tell a leftover
+  from a character somebody wrote on purpose.
+- Empty placeholders now leave an invisible mark behind during
+  rendering, and the clean-up only works on those marks. Everything
+  still standing afterwards is text you typed and is left alone.
+- A missing value takes its label with it: `GPU: {gpu} | CPU: {cpu}`
+  with no GPU now reads `CPU: 27%` instead of leaving a stray `GPU |`.
+  `{position}/{length}` without a length is `0:27`, not `0:27/`.
+- Advanced mode gets the same treatment: Text, Placeholder, Hardware and
+  Media blocks mark their empty values too, so a Format block of
+  `GPU: {a}` sends nothing rather than a bare `GPU:` — while OSC out
+  blocks never see the marks.
+
+**The mouse wheel no longer edits settings in passing**
+
+- Scrolling over a dropdown (Personal Status template, Hardware sensors,
+  microphone, translator …), a spin box or a slider changed its value.
+  On a page that is several screens tall, the setting that got changed
+  was usually off-screen before you noticed — the first sign of it was
+  VRChat showing the wrong thing.
+- Those widgets now hand the wheel to the page they sit in. Click,
+  arrow keys, typing and the wheel inside an *open* dropdown list work
+  exactly as before, and scroll bars are untouched.
+- The filter is taken off again on quit — an application-wide event
+  filter that is still installed while Qt and Python tear each other
+  down segfaults on exit.
+
+### Behoben
+
+**Selbst getippte Satzzeichen verschwinden nicht mehr**
+
+- Eine Zeile wie `fps:` im All-in-one-String, in der Custom Box oder in
+  einem Plugin-Template hat ihren Doppelpunkt verloren — genauso
+  `-----` seine Striche und ein führendes `|`. Der Aufräum-Durchlauf,
+  der Reste von leeren Platzhaltern entfernt (`GPU: {gpu_usage}` bei
+  ausgeschalteter Hardware-Card), hat nur nach Satzzeichen entschieden
+  und konnte einen Rest nicht von einem absichtlich getippten Zeichen
+  unterscheiden.
+- Leere Platzhalter hinterlassen beim Rendern jetzt eine unsichtbare
+  Markierung, und aufgeräumt wird ausschließlich an diesen
+  Markierungen. Was danach noch steht, ist getippter Text und bleibt
+  unangetastet.
+- Ein fehlender Wert nimmt sein Label mit: `GPU: {gpu} | CPU: {cpu}`
+  ohne GPU ergibt `CPU: 27%` statt eines übrig gebliebenen `GPU |`.
+  `{position}/{length}` ohne Länge ist `0:27`, nicht `0:27/`.
+- Advanced Mode verhält sich genauso: Text-, Platzhalter-, Hardware- und
+  Media-Blöcke markieren ihre leeren Werte ebenfalls, ein Format-Block
+  `GPU: {a}` sendet also nichts statt eines nackten `GPU:` — OSC-out-
+  Blöcke bekommen die Markierungen nie zu sehen.
+
+**Das Mausrad verstellt keine Einstellungen mehr im Vorbeiscrollen**
+
+- Über ein Dropdown (Personal-Status-Template, Hardware-Sensoren,
+  Mikrofon, Übersetzer …), eine Zahlenauswahl oder einen Regler zu
+  scrollen hat den Wert geändert. Auf einer Seite, die mehrere Bildschirme
+  hoch ist, war die verstellte Einstellung meist längst aus dem Bild —
+  gemerkt hat man es erst, wenn VRChat das Falsche angezeigt hat.
+- Diese Elemente geben das Mausrad jetzt an die Seite weiter, in der sie
+  sitzen. Klick, Pfeiltasten, Tippen und das Scrollen in einer *offenen*
+  Dropdown-Liste funktionieren unverändert, Scrollbalken ebenfalls.
+- Beim Beenden wird der Filter wieder entfernt — ein app-weiter
+  Event-Filter, der beim Herunterfahren noch installiert ist, führt
+  zuverlässig zu einem Segfault beim Beenden.
+
 ## [v1.4.2] – 2026-08-21
 
 **The microphone dropdown finally lists microphones instead of ALSA

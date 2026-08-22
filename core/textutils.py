@@ -203,7 +203,49 @@ def canonical_placeholder(key: str) -> str:
             + (f"_{int(slot)}" if slot is not None else ""))
 
 
-def substitute_placeholders(template: str, values: dict) -> str:
+#: Placeholder-shaped hole. An empty placeholder does not simply vanish
+#: during substitution, it leaves this behind, so the tidy pass below can
+#: tell "the label whose value went missing" from "a colon the user
+#: typed". Without it the clean-up had to guess from punctuation alone,
+#: and a literal line like "fps:" lost its colon for no reason.
+#:
+#: U+001F (unit separator) is the character for the job on two counts: it
+#: never occurs in a chatbox message, and Python counts it as whitespace
+#: - so every ``.strip()`` in the node graph goes on reading a hole as
+#: empty without a single one of them having to learn about this.
+EMPTY_MARK = "\x1f"
+
+#: what a value is usually glued to its label or its neighbour with. Only
+#: one of these is ever removed, and only when it sits directly against a
+#: hole - text the user typed is never punctuation the app may edit.
+_SEPARATORS = r"|:/,\-\u2013"
+
+#: "GPU: <hole>" - a word written tight against a colon is a label for
+#: the value that follows it, and a label without its value says nothing,
+#: so both go. Letters only: "0:27/<hole>" must lose the slash and keep
+#: the time, not read "27" as a label.
+_LABEL_BEFORE_HOLE = re.compile(rf"[^\W\d_]+:[ \t]*{EMPTY_MARK}")
+#: any other separator that was there to introduce the value
+_SEP_BEFORE_HOLE = re.compile(rf"[{_SEPARATORS}][ \t]*{EMPTY_MARK}")
+#: "<hole> | CPU" - nothing in front to take, so the trailing one goes
+_HOLE_BEFORE_SEP = re.compile(rf"{EMPTY_MARK}[ \t]*[{_SEPARATORS}]")
+#: pipes left standing alone once a hole and its label are gone
+_PIPE_RUN = re.compile(r"\|[ \t]*(?:\|[ \t]*)+")
+_PIPE_EDGE = re.compile(r"^[ \t]*\|[ \t]*|[ \t]*\|[ \t]*$")
+
+
+def strip_marks(text: str) -> str:
+    """Removes the empty-placeholder marks from a string.
+
+    For the few places that hand a rendered value to something other than
+    the chatbox - an OSC payload, say - and therefore never reach the
+    tidy pass that would have cleared them.
+    """
+    return str(text).replace(EMPTY_MARK, "")
+
+
+def substitute_placeholders(template: str, values: dict,
+                            mark_empty: bool = False) -> str:
     """Replaces {placeholders} (case-insensitive) and nothing else.
 
     Split out of apply_template so the node graph
@@ -211,6 +253,11 @@ def substitute_placeholders(template: str, values: dict) -> str:
     running the line clean-up on it: a Join separator of " | " has to
     survive until the whole string is assembled, and the tidy pass would
     eat it halfway through.
+
+    ``mark_empty`` leaves an EMPTY_MARK where a placeholder resolved to
+    nothing instead of closing the gap silently. finish_template() reads
+    those marks; anything that does not run the tidy pass should leave
+    the flag off (or call strip_marks() afterwards).
     """
     def rep(m):
         inner = m.group(1)
@@ -221,25 +268,41 @@ def substitute_placeholders(template: str, values: dict) -> str:
         key = canonical_placeholder(
             inner.strip().lower().replace(" ", "_"))
         v = values.get(key)
-        return "" if v is None else str(v)
+        if v is None or v == "":
+            return EMPTY_MARK if mark_empty else ""
+        return str(v)
     return re.sub(r"\{([^{}]+)\}", rep, template)
 
 
 def finish_template(text: str) -> str:
     """The second half of apply_template: inline styles, \\n as a real
     line break, and the per-line tidy that removes what empty
-    placeholders left behind."""
+    placeholders left behind.
+
+    The tidy works off the marks substitution left, never off the
+    punctuation itself: everything that is still standing after the holes
+    are closed is text somebody typed, and the app has no business
+    editing that. "fps:" stays "fps:", and "GPU: {gpu_usage}" with the
+    Hardware card switched off still comes out as nothing at all.
+    """
     text = apply_inline(text)
     text = text.replace("\\n", "\n")
     out = []
     for ln in text.split("\n"):
-        ln = re.sub(r"\s{2,}", " ", ln).strip()
-        # tidy up separators left over from empty placeholders,
-        # e.g. "GPU:  | Vram | CPU: 27%" -> "GPU: | CPU: 27%"
-        ln = re.sub(r"([|:])(\s*[|:])+", r"\1", ln)      # collapse ": |" "| |"
-        ln = re.sub(r"^[\s|:\-]+", "", ln)                 # leading separators
-        ln = re.sub(r"[\s|:\-]+$", "", ln)                 # trailing separators
-        ln = re.sub(r"\s{2,}", " ", ln).strip()
+        if EMPTY_MARK in ln:
+            # a hole takes its label, or failing that ONE separator, with
+            # it. Preferring the leading one keeps the other separator in
+            # "A | <hole> | B" from disappearing as well, which would run
+            # A and B together.
+            ln = _LABEL_BEFORE_HOLE.sub("", ln)
+            ln = _SEP_BEFORE_HOLE.sub("", ln)
+            ln = _HOLE_BEFORE_SEP.sub("", ln)
+            ln = ln.replace(EMPTY_MARK, "")
+            # "GPU: {gpu} | CPU: 27%" with no GPU left the pipe hanging
+            # off the front of the line
+            ln = _PIPE_RUN.sub("| ", ln)
+            ln = _PIPE_EDGE.sub("", ln)
+        ln = re.sub(r"[^\S\n]{2,}", " ", ln).strip()
         if ln:
             out.append(ln)
     return "\n".join(out)
@@ -253,6 +316,7 @@ def apply_template(template: str, values: dict) -> str:
     see core/textstyle.py. They are resolved after the placeholders, so
     the content can be one: {super/{cpu_usage}} styles the value.
     """
-    return finish_template(substitute_placeholders(template, values))
+    return finish_template(
+        substitute_placeholders(template, values, mark_empty=True))
 
 

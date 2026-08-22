@@ -78,6 +78,7 @@ Status rotation, now-playing, hardware stats, speech-to-text, live translation, 
 - [Optional features](#optional-features)
 - [Project structure](#-project-structure)
 - [Important](#️-important)
+- [Privacy & Security](#-privacy--security)
 - [Legal & credits](#legal--credits)
 
 ---
@@ -527,6 +528,60 @@ OSC-DreamChatbox/
 - 👥 [VRChat group](https://vrchat.com/home/group/grp_829b7777-430d-48b2-8bf3-4e348d0dac9b)
 - ☕ [Support me on Ko-fi](https://ko-fi.com/yakuda_)
 - 📋 [Changelog](CHANGELOG.md) · 🧩 [Plugin API](docs/PLUGIN_API.md)
+
+---
+
+## 🔒 Privacy & Security
+
+**Telemetry:** none · **Analytics:** none · **User tracking:** none ·
+**Cloud/account:** not required · **Runs offline:** yes (every network
+feature below is optional)
+
+Nothing is sent anywhere unless a feature that needs it is switched on.
+There is no phone-home, no crash reporter and no usage counter — the app
+has no server of its own to send anything to.
+
+### Network
+
+| Connection | Purpose | When |
+|---|---|---|
+| **UDP 9000 → 127.0.0.1** | the chatbox message to VRChat | always (this is the app's job) |
+| **UDP 9001 (listening)** | avatar parameters back from VRChat | only with OSCQuery off |
+| **UDP 5353, mDNS (LAN)** | finding VRChat's real OSC port via OSCQuery | with OSCQuery on (default) |
+| **HTTP on 127.0.0.1, random port** | the OSCQuery endpoint VRChat reads | with OSCQuery on (default) |
+| `lingva.adminforge.de` *(or your own instance)* | translation, default backend | only when translation is on |
+| `translate.googleapis.com` / `translation.googleapis.com` | translation, if you pick Google | only when selected |
+| `libretranslate.com` *(or your own URL / `localhost:5000`)* | translation, if you pick LibreTranslate | only when selected |
+| `api-free.deepl.com` / `api.deepl.com` | translation, if you pick DeepL | only when selected, needs your key |
+| Google Speech API | Speech to Text recognition | only while STT is recording |
+| `lrclib.net` | song lyrics for the current track | only with lyrics on |
+| `raw.githubusercontent.com` / `codeload.github.com` | plugin catalogue and plugin downloads | opening the Plugins page, and on install/update |
+| `api.github.com` | version check | only when you press **Check for updates** |
+| `pypi.org` | installing SpeechRecognition into the app's own folder | only when you press that button |
+| `localhost:8085` | LibreHardwareMonitor sensors *(Windows)* | only with the temperature helper on |
+
+Anything a **plugin** talks to is that plugin's business — the ones in
+the official catalogue name their endpoints in their own description.
+The OSC target is configurable: leave it on `127.0.0.1` and nothing OSC
+ever leaves the machine.
+
+### System permissions
+
+| Permission | Purpose | Required? |
+|---|---|---|
+| Microphone | Speech to Text | only for STT |
+| Firewall rule *(Windows)* | mDNS for OSCQuery — Windows asks on first start | no, it falls back to fixed port 9000 |
+| Admin / UAC *(Windows)* | starting LibreHardwareMonitor, which loads its sensor driver | only for CPU temperatures |
+| `~/.config/OSC-DreamChatbox` | settings, plugins, logs | yes |
+| Steam prefix read access | finding VRChat's folders | only for the VRC picture fix |
+| `ydotool` / `wtype` *(Wayland)* | the **Send Hotkey** block on the Advanced canvas | only for that block |
+
+**No `sudo` on Linux, ever** — nothing here needs root. There is no
+kernel driver, no system service and no file outside your home directory.
+
+> ⚠️ **Plugins run as code inside the app**, with the same rights the app
+> has. Install plugins the way you would install any other program:
+> from a source you trust.
 
 ---
 

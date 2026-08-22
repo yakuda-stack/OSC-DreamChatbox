@@ -10,11 +10,12 @@ import re
 from PyQt6.QtCore import QUrl, Qt
 from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (
-    QButtonGroup, QCheckBox, QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QSlider, QSpinBox, QVBoxLayout, QWidget)
+    QButtonGroup, QCheckBox, QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QSlider, QSpinBox, QVBoxLayout, QWidget)
 from core.constants import (
     AIO_MAX, ORIGINS, ORIGIN_CHAT,
     CHATBOX_LIMIT, LYRICS_DIR, MIN_STATUS_CYCLE_SEC, SLIM_SUFFIX, SONGBAR_LEN, TITLE_MAX_LEN)
 from core.osinfo import IS_WINDOWS
+from core import mangohud
 from core.boxstyle import SIDE_BOTTOM, SIDE_TOP
 from core.hotkeys import HotkeySender
 from core.proclaunch import launch as launch_program
@@ -673,6 +674,20 @@ class AppsPageMixin:
             fps_row.addSpacing(24)
             fps_row.addWidget(QLabel("MangoHud log folder"))
             fps_row.addWidget(self.mangohud_dir_lbl, 1)
+            # Auto-detect first: almost nobody picked that folder
+            # themselves - they switched logging on in GOverlay, which
+            # writes the path into a MangoHud config and never shows it
+            # again. Reading it back beats asking them to go find it.
+            find_mh = QPushButton("Auto-detect")
+            find_mh.setObjectName("linkbtn")
+            find_mh.setFixedHeight(26)
+            find_mh.setCursor(Qt.CursorShape.PointingHandCursor)
+            find_mh.setToolTip(
+                "Reads output_folder out of your MangoHud configs "
+                "(including the ones GOverlay writes) and falls back to "
+                "the usual log folders.")
+            find_mh.clicked.connect(self.on_detect_mangohud_dir)
+            fps_row.addWidget(find_mh)
             pick_mh = QPushButton("Choose\u2026")
             pick_mh.setObjectName("linkbtn")
             pick_mh.setFixedHeight(26)
@@ -682,15 +697,18 @@ class AppsPageMixin:
             hc.addLayout(fps_row)
             # kept small on purpose: the toggle costs nothing at runtime,
             # the setup note is the only thing people need to see once
-            fps_hint = QLabel("\u2139 read via MangoHud \u2013 hover for the "
-                              "launch options")
+            fps_hint = QLabel("\u2139 read via MangoHud \u2013 set logging up "
+                              "in GOverlay, then hit Auto-detect "
+                              "(hover for the manual way)")
             fps_hint.setToolTip(
                 "Linux has no general way to read a game's FPS. MangoHud runs "
-                "inside VRChat and can log it.\n\nSteam launch options:\n"
-                "MANGOHUD=1 MANGOHUD_CONFIG=output_folder=~/mangohud,"
-                "autostart_log=1,log_interval=1000 mangohud %command%\n\n"
-                "Then pick that folder above. Polling only reads the last few "
-                "lines of the log, so it costs nothing measurable.")
+                "inside VRChat and can log it.\n\nEasiest: GOverlay -> "
+                "Logging -> pick an output folder and switch autostart on, "
+                "then press Auto-detect here.\n\nBy hand, as Steam launch "
+                "options:\n"
+                + mangohud.LAUNCH_OPTIONS
+                + "\n\nThen pick that folder above. Polling only reads the "
+                "last few lines of the log, so it costs nothing measurable.")
         else:
             # rich text so the word RTSS itself is the link - the button
             # below is for people who do not expect a label to be clickable
@@ -717,6 +735,18 @@ class AppsPageMixin:
         if IS_WINDOWS:
             rtss_row = QHBoxLayout()
             rtss_row.addSpacing(24)
+            # the Windows half of Linux's Auto-detect: an empty FPS field
+            # means either "RTSS is not installed" or "RTSS is installed
+            # but not running", and only this button can tell them apart
+            self.rtss_check_btn = QPushButton("Check RTSS")
+            self.rtss_check_btn.setObjectName("linkbtn")
+            self.rtss_check_btn.setFixedHeight(26)
+            self.rtss_check_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            self.rtss_check_btn.setToolTip(
+                "Looks for RivaTuner Statistics Server and offers to start "
+                "it if it is installed but not running.")
+            self.rtss_check_btn.clicked.connect(self.on_check_rtss)
+            rtss_row.addWidget(self.rtss_check_btn)
             rtss_btn = QPushButton("Download RTSS / MSI Afterburner")
             rtss_btn.setObjectName("linkbtn")
             rtss_btn.setFixedHeight(26)
@@ -2950,6 +2980,124 @@ class AppsPageMixin:
             self.cfg.get("hw_mangohud_dir") or str(Path.home()))
         if not folder:
             return
+        self._set_mangohud_dir(folder)
+
+    def on_detect_mangohud_dir(self):
+        """Finds the log folder instead of asking for it.
+
+        Whatever comes back is reported in full - which config file it
+        came from, what is in the folder - because the failure people hit
+        is not "wrong folder", it is "logging was never switched on", and
+        a dialog that only says "nothing found" leaves them exactly where
+        they were.
+        """
+        try:
+            found = mangohud.detect()
+        except Exception as e:      # noqa: BLE001 - detection is best effort
+            self.log(f"FPS: MangoHud auto-detect failed ({e})")
+            QMessageBox.warning(self, "MangoHud", f"Auto-detect failed: {e}")
+            return
+        self.log(f"FPS: MangoHud auto-detect - {mangohud.describe(found)}")
+        folder, info = found["folder"], found["info"]
+
+        if folder is not None and (info["csv"] or found["configured"]):
+            self._set_mangohud_dir(str(folder))
+            lines = [f"Log folder set to:\n{folder}\n"]
+            if found["source"] not in ("common folder", "MANGOHUD_CONFIG"):
+                lines.append(f"Found in {found['source']}")
+            elif found["source"] == "MANGOHUD_CONFIG":
+                lines.append("Found in the MANGOHUD_CONFIG environment.")
+            else:
+                lines.append("Guessed from the usual log locations.")
+            if info["vrchat"]:
+                lines.append("It already holds VRChat logs, so this is the "
+                             "right one.")
+            elif info["csv"]:
+                lines.append(f"It holds {info['csv']} MangoHud log(s), but "
+                             "none from VRChat yet - start VRChat with "
+                             "MangoHud once and the FPS value will fill in.")
+            else:
+                lines.append("It is still empty - the first log appears once "
+                             "VRChat runs with MangoHud.")
+            QMessageBox.information(self, "MangoHud", "\n\n".join(lines))
+            return
+
+        # nothing usable: say which step is missing
+        if not found["mangohud"]:
+            body = ("MangoHud does not seem to be installed.\n\n"
+                    "Install it from your package manager (on CachyOS/Arch: "
+                    "pacman -S mangohud), then set logging up - GOverlay is "
+                    "the comfortable way, it is a GUI for exactly these "
+                    "settings.")
+        elif not found["configured"]:
+            body = ("MangoHud is installed, but no config file sets an "
+                    "output folder - so it is not logging anything yet.\n\n"
+                    "Easiest: GOverlay -> Logging -> choose an output folder "
+                    "and switch autostart on. Then press Auto-detect again."
+                    "\n\nBy hand, as VRChat's Steam launch options:\n"
+                    + mangohud.LAUNCH_OPTIONS)
+        else:
+            body = ("A config names an output folder, but the folder does "
+                    "not exist yet.\n\nIt is created the first time MangoHud "
+                    "actually logs - start VRChat once with MangoHud "
+                    "running, then press Auto-detect again.")
+        if found["checked"]:
+            body += "\n\nConfigs read:\n" + "\n".join(
+                str(p) for p in found["checked"][:4])
+        if not found["goverlay"] and found["mangohud"]:
+            body += ("\n\nTip: GOverlay (package 'goverlay') is what most "
+                     "people use to configure MangoHud.")
+        QMessageBox.information(self, "MangoHud", body)
+
+    def on_check_rtss(self):
+        """Windows: is RTSS there, and is it running?
+
+        Offers to start it when it is installed but idle, and sends
+        people to the download page when it is not installed at all -
+        the same two-step the Linux side does with MangoHud.
+        """
+        from core.backends import wintemp
+        state = wintemp.rtss_status()
+        if state["running"]:
+            self.log("FPS: RTSS is running")
+            QMessageBox.information(
+                self, "RTSS",
+                "RTSS is running - the FPS value fills in as soon as "
+                "VRChat is up.\n\nIf it stays empty, check that RTSS's "
+                "Application detection level is not set to None.")
+            return
+        if state["installed"]:
+            answer = QMessageBox.question(
+                self, "RTSS",
+                f"RTSS is installed but not running:\n{state['exe']}\n\n"
+                "Start it now?")
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+            ok, message = wintemp.start_rtss(state["exe"])
+            self.log(f"FPS: {message}")
+            if ok:
+                QMessageBox.information(
+                    self, "RTSS",
+                    "RTSS started. It sits in the tray and has to stay "
+                    "running - set it to start with Windows and this is a "
+                    "one-time step.")
+            else:
+                QMessageBox.warning(self, "RTSS",
+                                    f"Could not start RTSS:\n{message}")
+            return
+        self.log("FPS: RTSS not found")
+        answer = QMessageBox.question(
+            self, "RTSS",
+            "RTSS (RivaTuner Statistics Server) was not found.\n\n"
+            "It is what publishes the frame rate this app reads, and it "
+            "ships with MSI Afterburner - so you may already have it "
+            "somewhere else.\n\nOpen the download page?")
+        if answer == QMessageBox.StandardButton.Yes:
+            QDesktopServices.openUrl(QUrl(RTSS_DOWNLOAD_URL))
+
+    def _set_mangohud_dir(self, folder):
+        """One place that stores the folder, so the file dialog and the
+        detection can never disagree about what else has to happen."""
         self.cfg["hw_mangohud_dir"] = folder
         self.hw.mangohud_dir = Path(folder)
         self.mangohud_dir_lbl.setText(folder)

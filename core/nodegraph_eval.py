@@ -29,7 +29,7 @@ import time
 
 from core.oscin import coerce_value, format_value, value_type
 from core.textstyle import STYLE_SUB, STYLE_SUPER, apply_style
-from core.textutils import substitute_placeholders
+from core.textutils import EMPTY_MARK, strip_marks, substitute_placeholders
 
 #: node type -> {output socket: placeholder name}. Everything in here is
 #: a pure lookup into the values dict, which is why one table covers all
@@ -71,6 +71,19 @@ MAX_STEPS = 500
 
 def _clean_id(value):
     return str(value or "")
+
+
+def _hole(raw):
+    """A source socket's value, or the mark that says "this one had
+    nothing to give".
+
+    The mark is whitespace to Python, so every ``.strip()`` in here still
+    reads it as empty - it only survives long enough for
+    finish_template() to take the separator in front of it away, which is
+    what keeps a Format block of "GPU: {a}" from sending a bare "GPU:"
+    when the Hardware card is off.
+    """
+    return EMPTY_MARK if raw is None or raw == "" else str(raw)
 
 
 class _Graph:
@@ -197,25 +210,25 @@ class _Evaluator:
         if kind in SOURCE_MAP:
             name = SOURCE_MAP[kind].get(socket)
             raw = self.values.get(name) if name else None
-            return "" if raw is None else str(raw)
+            return _hole(raw)
 
         if kind == "text":
             # placeholders resolve here, but the tidy pass does not run
             # until the output block - a separator has to survive the
             # trip through Join
             return substitute_placeholders(str(values.get("value", "")),
-                                           self.values)
+                                           self.values, mark_empty=True)
 
         if kind == "placeholder":
             name = str(values.get("name", "")).strip().lstrip("{").rstrip("}")
-            return substitute_placeholders("{%s}" % name, self.values) \
-                if name else ""
+            return substitute_placeholders("{%s}" % name, self.values,
+                                           mark_empty=True) if name else ""
 
         if kind == "chat":
             name = CHAT_SOURCES.get(str(values.get("source", "chat")),
                                     "chat_output")
             raw = self.values.get(name)
-            return "" if raw is None else str(raw)
+            return _hole(raw)
 
         if kind == "clock":
             fmt = str(values.get("format", "%H:%M")) or "%H:%M"
@@ -378,7 +391,7 @@ class _Evaluator:
         # resolved lazily by the host (LazyStatusValues), and going
         # around it would mean a second implementation of the same rules
         raw = self.values.get(name)
-        return "" if raw is None else str(raw)
+        return _hole(raw)
 
     def _button(self, node_id, values):
         """The manual trigger. The click itself happens in the UI and
@@ -583,7 +596,8 @@ class _Evaluator:
             return
         if not address.startswith("/"):
             address = "/" + address
-        text = self.input_of(node_id, "value")
+        # marks are a chatbox-side aid; an OSC payload never sees them
+        text = strip_marks(self.input_of(node_id, "value"))
         if self._trigger_wired(node_id):
             if not self.input_of(node_id, "trigger").strip():
                 return
@@ -630,7 +644,7 @@ class _Evaluator:
         name = str(values.get("name", "")).strip()
         if not name:
             return
-        text = self.input_of(node_id, "value")
+        text = strip_marks(self.input_of(node_id, "value"))
         if self._trigger_wired(node_id):
             if not self.input_of(node_id, "trigger").strip():
                 return

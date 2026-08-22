@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-OSC-DreamChatbox v1.4.1
+OSC-DreamChatbox v1.4.3
 A clean VRChat OSC chatbox sender.
 
 Entry point only – the actual code lives in:
@@ -94,10 +94,14 @@ def main():
     _set_windows_app_id()
     from PyQt6.QtGui import QFont, QIcon
     from PyQt6.QtWidgets import QApplication
+    from ui import nowheel
     from ui.mainwindow import MainWindow
 
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
+    # the mouse wheel scrolls the page instead of editing whatever
+    # dropdown or spin box it passes over - see ui/nowheel.py
+    nowheel.install(app)
     # lets Wayland/KDE match the window to the .desktop entry, so the
     # taskbar shows OUR icon instead of the generic Wayland "W".
     # Only register the name if the .desktop file actually exists –

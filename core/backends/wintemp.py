@@ -83,6 +83,80 @@ _SE_ACCESS_DENIED = 5
 _SW_HIDE = 0
 
 
+# ----------------------------------------------------------------- RTSS
+# The FPS reader in core/backends/hardware_windows.py needs one thing:
+# RTSS has to be RUNNING. Everything here is about answering "is it?"
+# for the button, because "install RTSS" and "start the RTSS you already
+# installed" are two very different next steps and the FPS field looks
+# identical in both cases.
+RTSS_EXE = "RTSS.exe"
+_RTSS_SHARED_MEMORY = "RTSSSharedMemoryV2"
+
+
+def rtss_running():
+    """True when RTSS is up - tested by opening the shared memory it
+    publishes, which is exactly what the FPS reader needs to work."""
+    if not IS_WINDOWS:
+        return False
+    try:
+        import mmap
+        mm = mmap.mmap(-1, 0, tagname=_RTSS_SHARED_MEMORY,
+                       access=mmap.ACCESS_READ)
+    except Exception:
+        return False
+    try:
+        mm.close()
+    except Exception:
+        pass
+    return True
+
+
+def find_rtss():
+    """Path to RTSS.exe, or None. It installs to a fixed folder, and
+    Afterburner drops it in the same place."""
+    if not IS_WINDOWS:
+        return None
+    names = ("RivaTuner Statistics Server",)
+    for env in ("ProgramFiles(x86)", "ProgramFiles", "ProgramW6432"):
+        base = os.environ.get(env)
+        if not base:
+            continue
+        for name in names:
+            cand = Path(base) / name / RTSS_EXE
+            try:
+                if cand.is_file():
+                    return cand
+            except OSError:
+                continue
+    which = shutil.which(RTSS_EXE)
+    return Path(which) if which else None
+
+
+def start_rtss(exe_path=None):
+    """Starts RTSS unelevated. Returns (ok, message).
+
+    No UAC here: RTSS installs its own service and starts fine as the
+    user, so a prompt would be noise.
+    """
+    exe = Path(exe_path) if exe_path else find_rtss()
+    if exe is None or not exe.is_file():
+        return False, "RTSS.exe not found."
+    try:
+        import subprocess
+        subprocess.Popen([str(exe)], cwd=str(exe.parent),
+                         creationflags=0x08000000)
+    except Exception as e:      # noqa: BLE001
+        return False, str(e)
+    return True, f"Started {exe}"
+
+
+def rtss_status():
+    """Everything the button needs in one call."""
+    exe = find_rtss()
+    return {"running": rtss_running(), "exe": exe,
+            "installed": exe is not None}
+
+
 # ------------------------------------------------------------------ LHM
 def _lhm_candidates():
     """Every place LibreHardwareMonitor realistically installs to."""
