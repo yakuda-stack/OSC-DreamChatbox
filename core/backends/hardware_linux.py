@@ -18,6 +18,7 @@ import subprocess
 import time
 from pathlib import Path
 
+
 GB = 1024 ** 3
 
 
@@ -46,10 +47,11 @@ def _clean_gpu_name(name: str) -> str:
 
 
 class HardwareMonitor:
-    def __init__(self, log_fn, mangohud_dir=None):
-        # set from the config; None disables the FPS readout entirely
-        self.mangohud_dir = Path(mangohud_dir).expanduser() \
-            if mangohud_dir else None
+    def __init__(self, log_fn):
+        # FPS used to be read here. It moved into the World Stats plugin
+        # in v1.4.4, because getting a frame rate means loading something
+        # into the game itself - a Vulkan layer - and that is a different
+        # kind of thing from reading /proc and /sys.
         self._init(log_fn)
 
     def _init(self, log_fn):
@@ -580,74 +582,9 @@ class HardwareMonitor:
                 return None
         return None
 
-    # ------------------------------------------------------------------ fps
-    #
-    # There is no universal way to read a game's frame rate on Linux: the
-    # kernel exposes GPU load through /sys, but frames per second only
-    # exist inside the process drawing them. MangoHud already sits in that
-    # process, and with logging on it appends a CSV row per interval - so
-    # tailing its newest log is the one source that works for any Vulkan
-    # or OpenGL title, VRChat under Proton included.
-    #
-    # Enable it in VRChat's Steam launch options, e.g.
-    #   MANGOHUD=1 MANGOHUD_CONFIG=output_folder=/home/<you>/mangohud,\
-    #   autostart_log=1,log_interval=1000 mangohud %command%
-    def fps(self, folder=None):
-        """Newest FPS value from MangoHud's log folder, or None."""
-        folder = Path(folder).expanduser() if folder else self.mangohud_dir
-        if folder is None or not folder.is_dir():
-            return None
-        try:
-            logs = [p for p in folder.iterdir()
-                    if p.is_file() and p.suffix.lower() == ".csv"]
-            if not logs:
-                return None
-            newest = max(logs, key=lambda p: p.stat().st_mtime)
-            # a stale log would otherwise report the FPS of a session that
-            # ended hours ago
-            if time.time() - newest.stat().st_mtime > 15:
-                return None
-            return self._last_fps(newest)
-        except OSError as e:
-            self.log(f"FPS: {folder} not readable ({e})")
-            return None
-
-    @staticmethod
-    def _last_fps(path):
-        """Reads the fps column of the last data row. Only the tail is
-        read, so a long benchmark log stays cheap to poll."""
-        try:
-            size = path.stat().st_size
-            with open(path, "rb") as fh:
-                fh.seek(max(0, size - 4096))
-                tail = fh.read().decode("utf-8", "replace")
-        except OSError:
-            return None
-        lines = [ln for ln in tail.splitlines() if ln.strip()]
-        col = 0
-        for ln in lines:
-            if "fps" in ln.lower() and "," in ln:
-                header = [c.strip().lower() for c in ln.split(",")]
-                if "fps" in header:
-                    col = header.index("fps")
-                break
-        for ln in reversed(lines):
-            parts = ln.split(",")
-            if len(parts) <= col:
-                continue
-            try:
-                value = float(parts[col])
-            except ValueError:
-                continue          # header or a summary row
-            if 0 < value < 10000:
-                return value
-        return None
-
-    # -------------------------------------------------------------- snapshot
     def snapshot(self):
         return {"cpu_usage": self.cpu_usage(),
                 "cpu_temp": self.cpu_temp(),
                 "cpu_power": self.cpu_power(),
                 "ram": self.ram(),
-                "gpu": self.gpu(),
-                "fps": self.fps()}
+                "gpu": self.gpu()}

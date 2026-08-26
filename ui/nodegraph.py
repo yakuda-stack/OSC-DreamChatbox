@@ -137,9 +137,11 @@ NODE_DEFS = {
         "inputs": [],
         "outputs": [("ram", "RAM"), ("ram_pct", "RAM %"),
                     ("ram_type", "RAM type"), ("fps", "FPS")],
-        "fields": [], "note": "Memory and frames per second. FPS is read "
-                              "from MangoHud's log (Linux) or RTSS "
-                              "(Windows).",
+        "fields": [], "note": "Memory, plus frames per second. FPS moved "
+                              "into the World Stats plugin in v1.4.4 - "
+                              "this output stays wired to {fps} and fills "
+                              "in once that plugin is installed and its "
+                              "Frame rate box is on.",
     },
     "custom_box": {
         "title": "Custom Box", "cat": "Sources", "accent": "#5b8dc9",

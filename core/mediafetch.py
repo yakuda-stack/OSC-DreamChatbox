@@ -40,7 +40,8 @@ if IS_WINDOWS:
     HAS_DBUS = False
     try:
         from core.backends.media_windows import (  # noqa: F401
-            HAS_WINRT, INSTALL_HINT, WindowsMediaFetcher as MediaFetcher)
+            HAS_WINRT, INSTALL_HINT, WindowsMediaFetcher as MediaFetcher,
+            source_key as player_key, source_label as player_label)
         BACKEND_NAME = "gsmtc"
     except Exception as _e:
         # Must never stop the app from starting: an empty Media card is
@@ -49,8 +50,16 @@ if IS_WINDOWS:
         MediaFetcher = NullMediaFetcher
         HAS_WINRT = False
         INSTALL_HINT = 'pip install "winrt-Windows.Media.Control[all]"'
+
+        def player_key(name):
+            return (name or "").strip().lower()
+
+        def player_label(key):
+            return key or "Unknown"
 else:
-    from core.backends.media_linux import HAS_DBUS, MediaFetcher  # noqa: F401
+    from core.backends.media_linux import (  # noqa: F401
+        HAS_DBUS, MediaFetcher, source_key as player_key,
+        source_label as player_label)
     BACKEND_NAME = "mpris"
     HAS_WINRT = False
     INSTALL_HINT = ""
@@ -88,4 +97,4 @@ def source_label() -> str:
 __all__ = ["MediaFetcher", "NullMediaFetcher", "MEDIA_AVAILABLE",
            "BACKEND_NAME", "BACKEND_ERROR", "HAS_DBUS", "HAS_WINRT",
            "INSTALL_HINT", "get_media_fetcher", "backend_note",
-           "source_label"]
+           "source_label", "player_key", "player_label"]

@@ -34,6 +34,12 @@ class NullMediaFetcher:
         self.log = log_fn
         self.bus = None
         self._cached_player = None
+        # API parity with the real backends: the UI sets these without
+        # asking which platform it is on, and a stand-in that raises
+        # AttributeError instead of ignoring them defeats the point of
+        # having a stand-in.
+        self.preferred = ""
+        self.fallback = True
         self.log(f"MediaPlay: no media backend for {OS_NAME} yet - the "
                  f"Media Player card stays empty.")
 
@@ -42,3 +48,8 @@ class NullMediaFetcher:
         None = nothing playing, exactly like the Linux backend reports
         when no MPRIS player is on the bus."""
         return None
+
+    def list_sources(self):
+        """No players, ever - so the dropdown shows Automatic and
+        whatever was saved earlier, and nothing else."""
+        return []

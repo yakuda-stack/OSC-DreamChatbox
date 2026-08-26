@@ -230,7 +230,7 @@ Live GPU / VRAM / CPU / RAM stats in the chatbox.
 
 - Auto-detected or custom GPU/CPU names, temps as `°C` or 🔥
 - **Power draw in watts** — one tick per section puts it next to the temperature (`GPU: 68% 61°C 213W`) and fills `{gpu_power}` / `{cpu_power}`. Off by default, so no existing line gets longer without being asked. NVIDIA always reports it; AMD needs amdgpu's hwmon node, CPU watts need zenpower or readable RAPL counters, and on Windows both come from LibreHardwareMonitor
-- **FPS** — neither OS can read a game's frame rate on its own, so it comes from an overlay that already sits inside VRChat. **Linux:** MangoHud's log, point the card at the folder and add the launch options shown there. **Windows:** RTSS (ships with MSI Afterburner) — nothing to configure, the card links the download
+- **FPS** — lives in the **World Stats plugin** since v1.4.4, not on this card. A frame rate only exists inside the process drawing it, so reading one means loading something into the game: a Vulkan layer on Linux, RTSS on Windows. The plugin owns both, along with the build step and the settings
 - Custom string with placeholders: `{gpu_name} {gpu_usage} {gpu_temp} {gpu_power} {temp_icon} {vram_usage} {cpu_name} {cpu_usage} {cpu_temp} {cpu_power} {ram_usage} {ram_type} {fps}`
 
 **About CPU temperatures on Windows:** they live in registers only kernel-mode code can read, so *no* normal program can get them — administrator rights do not change that. Every tool that shows them ships a signed kernel driver. This app does **not** ship one (the usual candidate, WinRing0, has published privilege-escalation CVEs). Instead the Hardware card has a button that starts a small elevated helper reading everything reachable without a driver — ACPI thermal zones, which work on most laptops — and drives [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor) if you have it installed, which does have the driver. On desktop boards you will most likely need LHM; the button links it.
@@ -415,7 +415,7 @@ The app runs natively on Windows 10/11 — not through Wine, not as a port, but 
 | CPU / RAM | `/proc`, `/sys` | `GetSystemTimes()`, `GlobalMemoryStatusEx()` |
 | GPU / VRAM | sysfs (AMD), `nvidia-smi` | `nvidia-smi`, otherwise the same GPU performance counters the Task Manager reads |
 | Temperatures | hwmon | `nvidia-smi`; for CPU and AMD/Intel GPU a helper you start from the Hardware card |
-| FPS | MangoHud log | RTSS shared memory (ships with MSI Afterburner) |
+| FPS | World Stats plugin: Vulkan layer or MangoHud | World Stats plugin: RTSS |
 | Microphone | PyAudio | sounddevice (PyAudio has no wheels past Python 3.13) |
 | Config | `~/.config/OSC-DreamChatbox` | `%APPDATA%\OSC-DreamChatbox` |
 
@@ -477,7 +477,7 @@ OSC-DreamChatbox/
 │   ├── plugin_store.py   #   store: GitHub catalogue, install, updates
 │   ├── theming.py        #   UI themes, colours, background images
 │   └── backends/         #   one implementation per platform
-│       ├── hardware_linux.py     /proc, /sys, nvidia-smi, MangoHud
+│       ├── hardware_linux.py     /proc, /sys, nvidia-smi
 │       ├── hardware_windows.py   Win32 API, PDH counters, nvidia-smi, RTSS
 │       ├── hardware_null.py      every value None (unsupported platform)
 │       ├── media_linux.py        MPRIS over D-Bus

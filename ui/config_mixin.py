@@ -192,6 +192,19 @@ class ConfigMixin:
             "media_time_pos": TIME_POS_LINE,  # line|before|after|split
             "media_bar_custom": dict(DEFAULT_CUSTOM_BAR),
             "media_poll_sec": 1,
+            # ---- which player the Media card reads -------------------
+            # "" = automatic (whatever is playing), otherwise a stable
+            # key from core.mediafetch.player_key(): "spotify",
+            # "YoutubeMusic", "firefox", "Spotify.exe" on Windows. The
+            # label is stored beside it purely so the dropdown can still
+            # name the choice while that player is closed.
+            "media_source": "",
+            "media_source_label": "",
+            # When the chosen player is not running: fall back to
+            # whatever is (True, the friendly default) or show nothing
+            # (False, for someone who wants the line to mean Spotify or
+            # mean nothing).
+            "media_source_fallback": True,
             "hw_active": False,
             "app_order": ["status", "media", "hardware"],
             "textbox_presets": ["Hey! How are you doing? \U0001F60A",
@@ -287,9 +300,6 @@ class ConfigMixin:
             # own graph exactly the way they each have their own text
             # field in Normal mode
             "aio_graphs": [{"nodes": [], "edges": []} for _ in range(AIO_MAX)],
-            # FPS via MangoHud's log (see core/hardware.py)
-            "hw_fps": False,
-            "hw_mangohud_dir": "",
             # customization (core/theming.py)
             "theme": "default",
             "theme_colors": {},        # theme id -> {token: "#rrggbb"}
@@ -687,6 +697,36 @@ class ConfigMixin:
         # Everything is clamped rather than rejected: an out-of-range
         # template index would leave the button group with nothing checked
         # and the card unusable.
+        # A media source key comes back from JSON as whatever was in the
+        # file; anything that is not a string is not a bus name.
+        src = defaults.get("media_source")
+        defaults["media_source"] = src.strip() if isinstance(src, str) else ""
+        lbl = defaults.get("media_source_label")
+        defaults["media_source_label"] = lbl.strip()[:64] \
+            if isinstance(lbl, str) else ""
+        defaults["media_source_fallback"] = bool(
+            defaults.get("media_source_fallback", True))
+        # ---- FPS moved out in v1.4.4 -----------------------------------
+        # Reading a frame rate means loading something into the game - a
+        # Vulkan layer on Linux, RTSS on Windows - and that has nothing
+        # to do with the /proc and /sys reading the rest of the Hardware
+        # card does. It lives in the World Stats plugin now.
+        #
+        # The old keys are dropped rather than kept: leaving hw_fps in
+        # the config would mean a stale True sitting in the file forever
+        # with nothing reading it. What is NOT dropped is the fact that
+        # the user had it on - _fps_moved says so once, in the log, so
+        # somebody whose {fps} went quiet finds out why instead of
+        # filing a bug. The MangoHud folder is carried in that message
+        # too, so it can be pasted straight into the plugin.
+        moved = []
+        if defaults.pop("hw_fps", False):
+            moved.append("FPS was switched on")
+        folder = defaults.pop("hw_mangohud_dir", "")
+        if isinstance(folder, str) and folder.strip():
+            moved.append(f"MangoHud folder was {folder.strip()}")
+        defaults.pop("hw_fps_source", None)
+        self._fps_moved = moved
         defaults["media_idle"] = bool(defaults.get("media_idle", True))
         idle = defaults.get("media_idle_text", "\u23F8")
         defaults["media_idle_text"] = idle[:20] if isinstance(idle, str) \

@@ -8,9 +8,12 @@ shared plumbing. MainWindow composes them via multiple inheritance, so
 every method still runs as a normal MainWindow method (self is the window).
 """
 
+import json
+import os
 import queue as _queue
 import threading
 import time
+from pathlib import Path
 from PyQt6.QtCore import QTimer, Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QFrame, QHBoxLayout, QLabel, QMainWindow, QPushButton, QScrollArea, QStackedWidget, QVBoxLayout, QWidget)
@@ -84,7 +87,17 @@ class MainWindow(ConfigMixin, AppsPageMixin, AdvancedPageMixin,
         # a text switch waiting to be sent - see advance_status()
         self.pending_status_index = None
         self.media = MediaFetcher(self.log)
+        # The chosen player, straight from the config. Set before the
+        # first poll can run, so the very first song line already comes
+        # from the right player instead of from whichever one D-Bus
+        # happened to list first.
+        self.media.preferred = self.cfg.get("media_source", "")
+        self.media.fallback = bool(self.cfg.get("media_source_fallback", True))
         self.media_info = None
+        #: set only while the settings preview renders a stand-in track,
+        #: so build_media_lines() does not send a made-up artist and
+        #: title to LRCLIB. None on every other code path.
+        self._demo_lyrics = None
         self.lyrics = LyricsFetcher(self.log)
         self.manual_pause_until = 0.0
         self.last_manual_text = ""
@@ -125,8 +138,7 @@ class MainWindow(ConfigMixin, AppsPageMixin, AdvancedPageMixin,
         self.libre_server = LibreTranslateServer(self.log)
         self._oscq_applied = None   # zuletzt uebernommenes VRChat-Ziel
         self._block_updating = False
-        self.hw = HardwareMonitor(
-            self.log, self.cfg.get("hw_mangohud_dir") or None)
+        self.hw = HardwareMonitor(self.log)
         self.hw_info = None
         # user plugins (core/plugins.py) – discovered before build_ui()
         # so the Plugins page can render the list right away. Their
@@ -177,9 +189,11 @@ class MainWindow(ConfigMixin, AppsPageMixin, AdvancedPageMixin,
         self.apply_config_to_ui()
         # import enabled plugins once the window is fully built, so a
         # plugin's setup(api) can already touch api.host safely
-        self.mangohud_dir_lbl.setText(
-            self.cfg.get("hw_mangohud_dir") or "(not set)")
+        self.refresh_media_sources()
+        self.update_media_preview()
         self.plugins.load_enabled()
+        self._clean_stale_fps_layer()
+        self._announce_fps_move()
         self.refresh_plugin_list()
         self._update_plugin_timer()
         # natives OSCQuery: dynamische Ports + VRChat-Discovery
@@ -192,6 +206,72 @@ class MainWindow(ConfigMixin, AppsPageMixin, AdvancedPageMixin,
         self.update_osc_input()
         self.update_hotkey_input()
         self.update_timers()
+
+    def _clean_stale_fps_layer(self):
+        """Remove a Vulkan layer manifest whose library is gone.
+
+        This is cleanup after ourselves. Development builds between
+        v1.4.3 and v1.4.4 carried the FPS Vulkan layer inside the app and
+        wrote a manifest pointing at it when the FPS checkbox was on.
+        The layer moved into the World Stats plugin before release, so
+        on a machine that ran one of those builds the manifest is still
+        sitting in ~/.local/share/vulkan/implicit_layer.d naming a .so
+        that no longer exists.
+
+        Nobody outside got one of those builds, which is exactly why
+        this stays: it costs one file stat at startup, and the person
+        who did run them should not have to find out the hard way.
+
+        That is not a cosmetic leftover. The Vulkan loader reads that
+        folder for EVERY Vulkan application on the machine, and a
+        manifest it cannot resolve makes it log an error into all of
+        them. Leaving it behind would mean this app broke something it
+        has no business touching, on an upgrade the user did not ask
+        questions about.
+
+        The check is deliberately narrow: only a manifest whose
+        library_path does not exist is removed. The World Stats plugin
+        writes a manifest to the same path once its own layer is built,
+        and that one resolves - so this can never fight with the
+        replacement.
+        """
+        try:
+            base = os.environ.get("XDG_DATA_HOME") \
+                or os.path.join(os.path.expanduser("~"), ".local/share")
+            path = Path(base) / "vulkan/implicit_layer.d" \
+                / "VkLayer_dreamfps.json"
+            if not path.is_file():
+                return
+            lib = json.loads(path.read_text(encoding="utf-8")) \
+                .get("layer", {}).get("library_path", "")
+            if lib and Path(lib).is_file():
+                return          # a working layer - the plugin's, leave it
+            path.unlink()
+            self.log("Removed a leftover FPS layer manifest - it pointed "
+                     "at a library this version no longer ships. The "
+                     "World Stats plugin writes its own.")
+        except (OSError, ValueError) as e:
+            self.log(f"Could not check the old FPS layer manifest ({e}).")
+
+    def _announce_fps_move(self):
+        """Tell anyone who had FPS on where it went.
+
+        Said once, after the plugins are loaded so the message can be
+        specific about whether the replacement is already installed. A
+        placeholder that silently stops filling in is the kind of thing
+        people spend an evening on before asking, and the answer is one
+        sentence long.
+        """
+        moved = getattr(self, "_fps_moved", None)
+        if not moved:
+            return
+        self._fps_moved = []
+        have = "world_stats" in (getattr(self.plugins, "plugins", None) or {})
+        where = ("open its Frame rate block" if have else
+                 "install it from the Plugin Store")
+        self.log("FPS moved into the World Stats plugin - "
+                 + ", ".join(moved)
+                 + f". To get {{fps}} back, {where}.")
 
     def run_async(self, work, on_done, interval=200, on_error=None):
         """Runs ``work()`` in a daemon thread and delivers its return value
@@ -500,6 +580,7 @@ class MainWindow(ConfigMixin, AppsPageMixin, AdvancedPageMixin,
         self.chk_media_idle.setChecked(self.cfg["media_idle"])
         self.media_idle_input.setText(self.cfg["media_idle_text"])
         self.chk_media_custom.setChecked(self.cfg["media_custom"])
+        self.chk_media_fallback.setChecked(self.cfg["media_source_fallback"])
         self.media_custom_input.setText(self.cfg["media_custom_template"])
         for i, edit in enumerate(self.preset_edits):
             edit.setText(self.cfg["textbox_presets"][i])
@@ -963,6 +1044,11 @@ class MainWindow(ConfigMixin, AppsPageMixin, AdvancedPageMixin,
         # the card's own two-line preview follows the same values, so a
         # placeholder in a frame line is never stale next to the big one
         self.update_box_preview()
+        # Same reasoning for the MediaPlay card: everything that can
+        # change the song line ends up in update_preview(), so hooking
+        # the media preview here means it can never be one edit behind
+        # whatever the big preview is showing.
+        self.update_media_preview()
         # Everything that changes the output ends up here, so this is the
         # one place that can notice "the app shows something VRChat does
         # not" - which was the whole complaint. Comparing against the

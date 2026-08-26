@@ -118,29 +118,83 @@ _APP_NAMES = {
     "microsoft.zunevideo": "Films & TV",
 }
 
+#: Substring probes for AUMIDs that are not one fixed string. Electron
+#: apps built with Squirrel are the reason this exists: YouTube Music
+#: Desktop registers as
+#:
+#:     com.squirrel.YouTubeMusicDesktopApp.YouTube Music Desktop App
+#:
+#: - no ".exe" to strip, no "!" to split on, and different again between
+#: the two forks people install. Matching on a substring is the only
+#: thing that survives that.
+#:
+#: Order matters: the first hit wins, so anything that could be a
+#: substring of something else goes after it.
+_APP_PROBES = (
+    ("youtubemusic", "YouTube Music"),
+    ("youtube music", "YouTube Music"),
+    ("ytmdesktop", "YouTube Music"),
+    ("applemusic", "Apple Music"),
+    ("zunemusic", "Groove Music"),
+    ("spotify", "Spotify"),
+    ("tidal", "TIDAL"),
+    ("deezer", "Deezer"),
+    ("soundcloud", "SoundCloud"),
+    ("musicbee", "MusicBee"),
+    ("foobar", "foobar2000"),
+)
+
 
 def _pretty_player(aumid: str) -> str:
-    """AUMID -> something a human wants to read in a chatbox."""
+    """AUMID -> something a human wants to read in a chatbox.
+
+    Case is taken from the argument, so this wants the AUMID as Windows
+    reported it rather than a lower-cased key. Hand it "youtube
+    music.exe" and the best it can do for an unknown app is "youtube
+    music"; hand it the original and it says "YouTube Music".
+    """
     raw = (aumid or "").strip()
     if not raw:
         return "Unknown"
     key = raw.lower()
     if key in _APP_NAMES:
         return _APP_NAMES[key]
+    # Substring probes before any of the structural parsing below: an
+    # Electron app's AUMID has no shape worth parsing, only a name
+    # buried in it.
+    #
+    # Probed twice - once as-is, once with the separators removed - so
+    # that "youtubemusic" also catches "youtube-music" (the th-ch fork)
+    # and "youtube_music". Same app, three spellings, and which one you
+    # get depends on which build somebody installed.
+    squashed = key.replace("-", "").replace("_", "").replace(" ", "")
+    for probe, pretty in _APP_PROBES:
+        if probe in key or probe.replace(" ", "") in squashed:
+            return pretty
     # packaged apps look like  AppleInc.AppleMusicWin_nzyj5cx40ttqa!App
     if "!" in raw:
         pkg = raw.split("!", 1)[0]
         pkg = pkg.split("_", 1)[0]              # drop the publisher hash
-        name = pkg.split(".")[-1] or pkg
-        for probe, pretty in (("applemusic", "Apple Music"),
-                              ("spotify", "Spotify"),
-                              ("zunemusic", "Groove Music")):
-            if probe in name.lower():
-                return pretty
-        return name
+        return pkg.split(".")[-1] or pkg
     if key.endswith(".exe"):
         return raw[:-4]
     return raw
+
+
+def source_key(aumid: str) -> str:
+    """AUMID -> the stable identifier the setting stores.
+
+    Unlike MPRIS bus names, an AUMID has no per-process tail: Spotify is
+    ``Spotify.exe`` on every machine and every launch. Lower-casing it is
+    the only normalisation needed, and it makes the saved value survive
+    the day Microsoft changes the capitalisation of a packaged app id.
+    """
+    return (aumid or "").strip().lower()
+
+
+def source_label(key: str) -> str:
+    """Pretty name for a key, for the dropdown."""
+    return _pretty_player(key)
 
 
 def _seconds(value):
@@ -183,6 +237,13 @@ class WindowsMediaFetcher:
         self._cached_player = None
         self._lock = threading.Lock()
         self._snap = None               # last raw reading, or None
+        #: every session the poller saw last time round, so list_sources()
+        #: can answer from the GUI thread without touching WinRT
+        self._sources = []
+        #: "" = automatic, otherwise a key from source_key(). Read on
+        #: every poll, so the dropdown takes effect within a second.
+        self.preferred = ""
+        self.fallback = True
         self._thread = None
         self._stop = threading.Event()
         self._error = ""
@@ -248,22 +309,76 @@ class WindowsMediaFetcher:
     async def _read_async(self):
         mgr = await _MediaManager.request_async()
 
-        # Mirror the Linux backend's choice: a player that is actually
-        # playing wins; otherwise fall back to whatever Windows considers
-        # current, so a paused song still shows.
-        chosen = None
         try:
             sessions = list(mgr.get_sessions() or [])
         except Exception:
             sessions = []
+
+        # Walk the sessions once and remember what was there, so
+        # list_sources() never has to come back here from another thread.
+        catalogue, playing_keys = {}, set()
         for s in sessions:
             try:
-                if _status_value(s.get_playback_info().playback_status) \
-                        == _STATUS_PLAYING:
-                    chosen = s
-                    break
+                raw = s.source_app_user_model_id
+                key = source_key(raw)
             except Exception:
                 continue
+            try:
+                live = (_status_value(s.get_playback_info().playback_status)
+                        == _STATUS_PLAYING)
+            except Exception:
+                live = False
+            if live:
+                playing_keys.add(key)
+            if key not in catalogue or live:
+                # labelled from the raw AUMID: source_key() lower-cases,
+                # and a dropdown reading "youtube music" next to a
+                # chatbox saying "YouTube Music" is the app disagreeing
+                # with itself about the same player
+                catalogue[key] = {"key": key, "label": _pretty_player(raw),
+                                  "playing": live}
+        with self._lock:
+            self._sources = sorted(
+                catalogue.values(),
+                key=lambda s: (not s["playing"], s["label"].lower()))
+
+        # Same rules as the MPRIS backend: the chosen player if it is
+        # there, playing or paused; otherwise - and only when the
+        # fallback is on - whatever is actually playing; and last,
+        # whatever Windows calls the current session, so a paused song
+        # still shows.
+        want = (self.preferred or "").strip().lower()
+        chosen = None
+        if want:
+            mine = []
+            for s in sessions:
+                try:
+                    if source_key(s.source_app_user_model_id) == want:
+                        mine.append(s)
+                except Exception:
+                    continue
+            for s in mine:
+                try:
+                    if _status_value(s.get_playback_info().playback_status) \
+                            == _STATUS_PLAYING:
+                        chosen = s
+                        break
+                except Exception:
+                    continue
+            if chosen is None and mine:
+                chosen = mine[0]
+            if chosen is None and not self.fallback:
+                return None
+
+        if chosen is None:
+            for s in sessions:
+                try:
+                    if _status_value(s.get_playback_info().playback_status) \
+                            == _STATUS_PLAYING:
+                        chosen = s
+                        break
+                except Exception:
+                    continue
         if chosen is None:
             try:
                 chosen = mgr.get_current_session()
@@ -309,6 +424,8 @@ class WindowsMediaFetcher:
 
         return {
             "player": _pretty_player(aumid),
+            "player_key": source_key(aumid),
+            "player_label": _pretty_player(aumid),
             "playing": status == _STATUS_PLAYING,
             "artist": str(artist),
             "title": str(title),
@@ -366,6 +483,18 @@ class WindowsMediaFetcher:
             pos = min(pos, length)
         return max(0.0, pos)
 
+    # ----------------------------------------------------------- sources
+    def list_sources(self):
+        """Every media session Windows knows about, as
+        ``{key, label, playing}``.
+
+        Answered from the snapshot the poller thread keeps, so this is a
+        list copy and nothing else - calling it from the GUI thread is
+        free and cannot touch a WinRT object from the wrong apartment.
+        """
+        with self._lock:
+            return [dict(s) for s in self._sources]
+
     # ------------------------------------------------------------ status
     def status_note(self):
         """One line the Media card can show when nothing was found."""
@@ -374,6 +503,12 @@ class WindowsMediaFetcher:
                     + INSTALL_HINT)
         if self._error:
             return f"Windows media service error: {self._error}"
+        want = (self.preferred or "").strip().lower()
+        if want and not any(s["key"] == want for s in self.list_sources()):
+            label = source_label(want)
+            if self.fallback:
+                return f"{label} is not running - showing any other player."
+            return f"{label} is not running."
         return ""
 
 

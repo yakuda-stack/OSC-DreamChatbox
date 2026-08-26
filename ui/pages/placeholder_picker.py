@@ -93,7 +93,6 @@ HARDWARE_GROUPS = (
         ("{ram_usage}", "RAM used / total"),
         ("{ram_pct}", "RAM in %"),
         ("{ram_type}", "the label you typed, e.g. DDR5"),
-        ("{fps}", "frames per second"),
         ("{temp_icon}", "the temperature unit (\u00b0C or \U0001F525)"),
     )),
 )

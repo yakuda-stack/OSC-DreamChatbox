@@ -10,7 +10,7 @@ So this backend stacks four sources, from "always works" to "only if the
 user installed something". Every one of them is optional and isolated:
 if a source is missing or throws, its values stay None and the rest keeps
 working. That is the same contract the Linux backend has (a machine
-without hwmon, or without MangoHud, reports None too), and the Hardware
+without hwmon reports None too), and the Hardware
 card already renders None as "leave this out".
 
     1. Win32 API via ctypes            – stdlib, no install, always on
@@ -34,15 +34,16 @@ card already renders None as "leave this out".
        Auto-detected, no configuration: if LHM is not running we simply
        never get temperatures, exactly like a Linux box without hwmon.
 
-    FPS: RivaTuner Statistics Server (RTSS) shared memory, the same
-    source MSI Afterburner's overlay uses. It is the Windows counterpart
-    to MangoHud – auto-detected, nothing to configure.
+FPS used to be read here too, from RTSS. It moved into the World Stats
+plugin in v1.4.4: a frame rate only exists inside the process drawing it,
+so getting one means reading something that lives in the game rather than
+in the operating system, which is a different kind of job from everything
+above.
 
-Two environment variables exist as an escape hatch until the Options page
-gets proper rows for this (step 2b):
+One environment variable exists as an escape hatch until the Options page
+gets a proper row for it (step 2b):
 
     DCB_LHM_URL       default http://localhost:8085/data.json
-    DCB_FPS_PROCESS   substring of the game's .exe, default "vrchat"
 
 Run this file directly to see which sources work on a given machine:
 
@@ -58,7 +59,6 @@ import json
 import os
 import re
 import shutil
-import struct
 import subprocess
 import time
 import urllib.request
@@ -68,7 +68,6 @@ GB = 1024 ** 3
 
 # how long a dead optional source is not retried again (seconds)
 _RETRY_LHM = 60.0
-_RETRY_RTSS = 10.0
 
 # keeps subprocess calls from flashing a console window in a windowed
 # (console=False) PyInstaller build - without this every nvidia-smi poll
@@ -519,93 +518,6 @@ class _Lhm:
 
 
 # ====================================================================
-# FPS: RivaTuner Statistics Server shared memory
-# ====================================================================
-_RTSS_MAP = "RTSSSharedMemoryV2"
-# RTSS_SHARED_MEMORY header: signature, version, appEntrySize,
-# appArrOffset, appArrSize, osdEntrySize, osdArrOffset, osdArrSize
-_RTSS_HEADER = struct.Struct("<8I")
-# per-app entry: dwProcessID, szName[260], dwFlags, dwTime0, dwTime1,
-# dwFrames, dwFrameTime
-_RTSS_ENTRY_HEAD = struct.Struct("<I260sIIIII")
-
-
-class _Rtss:
-    """FPS from RTSS's shared memory - the Windows analogue of tailing a
-    MangoHud CSV. RTSS ships with MSI Afterburner and is what almost
-    every Windows overlay already uses, so most people have it."""
-
-    def __init__(self, log=None, want=None):
-        self.log = log
-        self.want = (want or os.environ.get("DCB_FPS_PROCESS", "vrchat")).lower()
-        self.ok = None
-        self._next_try = 0.0
-
-    def fps(self):
-        now = time.monotonic()
-        if self.ok is False and now < self._next_try:
-            return None
-        try:
-            import mmap
-            mm = mmap.mmap(-1, 0, tagname=_RTSS_MAP,
-                           access=mmap.ACCESS_READ)
-        except Exception:
-            if self.ok is not False and callable(self.log):
-                self.log("Hardware: RTSS not running - FPS stays empty. "
-                         "Install RivaTuner Statistics Server (ships with "
-                         "MSI Afterburner) to get frame rates.")
-            self.ok = False
-            self._next_try = now + _RETRY_RTSS
-            return None
-        try:
-            return self._parse(mm)
-        except Exception:
-            return None
-        finally:
-            try:
-                mm.close()
-            except Exception:
-                pass
-
-    def _parse(self, mm):
-        raw = mm[:_RTSS_HEADER.size]
-        (sig, _ver, entry_size, arr_off, arr_size,
-         _osd_e, _osd_o, _osd_s) = _RTSS_HEADER.unpack(raw)
-        # b'RTSS' little-endian
-        if sig not in (0x53535452, 0x52545353):
-            return None
-        if not entry_size or not arr_size:
-            return None
-        if self.ok is not True:
-            self.ok = True
-            if callable(self.log):
-                self.log("Hardware: RTSS shared memory found - FPS available.")
-
-        best = None
-        for i in range(min(arr_size, 256)):
-            off = arr_off + i * entry_size
-            if off + _RTSS_ENTRY_HEAD.size > len(mm):
-                break
-            (pid, name, _flags, t0, t1, frames,
-             _ftime) = _RTSS_ENTRY_HEAD.unpack(
-                mm[off:off + _RTSS_ENTRY_HEAD.size])
-            if not pid or t1 <= t0 or not frames:
-                continue
-            exe = name.split(b"\x00", 1)[0].decode("utf-8", "replace")
-            value = frames * 1000.0 / (t1 - t0)
-            if not (0 < value < 10000):
-                continue
-            hit = self.want and self.want in exe.lower()
-            # the wanted process wins outright; otherwise keep the
-            # busiest entry, which is the game in practice
-            if hit:
-                return value
-            if best is None or value > best:
-                best = value
-        return best
-
-
-# ====================================================================
 # the backend itself
 # ====================================================================
 class WindowsHardwareMonitor:
@@ -614,11 +526,8 @@ class WindowsHardwareMonitor:
     available = True
     name = "windows"
 
-    def __init__(self, log_fn, mangohud_dir=None):
+    def __init__(self, log_fn):
         self.log = log_fn
-        # kept for API parity; Windows has no MangoHud, FPS comes from RTSS
-        self.mangohud_dir = Path(mangohud_dir).expanduser() \
-            if mangohud_dir else None
 
         self._win32 = None
         try:
@@ -643,7 +552,6 @@ class WindowsHardwareMonitor:
                          f"({e}) - GPU usage/VRAM stay empty.")
 
         self._lhm = _Lhm(log_fn)
-        self._rtss = _Rtss(log_fn)
         # elevated helper (Hardware card button) - see core/backends/wintemp.py
         try:
             from core.backends.wintemp import TempHelper
@@ -678,7 +586,7 @@ class WindowsHardwareMonitor:
             sources.append("PDH")
         self.log(f"Hardware: Windows backend, sources={'+'.join(sources) or 'none'}"
                  f", CPU='{self.cpu_name_auto}', GPU name='{self.gpu_name_auto}'")
-        self.log("Hardware: temperatures need a kernel driver on Windows - use the \"Enable advanced temperature monitoring\" button on the Hardware card. FPS needs RTSS. Both are optional.")
+        self.log("Hardware: temperatures need a kernel driver on Windows - use the \"Enable advanced temperature monitoring\" button on the Hardware card. It is optional.")
 
     # ------------------------------------------------------------ names
     def _detect_gpu_name(self, registry_name=""):
@@ -761,19 +669,13 @@ class WindowsHardwareMonitor:
                 "vram_pct": (100.0 * vu / vt)
                             if (vu is not None and vt) else None}
 
-    # ------------------------------------------------------------- fps
-    def fps(self, folder=None):
-        """`folder` is ignored - kept so the signature matches Linux."""
-        return self._rtss.fps()
-
     # -------------------------------------------------------- snapshot
     def snapshot(self):
         return {"cpu_usage": self.cpu_usage(),
                 "cpu_temp": self.cpu_temp(),
                 "cpu_power": self.cpu_power(),
                 "ram": self.ram(),
-                "gpu": self.gpu(),
-                "fps": self.fps()}
+                "gpu": self.gpu()}
 
 
 # ====================================================================
@@ -795,13 +697,12 @@ def _selftest():
         print(f"  CPU temp  : {snap['cpu_temp']}   (needs LibreHardwareMonitor)")
         print(f"  RAM       : {snap['ram']}")
         print(f"  GPU       : {snap['gpu']}")
-        print(f"  FPS       : {snap['fps']}   (needs RTSS + a running game)")
         if round_no == 1:
             time.sleep(2)
     print("\n" + "-" * 62)
     print("None means 'no source for this value', not an error.")
     print("Expected without extra software: CPU usage, RAM, GPU usage,")
-    print("VRAM and both names work; temperatures and FPS are None.")
+    print("VRAM and both names work; temperatures are None.")
     print("=" * 62)
 
 

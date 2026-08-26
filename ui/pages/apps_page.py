@@ -10,12 +10,13 @@ import re
 from PyQt6.QtCore import QUrl, Qt
 from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (
-    QButtonGroup, QCheckBox, QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QSlider, QSpinBox, QVBoxLayout, QWidget)
+    QButtonGroup, QCheckBox, QComboBox, QFileDialog, QFrame, QGridLayout,
+    QHBoxLayout, QLabel, QLineEdit, QPushButton, QSlider, QSpinBox,
+    QVBoxLayout, QWidget)
 from core.constants import (
     AIO_MAX, ORIGINS, ORIGIN_CHAT,
     CHATBOX_LIMIT, LYRICS_DIR, MIN_STATUS_CYCLE_SEC, SLIM_SUFFIX, SONGBAR_LEN, TITLE_MAX_LEN)
 from core.osinfo import IS_WINDOWS
-from core import mangohud
 from core.boxstyle import SIDE_BOTTOM, SIDE_TOP
 from core.hotkeys import HotkeySender
 from core.proclaunch import launch as launch_program
@@ -26,9 +27,10 @@ except ImportError:      # pragma: no cover - python-osc is a hard dep
     SimpleUDPClient = None
 # download links for the two optional Windows helpers; harmless to
 # import on Linux (the module is pure stdlib) but only used there
-from core.backends.wintemp import LHM_DOWNLOAD_URL, RTSS_DOWNLOAD_URL
+from core.backends.wintemp import LHM_DOWNLOAD_URL
 from core.mediafetch import (
-    backend_note as media_backend_note, source_label as media_source_label)
+    backend_note as media_backend_note, source_label as media_source_label,
+    player_label)
 from core.textstyle import (
     DIGIT_STYLE_CHOICES, KEEP_HINT, STYLE_CHOICES, STYLE_NORMAL, apply_style, is_inline_marker, normalize as normalize_style, unsupported as unsupported_chars)
 from core.textutils import (
@@ -290,14 +292,131 @@ class AppsPageMixin:
         self.media_content = QWidget()
         mc = QVBoxLayout(self.media_content)
         mc.setContentsMargins(0, 0, 0, 0)
-        mc.setSpacing(8)
+        mc.setSpacing(4)
 
-        mc.addWidget(QLabel("Show:"))
+        # =============================================================
+        #  Live preview
+        # =============================================================
+        # Sits at the top because it answers the question every setting
+        # below it raises: "what will that actually look like?" The old
+        # card had checkboxes for artist, title, time, bar, lyrics, an
+        # icon and a custom string, and the only way to see the result
+        # was the chatbox preview at the bottom of the window - which
+        # also carries Status and Hardware, so the media line was never
+        # on its own.
+        #
+        # It renders through build_media_lines(), the same function that
+        # produces the real thing, against a stand-in track. Writing a
+        # second formatter for the preview would have meant two things
+        # that drift apart, and a preview that lies is worse than none.
+        mc.addWidget(self._section_header("Preview"))
+        self.media_preview_lbl = QLabel("")
+        self.media_preview_lbl.setObjectName("minipreview")
+        self.media_preview_lbl.setWordWrap(True)
+        self.media_preview_lbl.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.media_preview_lbl.setToolTip(
+            "How the MediaPlay line will look. While something is "
+            "actually playing this is your song; otherwise it is a "
+            "stand-in track, so the settings can be judged without "
+            "starting music first.")
+        mc.addWidget(self.media_preview_lbl)
+        self.media_preview_note = QLabel("")
+        self.media_preview_note.setObjectName("dim")
+        mc.addWidget(self.media_preview_note)
+        mc.addSpacing(6)
+
+        # =============================================================
+        #  Player  -  always open, directly under the preview
+        # =============================================================
+        # Not foldable, and first, because it is the one thing on this
+        # card that decides whether anything appears at all. Everything
+        # below is about how the line looks; this is about whether there
+        # is a line. Somebody whose chatbox stayed empty should hit this
+        # without opening a single section.
+        mc.addWidget(self._section_header("Player"))
+
+        pgrid = QGridLayout()
+        pgrid.setContentsMargins(0, 0, 0, 0)
+        pgrid.setHorizontalSpacing(14)
+        pgrid.setVerticalSpacing(4)
+
+        lbl_player = QLabel("Read from")
+        lbl_player.setObjectName("dim")
+        pgrid.addWidget(lbl_player, 0, 0, 1, 2)
+        # The case this is for: Spotify paused in the background and
+        # YouTube Music playing in a tab. "First one that says Playing"
+        # used to answer that, and the answer moved around between
+        # restarts because it depended on bus ordering.
+        self.media_source_combo = QComboBox()
+        self.media_source_combo.setMinimumWidth(200)
+        self.media_source_combo.setToolTip(
+            "Which player the song line comes from.\n\nAutomatic picks "
+            "whatever is playing - right when only one thing is, "
+            "arbitrary when two are.\n\nPick a player and it stays that "
+            "player, paused songs included. A player that is closed can "
+            "still be selected; it simply has nothing to report until it "
+            "is running again.")
+        self.media_source_combo.currentIndexChanged.connect(
+            self.on_media_source_changed)
+        pgrid.addWidget(self.media_source_combo, 1, 0)
+        rescan = QPushButton("Rescan")
+        rescan.setObjectName("linkbtn")
+        rescan.setFixedHeight(28)
+        rescan.setCursor(Qt.CursorShape.PointingHandCursor)
+        rescan.setToolTip("Look for players that started since this list "
+                          "was built.")
+        rescan.clicked.connect(lambda: self.refresh_media_sources(force=True))
+        pgrid.addWidget(rescan, 1, 1)
+
+        lbl_poll = QLabel("Query every")
+        lbl_poll.setObjectName("dim")
+        pgrid.addWidget(lbl_poll, 0, 2)
+        poll_wrap = QHBoxLayout()
+        poll_wrap.setContentsMargins(0, 0, 0, 0)
+        poll_wrap.setSpacing(6)
+        self.poll_spin = QSpinBox()
+        self.poll_spin.setObjectName("smallspin")
+        self.poll_spin.setRange(1, 30)
+        self.poll_spin.setFixedSize(64, 28)
+        self.poll_spin.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.poll_spin.valueChanged.connect(self.on_poll_changed)
+        poll_wrap.addWidget(self.poll_spin)
+        poll_wrap.addWidget(QLabel("sec"))
+        poll_holder = QWidget()
+        poll_holder.setLayout(poll_wrap)
+        pgrid.addWidget(poll_holder, 1, 2)
+        pgrid.setColumnStretch(3, 1)
+        mc.addLayout(pgrid)
+
+        self.chk_media_fallback = QCheckBox(
+            "Fall back to any other player when the chosen one is closed")
+        self.chk_media_fallback.setToolTip(
+            "On: closing Spotify lets the next player through, so the "
+            "line keeps working.\n\nOff: the line means the player you "
+            "picked and nothing else - it stays empty while that player "
+            "is closed. Only useful with Automatic switched off.")
+        self.chk_media_fallback.toggled.connect(
+            lambda on: self.on_media_option("media_source_fallback", on))
+        mc.addWidget(self.chk_media_fallback)
+
+        self.media_status_lbl = QLabel("")
+        self.media_status_lbl.setObjectName("dim")
+        self.media_status_lbl.setWordWrap(True)
+        mc.addWidget(self.media_status_lbl)
+
+        mc.addSpacing(4)
+
+        # =============================================================
+        #  Content   (foldable)
+        # =============================================================
+        cnt = self._collapsible_section("Content", mc)
+
         self.chk_artist = QCheckBox("Artist")
         self.chk_title = QCheckBox("Song title")
         self.chk_time = QCheckBox("Time  (current / total)")
         self.chk_time_seconds = QCheckBox(
-            "Time with seconds  (3:27 instead of 0:03)")
+            "With seconds  (3:27 instead of 0:03)")
         self.chk_lyrics = QCheckBox(
             "Lyrics  (synced line via LRCLIB \u2013 needs internet, "
             "only fetched while checked)")
@@ -313,33 +432,13 @@ class AppsPageMixin:
                          (self.chk_lyrics_local, "media_lyrics_local"),
                          (self.chk_bar, "media_show_bar")):
             chk.toggled.connect(lambda on, k=key: self.on_media_option(k, on))
-        # visually sub-options -> indent them
-        self.chk_time_seconds.setStyleSheet("margin-left: 24px;")
-        self.chk_lyrics_local.setStyleSheet("margin-left: 24px;")
 
-        # ---- how the timer digits are rendered. Sub-option of "Time",
-        # so it sits under it with the same indent as the rest.
-        self.time_style_row = QWidget()
-        ts_row = QHBoxLayout(self.time_style_row)
-        ts_row.setContentsMargins(24, 0, 0, 0)
-        ts_row.setSpacing(6)
-        ts_row.addWidget(QLabel("Digits:"))
-        self.time_style_combo = self._make_style_combo(
-            "Renders the music timer small to save a line in the chatbox. "
-            "Only the digits are converted, so ':' and '/' keep their "
-            "normal shape.", DIGIT_STYLE_CHOICES)
-        self.time_style_combo.currentIndexChanged.connect(
-            lambda _i: self.on_media_time_style(
-                self.time_style_combo.currentData()))
-        ts_row.addWidget(self.time_style_combo)
-        ts_row.addStretch()
+        cnt.addWidget(self.chk_artist)
+        cnt.addWidget(self.chk_title)
 
-        # title length slider (sub-option of Song title, 3-64 chars)
-        self.title_max_row = QWidget()
-        tmax = QHBoxLayout(self.title_max_row)
-        tmax.setContentsMargins(24, 0, 0, 0)
-        tmax.setSpacing(6)
-        tmax.addWidget(QLabel("Max length:"))
+        # ---- sub-option of Song title -------------------------------
+        self.title_max_row, tmax = self._sub_group()
+        tmax.addWidget(QLabel("Max length"))
         self.title_max_slider = QSlider(Qt.Orientation.Horizontal)
         self.title_max_slider.setRange(3, 64)
         self.title_max_slider.setSingleStep(1)
@@ -353,13 +452,16 @@ class AppsPageMixin:
         self.title_max_lbl.setFixedWidth(96)
         tmax.addWidget(self.title_max_lbl)
         tmax.addStretch()
+        cnt.addWidget(self.title_max_row)
 
-        # prefix row for the lyrics line (community request: the little
-        # symbol in front of the lyrics was not switchable). Checkbox +
-        # a tiny field for whatever character you want instead.
-        self.lyrics_prefix_row = QWidget()
-        lp_row = QHBoxLayout(self.lyrics_prefix_row)
-        lp_row.setContentsMargins(24, 0, 0, 0)
+        cnt.addWidget(self.chk_lyrics)
+
+        # ---- sub-options of Lyrics ----------------------------------
+        # Three rows that only make sense together, so they share one
+        # container and one rule down the left edge.
+        self.lyrics_box, lyr = self._sub_group(vertical=True)
+
+        lp_row = QHBoxLayout()
         lp_row.setSpacing(6)
         self.chk_lyrics_prefix = QCheckBox("Symbol before the lyrics line:")
         self.chk_lyrics_prefix.toggled.connect(self.on_lyrics_prefix_on)
@@ -374,15 +476,19 @@ class AppsPageMixin:
             "Leave it empty for no symbol at all.")
         self.lyrics_prefix_input.textChanged.connect(self.on_lyrics_prefix)
         lp_row.addWidget(self.lyrics_prefix_input)
-        lp_hint = QLabel("(off = lyrics line starts with the text itself)")
+        lp_hint = QLabel("(off = the line starts with the text itself)")
         lp_hint.setObjectName("dim")
         lp_row.addWidget(lp_hint)
         lp_row.addStretch()
+        self.lyrics_prefix_row = QWidget()
+        self.lyrics_prefix_row.setLayout(lp_row)
+        lyr.addWidget(self.lyrics_prefix_row)
 
-        # folder row for the local .lrc files (shown only in local mode)
+        lyr.addWidget(self.chk_lyrics_local)
+
         self.lrc_dir_row = QWidget()
         lrc_row = QHBoxLayout(self.lrc_dir_row)
-        lrc_row.setContentsMargins(48, 0, 0, 0)
+        lrc_row.setContentsMargins(20, 0, 0, 0)
         lrc_row.setSpacing(6)
         lrc_row.addWidget(QLabel("Folder:"))
         self.lrc_dir_lbl = QLabel("")
@@ -397,82 +503,103 @@ class AppsPageMixin:
         open_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         open_btn.clicked.connect(self.on_open_lyrics_dir)
         lrc_row.addWidget(open_btn)
+        lyr.addWidget(self.lrc_dir_row)
+        cnt.addWidget(self.lyrics_box)
 
-        # add everything in the RIGHT order: each sub-option sits directly
-        # under the checkbox it belongs to
-        mc.addWidget(self.chk_artist)
-        mc.addWidget(self.chk_title)
-        mc.addWidget(self.title_max_row)
-        mc.addWidget(self.chk_time)
-        mc.addWidget(self.chk_time_seconds)
-        mc.addWidget(self.time_style_row)
-        mc.addWidget(self.chk_lyrics)
-        mc.addWidget(self.lyrics_prefix_row)
-        mc.addWidget(self.chk_lyrics_local)
-        mc.addWidget(self.lrc_dir_row)
-        mc.addWidget(self.chk_bar)
+        # =============================================================
+        #  Playback time & progress   (foldable)
+        # =============================================================
+        pb = self._collapsible_section("Playback time & progress", mc)
+        pb.addWidget(self.chk_time)
 
-        # all songbar options live in one container so they can be shown
-        # or hidden together depending on the Songbar checkbox
-        self.songbar_box = QWidget()
-        sb = QVBoxLayout(self.songbar_box)
-        sb.setContentsMargins(0, 0, 0, 0)
-        sb.setSpacing(8)
+        # ---- sub-options of Time, side by side ----------------------
+        # Two settings about the same six characters, so they belong on
+        # one line rather than stacked.
+        self.time_opts_box, topts = self._sub_group()
+        topts.addWidget(self.chk_time_seconds)
+        topts.addSpacing(16)
+        topts.addWidget(QLabel("Digits"))
+        self.time_style_combo = self._make_style_combo(
+            "Renders the music timer small to save a line in the chatbox. "
+            "Only the digits are converted, so ':' and '/' keep their "
+            "normal shape.", DIGIT_STYLE_CHOICES)
+        self.time_style_combo.currentIndexChanged.connect(
+            lambda _i: self.on_media_time_style(
+                self.time_style_combo.currentData()))
+        topts.addWidget(self.time_style_combo)
+        topts.addStretch()
+        pb.addWidget(self.time_opts_box)
+        # kept as an alias: _sync_media_dependents() and any other code
+        # that grew up around the old name still means this row
+        self.time_style_row = self.time_opts_box
 
-        # songbar style picker (the 5 selectable bar designs)
-        style_row = QHBoxLayout()
-        style_row.setContentsMargins(24, 0, 0, 0)
-        style_row.addWidget(QLabel("Songbar style:"))
+        pb.addWidget(self.chk_bar)
+
+        # ---- all songbar options ------------------------------------
+        self.songbar_box, sb = self._sub_group(vertical=True)
+
+        # Style, size and time position are three answers to one
+        # question - what the bar line looks like - so they share a grid
+        # instead of eating three rows each with its own stretch.
+        grid = QGridLayout()
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(14)
+        grid.setVerticalSpacing(4)
+
+        lbl_style = QLabel("Style")
+        lbl_style.setObjectName("dim")
+        grid.addWidget(lbl_style, 0, 0)
         self.bar_style_combo = QComboBox()
         for preview in SONGBAR_STYLES:
             self.bar_style_combo.addItem(preview)
         self.bar_style_combo.addItem("Custom \u2026")   # own style
         self.bar_style_combo.currentIndexChanged.connect(self.on_bar_style)
-        style_row.addWidget(self.bar_style_combo)
-        style_row.addStretch()
-        sb.addLayout(style_row)
+        grid.addWidget(self.bar_style_combo, 1, 0)
 
-        # songbar size: shorter bar = room for the time on the same line
-        size_row = QHBoxLayout()
-        size_row.setContentsMargins(24, 0, 0, 0)
-        size_row.addWidget(QLabel("Songbar size:"))
+        lbl_size = QLabel("Size")
+        lbl_size.setObjectName("dim")
+        grid.addWidget(lbl_size, 0, 1)
+        size_wrap = QHBoxLayout()
+        size_wrap.setContentsMargins(0, 0, 0, 0)
+        size_wrap.setSpacing(6)
         self.bar_size_slider = QSlider(Qt.Orientation.Horizontal)
         self.bar_size_slider.setRange(30, 100)
         self.bar_size_slider.setSingleStep(5)
         self.bar_size_slider.setPageStep(10)
-        self.bar_size_slider.setFixedWidth(160)
+        self.bar_size_slider.setFixedWidth(130)
         self.bar_size_slider.setCursor(Qt.CursorShape.PointingHandCursor)
         self.bar_size_slider.valueChanged.connect(self.on_bar_size)
-        size_row.addWidget(self.bar_size_slider)
+        size_wrap.addWidget(self.bar_size_slider)
         self.bar_size_lbl = QLabel("100%")
         self.bar_size_lbl.setObjectName("dim")
         self.bar_size_lbl.setFixedWidth(42)
-        size_row.addWidget(self.bar_size_lbl)
-        size_row.addStretch()
-        sb.addLayout(size_row)
+        size_wrap.addWidget(self.bar_size_lbl)
+        size_holder = QWidget()
+        size_holder.setLayout(size_wrap)
+        grid.addWidget(size_holder, 1, 1)
 
-        # where the time goes: merging it with the bar keeps the
-        # chatbox at two lines instead of three
-        tpos_row = QHBoxLayout()
-        tpos_row.setContentsMargins(24, 0, 0, 0)
-        tpos_row.addWidget(QLabel("Time position:"))
+        lbl_tpos = QLabel("Time position")
+        lbl_tpos.setObjectName("dim")
+        grid.addWidget(lbl_tpos, 0, 2)
         self.time_pos_combo = QComboBox()
         for label, tid in TIME_POSITIONS:
             self.time_pos_combo.addItem(label, tid)
+        self.time_pos_combo.setToolTip(
+            "Merging the time into the bar keeps the chatbox at two "
+            "lines instead of three.")
         self.time_pos_combo.currentIndexChanged.connect(self.on_time_pos)
-        tpos_row.addWidget(self.time_pos_combo)
-        tpos_row.addStretch()
-        sb.addLayout(tpos_row)
+        grid.addWidget(self.time_pos_combo, 1, 2)
+        grid.setColumnStretch(3, 1)
+        sb.addLayout(grid)
+
         self.bar_line_preview = QLabel("")
         self.bar_line_preview.setObjectName("dim")
-        self.bar_line_preview.setContentsMargins(24, 0, 0, 0)
         sb.addWidget(self.bar_line_preview)
-        mc.addWidget(self.songbar_box)
 
-        # custom style editor (only visible when "Custom" is selected)
+        # ---- custom style editor (only with "Custom" selected) ------
         self.bar_custom_box = QWidget()
         cb = QVBoxLayout(self.bar_custom_box)
-        cb.setContentsMargins(24, 0, 0, 0)
+        cb.setContentsMargins(0, 4, 0, 0)
         cb.setSpacing(6)
         chint = QLabel("Build your own songbar: start/end are optional "
                        "brackets, \"filled\"/\"empty\" are the bar "
@@ -503,30 +630,19 @@ class AppsPageMixin:
         crow.addWidget(self.bar_custom_preview)
         crow.addStretch()
         cb.addLayout(crow)
-        mc.addWidget(self.bar_custom_box)
+        sb.addWidget(self.bar_custom_box)
+        pb.addWidget(self.songbar_box)
 
-        poll_row = QHBoxLayout()
-        poll_row.addWidget(QLabel("Query media player every"))
-        self.poll_spin = QSpinBox()
-        self.poll_spin.setObjectName("smallspin")
-        self.poll_spin.setRange(1, 30)
-        self.poll_spin.setFixedSize(64, 28)
-        self.poll_spin.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.poll_spin.valueChanged.connect(self.on_poll_changed)
-        poll_row.addWidget(self.poll_spin)
-        poll_row.addWidget(QLabel("sec"))
-        poll_row.addStretch()
-        mc.addLayout(poll_row)
+        # =============================================================
+        #  Styling & custom layout   (foldable)
+        # =============================================================
+        sty = self._collapsible_section("Styling & custom layout", mc)
 
-        # ----- Config -----
-        mcfg_lbl = QLabel("Config:")
-        mcfg_lbl.setObjectName("cardtitle")
-        mcfg_lbl.setStyleSheet("font-size: 14px;")
-        mc.addWidget(mcfg_lbl)
-
-        self.chk_media_icon = QCheckBox("Media icon  (\U0001F3B5 before & after the song line)")
-        self.chk_media_icon.toggled.connect(lambda on: self.on_media_option("media_icon", on))
-        mc.addWidget(self.chk_media_icon)
+        self.chk_media_icon = QCheckBox(
+            "Media icon  (\U0001F3B5 before & after the song line)")
+        self.chk_media_icon.toggled.connect(
+            lambda on: self.on_media_option("media_icon", on))
+        sty.addWidget(self.chk_media_icon)
 
         self.chk_media_idle = QCheckBox(
             "Idle symbol  (show this when nothing is playing)")
@@ -537,15 +653,15 @@ class AppsPageMixin:
             "costs one of the 144.")
         self.chk_media_idle.toggled.connect(
             lambda on: self.on_media_option("media_idle", on))
-        mc.addWidget(self.chk_media_idle)
-        m_idle_row = QHBoxLayout()
-        m_idle_row.addSpacing(22)
+        sty.addWidget(self.chk_media_idle)
+
+        self.media_idle_box, idle = self._sub_group()
         self.media_idle_input = QLineEdit()
         self.media_idle_input.setMaxLength(20)
         self.media_idle_input.setFixedWidth(120)
         self.media_idle_input.setPlaceholderText("\u23F8")
         self.media_idle_input.textChanged.connect(self.on_media_idle_text)
-        m_idle_row.addWidget(self.media_idle_input)
+        idle.addWidget(self.media_idle_input)
         m_idle_ico = QPushButton("\U0001F600")
         m_idle_ico.setObjectName("iconbtn")
         m_idle_ico.setFixedSize(30, 30)
@@ -553,14 +669,24 @@ class AppsPageMixin:
         m_idle_ico.clicked.connect(
             lambda _, e=self.media_idle_input, b=m_idle_ico:
             self.emoji_popup.open_for(e, b))
-        m_idle_row.addWidget(m_idle_ico)
-        m_idle_row.addStretch()
-        mc.addLayout(m_idle_row)
+        idle.addWidget(m_idle_ico)
+        idle.addStretch()
+        sty.addWidget(self.media_idle_box)
 
-        self.chk_media_custom = QCheckBox("Custom string  (build your own layout)")
-        self.chk_media_custom.toggled.connect(lambda on: self.on_media_option("media_custom", on))
-        mc.addWidget(self.chk_media_custom)
+        self.chk_media_custom = QCheckBox(
+            "Custom string  (build your own layout)")
+        self.chk_media_custom.setToolTip(
+            "Replaces everything under Content and Playback time with "
+            "your own arrangement. The checkboxes still decide which "
+            "values exist - {lyrics} stays empty while Lyrics is off.")
+        self.chk_media_custom.toggled.connect(
+            lambda on: self.on_media_option("media_custom", on))
+        sty.addWidget(self.chk_media_custom)
+
+        # ---- the editor and its legend, together --------------------
+        self.media_custom_box, cust = self._sub_group(vertical=True)
         m_custom_row = QHBoxLayout()
+        m_custom_row.setContentsMargins(0, 0, 0, 0)
         self.media_custom_input = QLineEdit()
         self.media_custom_input.setMaxLength(200)
         self.media_custom_input.textChanged.connect(self.on_media_template)
@@ -586,26 +712,48 @@ class AppsPageMixin:
         m_ico.setToolTip("Insert icon")
         m_ico.setCursor(Qt.CursorShape.PointingHandCursor)
         m_ico.clicked.connect(
-            lambda _, e=self.media_custom_input, b=m_ico: self.emoji_popup.open_for(e, b))
+            lambda _, e=self.media_custom_input, b=m_ico:
+            self.emoji_popup.open_for(e, b))
         m_custom_row.addWidget(m_ico)
-        mc.addLayout(m_custom_row)
-        m_ph = QLabel("Placeholders: {artist} {title} {time} {time_status} "
-                      "{time_end} {position} {length} "
-                      "{bar} {lyrics} {lyrics_prefix} {player} "
-                      "{icon_sound}  \u2013  use \\n "
-                      "for a line break. Values follow the checkboxes above "
-                      "({lyrics} needs the Lyrics checkbox).")
-        m_ph.setObjectName("dim")
-        m_ph.setWordWrap(True)
-        mc.addWidget(m_ph)
+        cust.addLayout(m_custom_row)
 
-        self.media_status_lbl = QLabel("")
-        self.media_status_lbl.setObjectName("dim")
-        self.media_status_lbl.setWordWrap(True)
-        mc.addWidget(self.media_status_lbl)
+        # The legend used to be a wall of dim text directly on the card,
+        # where it competed with the settings around it. In its own box
+        # it reads as reference material - there when you look for it,
+        # quiet when you are not.
+        legend = QFrame()
+        legend.setObjectName("infobox")
+        lg = QVBoxLayout(legend)
+        lg.setContentsMargins(10, 8, 10, 8)
+        lg.setSpacing(3)
+        lg_title = QLabel("Placeholders")
+        lg_title.setObjectName("dim")
+        lg_title.setStyleSheet("font-weight: 600;")
+        lg.addWidget(lg_title)
+        lg_body = QLabel(
+            "{artist} {title} {time} {time_status} {time_end} {position} "
+            "{length} {bar} {lyrics} {lyrics_prefix} {player} "
+            "{icon_sound}")
+        lg_body.setObjectName("dim")
+        lg_body.setWordWrap(True)
+        lg.addWidget(lg_body)
+        lg_note = QLabel(
+            "\\n makes a line break. Values follow the checkboxes above "
+            "\u2013 {lyrics} needs the Lyrics checkbox.")
+        lg_note.setObjectName("dim")
+        lg_note.setWordWrap(True)
+        lg.addWidget(lg_note)
+        cust.addWidget(legend)
+        sty.addWidget(self.media_custom_box)
 
+        # The player list is rebuilt when the settings are opened rather
+        # than on a timer: listing D-Bus once a second for a dropdown
+        # nobody is looking at is work for nothing, and a player that
+        # started while the panel was open is what Rescan is for.
         self.media_expander = self.make_settings_expander(
-            lambda on: self.set_expanded(self.media_expander, self.media_content, on))
+            lambda on: (self.set_expanded(self.media_expander,
+                                          self.media_content, on),
+                        self.refresh_media_sources() if on else None))
         mb_layout.addWidget(self.media_expander)
         mb_layout.addWidget(self.media_content)
         self.media_content.setVisible(False)
@@ -656,107 +804,12 @@ class AppsPageMixin:
             return chk
 
         # ----- GPU -----
-        # FPS only exists inside the process drawing the frames, so both
-        # platforms need a helper - MangoHud on Linux, RTSS on Windows.
-        # The row below is the ONLY difference between them.
-        self.chk_fps = hw_chk(
-            "FPS  (needs RTSS, see below)" if IS_WINDOWS
-            else "FPS  (needs MangoHud, see below)", "hw_fps")
-
-        # The label is created on every platform because ui/mainwindow.py
-        # writes to it at startup; on Windows it simply never joins a
-        # layout, so nothing MangoHud-related is ever shown there.
-        self.mangohud_dir_lbl = QLabel("(not set)")
-        self.mangohud_dir_lbl.setObjectName("dim")
-
-        if not IS_WINDOWS:
-            fps_row = QHBoxLayout()
-            fps_row.addSpacing(24)
-            fps_row.addWidget(QLabel("MangoHud log folder"))
-            fps_row.addWidget(self.mangohud_dir_lbl, 1)
-            # Auto-detect first: almost nobody picked that folder
-            # themselves - they switched logging on in GOverlay, which
-            # writes the path into a MangoHud config and never shows it
-            # again. Reading it back beats asking them to go find it.
-            find_mh = QPushButton("Auto-detect")
-            find_mh.setObjectName("linkbtn")
-            find_mh.setFixedHeight(26)
-            find_mh.setCursor(Qt.CursorShape.PointingHandCursor)
-            find_mh.setToolTip(
-                "Reads output_folder out of your MangoHud configs "
-                "(including the ones GOverlay writes) and falls back to "
-                "the usual log folders.")
-            find_mh.clicked.connect(self.on_detect_mangohud_dir)
-            fps_row.addWidget(find_mh)
-            pick_mh = QPushButton("Choose\u2026")
-            pick_mh.setObjectName("linkbtn")
-            pick_mh.setFixedHeight(26)
-            pick_mh.setCursor(Qt.CursorShape.PointingHandCursor)
-            pick_mh.clicked.connect(self.on_choose_mangohud_dir)
-            fps_row.addWidget(pick_mh)
-            hc.addLayout(fps_row)
-            # kept small on purpose: the toggle costs nothing at runtime,
-            # the setup note is the only thing people need to see once
-            fps_hint = QLabel("\u2139 read via MangoHud \u2013 set logging up "
-                              "in GOverlay, then hit Auto-detect "
-                              "(hover for the manual way)")
-            fps_hint.setToolTip(
-                "Linux has no general way to read a game's FPS. MangoHud runs "
-                "inside VRChat and can log it.\n\nEasiest: GOverlay -> "
-                "Logging -> pick an output folder and switch autostart on, "
-                "then press Auto-detect here.\n\nBy hand, as Steam launch "
-                "options:\n"
-                + mangohud.LAUNCH_OPTIONS
-                + "\n\nThen pick that folder above. Polling only reads the "
-                "last few lines of the log, so it costs nothing measurable.")
-        else:
-            # rich text so the word RTSS itself is the link - the button
-            # below is for people who do not expect a label to be clickable
-            fps_hint = QLabel(
-                f'\u2139 read via <a href="{RTSS_DOWNLOAD_URL}" '
-                f'style="color:#5b8dc9;">RTSS</a> \u2013 nothing to '
-                f'configure, hover for details')
-            fps_hint.setTextFormat(Qt.TextFormat.RichText)
-            fps_hint.setOpenExternalLinks(True)
-            fps_hint.setToolTip(
-                "Windows has no general way to read a game's FPS either. "
-                "RivaTuner Statistics Server (RTSS) sits inside the game and "
-                "publishes the frame rate in shared memory - this app reads "
-                "it from there.\n\nRTSS ships with MSI Afterburner and is "
-                "what most Windows overlays already use. Install it, leave it "
-                "running, and the value appears by itself.\n\nNo folder and "
-                "no launch options are needed.")
-        fps_hint.setStyleSheet("color: #7a8290; font-size: 11px;")
-        fps_hint.setWordWrap(True)
-        hint_row = QHBoxLayout()
-        hint_row.addSpacing(24)
-        hint_row.addWidget(fps_hint, 1)
-        hc.addLayout(hint_row)
-        if IS_WINDOWS:
-            rtss_row = QHBoxLayout()
-            rtss_row.addSpacing(24)
-            # the Windows half of Linux's Auto-detect: an empty FPS field
-            # means either "RTSS is not installed" or "RTSS is installed
-            # but not running", and only this button can tell them apart
-            self.rtss_check_btn = QPushButton("Check RTSS")
-            self.rtss_check_btn.setObjectName("linkbtn")
-            self.rtss_check_btn.setFixedHeight(26)
-            self.rtss_check_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            self.rtss_check_btn.setToolTip(
-                "Looks for RivaTuner Statistics Server and offers to start "
-                "it if it is installed but not running.")
-            self.rtss_check_btn.clicked.connect(self.on_check_rtss)
-            rtss_row.addWidget(self.rtss_check_btn)
-            rtss_btn = QPushButton("Download RTSS / MSI Afterburner")
-            rtss_btn.setObjectName("linkbtn")
-            rtss_btn.setFixedHeight(26)
-            rtss_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            rtss_btn.setToolTip(RTSS_DOWNLOAD_URL)
-            rtss_btn.clicked.connect(
-                lambda: QDesktopServices.openUrl(QUrl(RTSS_DOWNLOAD_URL)))
-            rtss_row.addWidget(rtss_btn)
-            rtss_row.addStretch()
-            hc.addLayout(rtss_row)
+        # FPS used to live here. It moved into the World Stats plugin in
+        # v1.4.4: reading a frame rate means loading something into the
+        # game - a Vulkan layer on Linux, RTSS on Windows - and none of
+        # that belongs in the same place as /proc and /sys. The plugin
+        # owns the layer, its build step and its settings; uninstall the
+        # plugin and all of it goes with it.
 
         gpu_lbl = QLabel("GPU:")
         gpu_lbl.setObjectName("cardtitle")
@@ -1612,6 +1665,148 @@ class AppsPageMixin:
             bar = ""
         self.bar_custom_preview.setText(f"Preview:  {bar}")
 
+    # ================================================================
+    #  section scaffolding
+    # ================================================================
+    def _section_header(self, text):
+        """A quiet heading inside a settings card.
+
+        Deliberately not a QGroupBox: a real group box draws a frame per
+        section, and four framed boxes stacked inside an already-framed
+        card is more borders than content. A small caption plus the
+        spacing around it is enough to say "these belong together"
+        without adding another rectangle.
+        """
+        lbl = QLabel(text.upper())
+        lbl.setObjectName("section")
+        return lbl
+
+    def _sub_group(self, vertical=False):
+        """An indented container for options that belong to the
+        checkbox above them.
+
+        Returns (frame, layout) - the caller fills the layout and adds
+        the frame wherever it belongs.
+
+        The indent is a rule down the left edge rather than empty
+        margin. With margin alone, "Max length" under "Song title" and
+        "Songbar" two rows further down look like the same level of
+        nesting once the card is long enough; the line makes the
+        parent-child relationship visible without reading the labels.
+
+        QFrame and not QWidget on purpose: a plain QWidget ignores a
+        stylesheet border unless it is told to paint its own background,
+        which is a footgun nobody needs twice.
+        """
+        frame = QFrame()
+        frame.setObjectName("substack")
+        layout = QVBoxLayout(frame) if vertical else QHBoxLayout(frame)
+        layout.setContentsMargins(14, 2, 0, 2)
+        layout.setSpacing(6 if vertical else 8)
+        return frame, layout
+
+    def _collapsible_section(self, title, parent_layout):
+        """A section header that is also the arrow to fold it away.
+
+        Returns the layout to fill. The card had grown past a screenful
+        even after being grouped, and most of it is set once and never
+        touched again - the songbar characters, the lyrics folder, the
+        idle symbol. Folding lets somebody who only came to change the
+        player see the player.
+
+        Collapsed on start, like every other expander in the app. The
+        state is deliberately not remembered: the outer Settings arrow
+        forgets too, and one of the two remembering would be stranger
+        than neither.
+        """
+        btn = QPushButton(f"\u203a  {title}")
+        btn.setObjectName("sectionexpander")
+        btn.setCheckable(True)
+        btn.setChecked(False)
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(0, 2, 0, 8)
+        layout.setSpacing(4)
+        content.setVisible(False)
+
+        btn.toggled.connect(
+            lambda on, b=btn, c=content, t=title:
+            self.set_expanded(b, c, on, t))
+        parent_layout.addWidget(btn)
+        parent_layout.addWidget(content)
+        return layout
+
+    # ================================================================
+    #  live preview
+    # ================================================================
+    #: A stand-in track for the preview. Long enough that the Max length
+    #: slider visibly does something, and roughly a third of the way in
+    #: so the songbar is neither empty nor full.
+    DEMO_TRACK = {
+        "artist": "Nightdrive",
+        "title": "Midnight Signal (Extended Mix)",
+        "position": 78.0,
+        "length": 227.0,
+        "playing": True,
+        "player": "spotify",
+        "player_key": "spotify",
+        "player_label": "Spotify",
+    }
+    DEMO_LYRICS = "and the city lights go by"
+
+    def update_media_preview(self):
+        """Render the MediaPlay line the way it will actually appear.
+
+        Goes through build_media_lines() rather than formatting anything
+        itself. That function already handles the custom string, the
+        icon, the merged bar line, the idle fallback and the order of
+        everything - reimplementing a readable subset of it here would
+        produce a preview that is right today and wrong after the next
+        change to the real one.
+
+        Real data wins when there is any: while music is playing this
+        shows the actual song, which is more useful than a stand-in and
+        also proves the player setting is picking the right source.
+        """
+        lbl = getattr(self, "media_preview_lbl", None)
+        if lbl is None:
+            return
+
+        live = bool(self.media_info)
+        if not live:
+            # Swap in the demo track for the duration of one render. The
+            # attribute is restored in the finally block, so a failure
+            # in here cannot leave the app believing a song is playing.
+            self.media_info = dict(self.DEMO_TRACK)
+            # Lyrics would otherwise send the stand-in artist and title
+            # to LRCLIB - a network request for a track that does not
+            # exist, repeated on every keystroke in the custom string.
+            self._demo_lyrics = self.DEMO_LYRICS
+        try:
+            lines = self.build_media_lines()
+        except Exception as e:                              # noqa: BLE001
+            lines = []
+            self.log(f"MediaPlay: preview failed ({type(e).__name__}: {e})")
+        finally:
+            if not live:
+                self.media_info = None
+                self._demo_lyrics = None
+
+        text = "\n".join(lines) if lines else ""
+        lbl.setText(text or "(nothing – every part is switched off)")
+
+        note = getattr(self, "media_preview_note", None)
+        if note is None:
+            return
+        if live:
+            note.setText("Your song, right now.")
+        elif not self.cfg.get("media_active"):
+            note.setText("Example – MediaPlay is switched off.")
+        else:
+            note.setText("Example – nothing is playing at the moment.")
+
     def _sync_media_dependents(self):
         """Shows each sub-option only when its parent checkbox is on:
         - Max length  -> only with Song title
@@ -1624,24 +1819,107 @@ class AppsPageMixin:
         lyrics_on = self.chk_lyrics.isChecked()
         bar_on = self.chk_bar.isChecked()
 
-        self.media_idle_input.setEnabled(self.chk_media_idle.isChecked())
+        idle_on = self.chk_media_idle.isChecked()
+        custom_on = self.chk_media_custom.isChecked()
+
+        self.media_idle_input.setEnabled(idle_on)
+        self.media_idle_box.setVisible(idle_on)
         self.title_max_row.setVisible(title_on)
-        self.chk_time_seconds.setVisible(time_on)
-        self.time_style_row.setVisible(time_on)
+        # the two Time sub-options now share one row
+        self.time_opts_box.setVisible(time_on)
+        self.lyrics_box.setVisible(lyrics_on)
         self.lyrics_prefix_row.setVisible(lyrics_on)
         self.chk_lyrics_local.setVisible(lyrics_on)
         self.songbar_box.setVisible(bar_on)
         is_custom = self.bar_style_combo.currentIndex() == CUSTOM_STYLE_INDEX
         self.bar_custom_box.setVisible(bar_on and is_custom)
+        self.media_custom_box.setVisible(custom_on)
+        # A custom string replaces the parts above it rather than adding
+        # to them, so leaving Content and Playback time looking live
+        # while they no longer decide the layout is a lie the old card
+        # told. They stay visible - the checkboxes still control which
+        # values exist - but greyed out, which is what "these are inputs
+        # now, not the layout" looks like.
+        for widget in (self.chk_artist, self.chk_title, self.title_max_row,
+                       self.chk_time, self.time_opts_box, self.chk_bar,
+                       self.songbar_box):
+            widget.setEnabled(not custom_on)
         # folder row: only when Lyrics AND "use my own .lrc" are both on
         self._sync_lyrics_local()
+        self.update_media_preview()
 
     def on_media_option(self, key, on):
         self.cfg[key] = on
         self.save_config()
         if key == "media_lyrics_local":
             self._sync_lyrics_local()
+        if key == "media_source_fallback":
+            # the backend reads this on every fetch, so it takes effect
+            # on the next poll without rebuilding anything
+            self.media.fallback = on
         self._sync_media_dependents()
+        self.update_preview()
+
+    # --------------------------------------------------- player choice
+    def refresh_media_sources(self, force=False):
+        """Rebuild the player dropdown from what is running right now.
+
+        The saved choice always survives this, even when that player is
+        closed: dropping it would mean someone who quits Spotify comes
+        back to a card silently set to Automatic. It is listed as "not
+        running" instead, which is the truth and is recoverable.
+        """
+        combo = getattr(self, "media_source_combo", None)
+        if combo is None:
+            return
+        try:
+            found = self.media.list_sources()
+        except Exception as e:
+            self.log(f"MediaPlay: could not list players ({e})")
+            found = []
+
+        want = self.cfg.get("media_source", "")
+        # Repopulating fires currentIndexChanged, which would write the
+        # config back with whatever lands at index 0 mid-rebuild.
+        combo.blockSignals(True)
+        combo.clear()
+        combo.addItem("Automatic  (whatever is playing)", "")
+        for item in found:
+            mark = "  \u2013 playing" if item["playing"] else ""
+            combo.addItem(f"{item['label']}{mark}", item["key"])
+        if want and not any(item["key"] == want for item in found):
+            label = self.cfg.get("media_source_label") or player_label(want)
+            combo.addItem(f"{label}  \u2013 not running", want)
+        index = combo.findData(want)
+        combo.setCurrentIndex(index if index >= 0 else 0)
+        combo.blockSignals(False)
+
+        if force:
+            names = ", ".join(item["label"] for item in found)
+            self.log(f"MediaPlay: players found: {names or 'none'}")
+
+    def on_media_source_changed(self, _index):
+        combo = self.media_source_combo
+        key = combo.currentData() or ""
+        self.cfg["media_source"] = key
+        # Remember the pretty name too. Without it the dropdown has
+        # nothing to call the choice once that player is closed, and
+        # "Spotify.exe – not running" is a worse thing to read than
+        # "Spotify – not running".
+        label = ""
+        if key:
+            for item in self.media.list_sources():
+                if item["key"] == key:
+                    label = item["label"]
+                    break
+            if not label:
+                label = self.cfg.get("media_source_label") or player_label(key)
+        self.cfg["media_source_label"] = label
+        self.media.preferred = key
+        # the cached bus name belongs to the old choice
+        self.media._cached_player = None
+        self.save_config()
+        self.log(f"MediaPlay: player set to {label or 'Automatic'}")
         self.update_preview()
 
     def on_media_idle_text(self, text):
@@ -2803,8 +3081,13 @@ class AppsPageMixin:
             lines.append(text)
         # synced lyrics line (between title/time and the songbar)
         if self.cfg.get("media_show_lyrics"):
-            lyr = self.lyrics.current_line(info["artist"], info["title"],
-                                           info["length"], info["position"])
+            # The preview sets this so a stand-in artist/title never
+            # reaches LRCLIB. Nothing else ever touches it, so the live
+            # path is byte-for-byte what it always was.
+            demo = getattr(self, "_demo_lyrics", None)
+            lyr = demo if demo is not None else self.lyrics.current_line(
+                info["artist"], info["title"],
+                info["length"], info["position"])
             if lyr:
                 pre = self._lyrics_prefix()
                 lines.append(f"{pre} {lyr}" if pre else lyr)
@@ -2974,136 +3257,6 @@ class AppsPageMixin:
         if not ok:
             self.wintemp_btn.setEnabled(True)
 
-    def on_choose_mangohud_dir(self):
-        folder = QFileDialog.getExistingDirectory(
-            self, "MangoHud log folder",
-            self.cfg.get("hw_mangohud_dir") or str(Path.home()))
-        if not folder:
-            return
-        self._set_mangohud_dir(folder)
-
-    def on_detect_mangohud_dir(self):
-        """Finds the log folder instead of asking for it.
-
-        Whatever comes back is reported in full - which config file it
-        came from, what is in the folder - because the failure people hit
-        is not "wrong folder", it is "logging was never switched on", and
-        a dialog that only says "nothing found" leaves them exactly where
-        they were.
-        """
-        try:
-            found = mangohud.detect()
-        except Exception as e:      # noqa: BLE001 - detection is best effort
-            self.log(f"FPS: MangoHud auto-detect failed ({e})")
-            QMessageBox.warning(self, "MangoHud", f"Auto-detect failed: {e}")
-            return
-        self.log(f"FPS: MangoHud auto-detect - {mangohud.describe(found)}")
-        folder, info = found["folder"], found["info"]
-
-        if folder is not None and (info["csv"] or found["configured"]):
-            self._set_mangohud_dir(str(folder))
-            lines = [f"Log folder set to:\n{folder}\n"]
-            if found["source"] not in ("common folder", "MANGOHUD_CONFIG"):
-                lines.append(f"Found in {found['source']}")
-            elif found["source"] == "MANGOHUD_CONFIG":
-                lines.append("Found in the MANGOHUD_CONFIG environment.")
-            else:
-                lines.append("Guessed from the usual log locations.")
-            if info["vrchat"]:
-                lines.append("It already holds VRChat logs, so this is the "
-                             "right one.")
-            elif info["csv"]:
-                lines.append(f"It holds {info['csv']} MangoHud log(s), but "
-                             "none from VRChat yet - start VRChat with "
-                             "MangoHud once and the FPS value will fill in.")
-            else:
-                lines.append("It is still empty - the first log appears once "
-                             "VRChat runs with MangoHud.")
-            QMessageBox.information(self, "MangoHud", "\n\n".join(lines))
-            return
-
-        # nothing usable: say which step is missing
-        if not found["mangohud"]:
-            body = ("MangoHud does not seem to be installed.\n\n"
-                    "Install it from your package manager (on CachyOS/Arch: "
-                    "pacman -S mangohud), then set logging up - GOverlay is "
-                    "the comfortable way, it is a GUI for exactly these "
-                    "settings.")
-        elif not found["configured"]:
-            body = ("MangoHud is installed, but no config file sets an "
-                    "output folder - so it is not logging anything yet.\n\n"
-                    "Easiest: GOverlay -> Logging -> choose an output folder "
-                    "and switch autostart on. Then press Auto-detect again."
-                    "\n\nBy hand, as VRChat's Steam launch options:\n"
-                    + mangohud.LAUNCH_OPTIONS)
-        else:
-            body = ("A config names an output folder, but the folder does "
-                    "not exist yet.\n\nIt is created the first time MangoHud "
-                    "actually logs - start VRChat once with MangoHud "
-                    "running, then press Auto-detect again.")
-        if found["checked"]:
-            body += "\n\nConfigs read:\n" + "\n".join(
-                str(p) for p in found["checked"][:4])
-        if not found["goverlay"] and found["mangohud"]:
-            body += ("\n\nTip: GOverlay (package 'goverlay') is what most "
-                     "people use to configure MangoHud.")
-        QMessageBox.information(self, "MangoHud", body)
-
-    def on_check_rtss(self):
-        """Windows: is RTSS there, and is it running?
-
-        Offers to start it when it is installed but idle, and sends
-        people to the download page when it is not installed at all -
-        the same two-step the Linux side does with MangoHud.
-        """
-        from core.backends import wintemp
-        state = wintemp.rtss_status()
-        if state["running"]:
-            self.log("FPS: RTSS is running")
-            QMessageBox.information(
-                self, "RTSS",
-                "RTSS is running - the FPS value fills in as soon as "
-                "VRChat is up.\n\nIf it stays empty, check that RTSS's "
-                "Application detection level is not set to None.")
-            return
-        if state["installed"]:
-            answer = QMessageBox.question(
-                self, "RTSS",
-                f"RTSS is installed but not running:\n{state['exe']}\n\n"
-                "Start it now?")
-            if answer != QMessageBox.StandardButton.Yes:
-                return
-            ok, message = wintemp.start_rtss(state["exe"])
-            self.log(f"FPS: {message}")
-            if ok:
-                QMessageBox.information(
-                    self, "RTSS",
-                    "RTSS started. It sits in the tray and has to stay "
-                    "running - set it to start with Windows and this is a "
-                    "one-time step.")
-            else:
-                QMessageBox.warning(self, "RTSS",
-                                    f"Could not start RTSS:\n{message}")
-            return
-        self.log("FPS: RTSS not found")
-        answer = QMessageBox.question(
-            self, "RTSS",
-            "RTSS (RivaTuner Statistics Server) was not found.\n\n"
-            "It is what publishes the frame rate this app reads, and it "
-            "ships with MSI Afterburner - so you may already have it "
-            "somewhere else.\n\nOpen the download page?")
-        if answer == QMessageBox.StandardButton.Yes:
-            QDesktopServices.openUrl(QUrl(RTSS_DOWNLOAD_URL))
-
-    def _set_mangohud_dir(self, folder):
-        """One place that stores the folder, so the file dialog and the
-        detection can never disagree about what else has to happen."""
-        self.cfg["hw_mangohud_dir"] = folder
-        self.hw.mangohud_dir = Path(folder)
-        self.mangohud_dir_lbl.setText(folder)
-        self.save_config()
-        self.update_preview()
-
     def _hw_display_name(self, which):
         """GPU/CPU name as it goes out: custom > detected > generic, with
         the small-letter style applied. One place for both the plain
@@ -3138,13 +3291,9 @@ class AppsPageMixin:
         c = self.cfg
         gpu = info.get("gpu") or {}
         ram = info.get("ram") or {}
-        # {fps} stays empty unless the checkbox is on AND MangoHud is
-        # actually writing - so a template never shows a stale number
-        fps = info.get("fps") if c.get("hw_fps") else None
         # names: custom > auto-detected (if "name" is checked) > generic
         gpu_name = self._hw_display_name("gpu")
         cpu_name = self._hw_display_name("cpu")
-        vals_fps = f"{fps:.0f}" if fps else None
         # VRAM / RAM: numbers and/or % depending on the checkboxes
         vram_parts = []
         if c["hw_vram_used"] and gpu.get("vram_used") is not None and gpu.get("vram_total"):
@@ -3182,7 +3331,6 @@ class AppsPageMixin:
             "cpu_temp": (self._temp_str(info.get("cpu_temp")) if c["hw_cpu_temp"] else None),
             "ram_usage": " ".join(ram_parts) or None,
             "ram_pct": (f"{ram['pct']:.0f}%" if c["hw_ram_pct"] and ram else None),
-            "fps": vals_fps,
             "ram_type": c["hw_ram_type"].strip() or None,
             "icon_flame": "\U0001F525",
         }

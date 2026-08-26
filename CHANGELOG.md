@@ -6,6 +6,278 @@ All notable changes to OSC-DreamChatbox are documented here.
 
 🟢 Linux Support: Complete & Stable (v1.2.6)
 
+## [v1.4.4] – 2026-08-26
+
+**FPS moved into the World Stats plugin, the song line can be pinned to
+one player, and the MediaPlay settings got a structure.**
+
+### Added
+
+**Choosing which player the song line comes from**
+
+- A **Player** dropdown in the MediaPlay settings. The old rule was
+  "first player that says Playing wins", which is right when one thing
+  is playing and arbitrary when two are: leave Spotify paused mid-song
+  and start YouTube Music, and which one showed up depended on the order
+  the system happened to list players in — and changed between restarts.
+- *Automatic* keeps the old behaviour and stays the default. Pick a
+  player and it stays that player, paused songs included, since the card
+  already shows those.
+- A **Fall back to any other player** checkbox, on by default: closing
+  Spotify lets the next player through, so the line keeps working. Turn
+  it off and the line means the player you picked or it means nothing.
+- The **YouTube Music desktop app and a music.youtube.com tab are
+  separate entries**, because they behave differently and someone who
+  picks one did not mean the other.
+- Works on both platforms: MPRIS on Linux, the Windows media session on
+  Windows.
+
+**A live preview in the MediaPlay card**
+
+- Shows the song line the way it will actually appear, updating as you
+  tick things. While music is playing it is your song; otherwise a
+  stand-in track, so the settings can be judged without starting music
+  first.
+- It renders through the same function that produces the real line. A
+  second formatter written just for the preview would be right today and
+  quietly wrong after the next change to the real one.
+- The stand-in track never reaches LRCLIB. A made-up artist and title
+  would otherwise be looked up on every keystroke in the custom string
+  field.
+
+### Changed
+
+**Frame rate is a plugin now**
+
+- Every FPS setting has left the Hardware card: the checkbox, the
+  MangoHud folder, Auto-detect and the Check RTSS button. They live in
+  **World Stats v1.5.0** under a *Frame rate* block.
+- The reason is not tidiness. Everything else on that card reads
+  `/proc`, `/sys` or a Windows counter — the operating system already
+  knows those numbers. A frame rate only exists inside the process
+  drawing it, so getting one means loading something **into the game**:
+  a Vulkan layer on Linux, RTSS on Windows. That is a different kind of
+  job, with different failure modes, and it was making the Hardware card
+  carry a second personality.
+- **Nothing was lost, and Linux gained something.** The plugin ships its
+  own Vulkan layer that counts frames inside the game — no MangoHud, no
+  CSV logging, no folder to find. MangoHud stays as an alternative
+  source for anyone who already has it working. Windows reads RTSS as
+  before, plus a few things the app never did, like noticing when RTSS
+  is still reporting a game that has already closed.
+- If you had FPS switched on, the app says so once in the log on the
+  next start, along with your old MangoHud folder so it can be pasted
+  straight into the plugin. `hw_fps` and `hw_mangohud_dir` are dropped
+  from the config rather than left behind as settings nothing reads.
+- `{fps}` is still a global placeholder, so **templates, AIO lines and
+  Advanced Mode canvases keep working unchanged** once World Stats is
+  installed and its Frame rate box is on. The `FPS` output on the
+  *RAM & System* block stays wired up; only its description changed.
+
+**The MediaPlay settings, rearranged**
+
+- **Sections instead of one list**: *Preview*, *Player*, then *Content*,
+  *Playback time & progress* and *Styling & custom layout*. The card had
+  grown to around twenty controls in a single column under one "Show:"
+  heading, and finding the songbar size meant scrolling past the lyrics
+  folder picker.
+- **The last three fold away behind an arrow**, collapsed on start like
+  every other expander in the app. Most of what is in them is set once
+  and never touched again — the songbar characters, the lyrics folder,
+  the idle symbol.
+- **Player sits directly under the preview and does not fold.** It is
+  the one thing on this card that decides whether anything appears at
+  all; everything below is about how the line looks. Somebody whose
+  chatbox stayed empty should reach it without opening a section.
+- **Sub-options are visibly attached to their parent.** Max length under
+  Song title, the two Time options under Time, the whole songbar block
+  under Songbar — each behind a rule down the left edge rather than a
+  bare indent. With margin alone, two things at different depths look
+  the same once the card is long enough.
+- **Related fields sit side by side.** Songbar style, size and time
+  position share a three-column grid; player and query interval share a
+  row; "With seconds" and the digit style are on one line.
+- **Ticking Custom string now greys out Content and Playback time.** A
+  custom layout replaces those parts rather than adding to them, and the
+  card used to leave them looking live while they no longer decided
+  anything. They stay visible — the checkboxes still control which
+  values exist — but no longer pretend to control the arrangement.
+- **The placeholder legend moved into an info box.** As dim text
+  directly on the card it competed with the settings around it.
+- Section headers, the sub-option rule and the info box are new
+  stylesheet rules built from colours `core/theming.py` already knows,
+  so every theme recolours them along with the rest.
+
+### Fixed
+
+- **A browser choice would have broken on restart.** Firefox and
+  Chromium append a per-process suffix to their MPRIS bus name
+  (`…firefox.instance_1_94`); storing that would have pointed the
+  setting at a Firefox that no longer exists. The suffix is stripped and
+  the stored value keeps meaning Firefox. Two windows of the same
+  browser also collapse to one dropdown entry, and the one that is
+  playing decides whether it shows as active.
+- **YouTube Music had no name in the Windows player dropdown.** Its
+  Electron AUMID has no ".exe" to strip and no "!" to split on, so it
+  fell through every rule and was listed as
+  `com.squirrel.youtubemusicdesktopapp.youtube music desktop app`. It
+  now says "YouTube Music" — for the Squirrel build, the th-ch fork and
+  YTMDesktop alike, whose AUMIDs differ only in whether they spell it
+  with a hyphen, an underscore or a space.
+- **The Windows dropdown lower-cased every unknown player.** The label
+  was built from the storage key, which is lower-cased on purpose so the
+  saved setting survives a capitalisation change — but that meant the
+  dropdown read "youtube music" while the chatbox's `{player}` said
+  "YouTube Music". Labels now come from the AUMID as Windows reported
+  it. Also affects TIDAL, Deezer, SoundCloud and anything else not in
+  the lookup table.
+
+### Removed
+
+- `core/mangohud.py`, and the RTSS reader in
+  `core/backends/hardware_windows.py`.
+- `HardwareMonitor(log, mangohud_dir)` is `HardwareMonitor(log)` — the
+  second argument is gone on all three backends, and `snapshot()` no
+  longer returns an `fps` key.
+
+### Hinzugefügt
+
+**Auswahl, von welchem Player die Song-Zeile kommt**
+
+- Ein **Player**-Dropdown in den MediaPlay-Einstellungen. Bisher galt
+  „der erste, der Playing sagt" — richtig, wenn nur eins läuft, und
+  beliebig, wenn zwei laufen: Spotify mitten im Song pausieren, YouTube
+  Music starten, und welcher angezeigt wurde, hing an der Reihenfolge
+  ab, in der das System die Player auflistete — und wechselte zwischen
+  Neustarts.
+- *Automatisch* verhält sich wie vorher und bleibt Voreinstellung.
+  Wählst du einen Player, bleibt es dieser Player — auch pausiert, denn
+  pausierte Songs zeigt die Karte ohnehin.
+- Eine Checkbox **„Auf andere Player zurückfallen"**, standardmäßig an:
+  Spotify zu, nächster Player übernimmt. Aus heißt: die Zeile bedeutet
+  den gewählten Player oder gar nichts.
+- **YouTube-Music-App und ein music.youtube.com-Tab sind getrennte
+  Einträge**, weil sie sich unterschiedlich verhalten und wer das eine
+  wählt, nicht das andere meinte.
+- Funktioniert auf beiden Plattformen: MPRIS unter Linux, die
+  Windows-Media-Session unter Windows.
+
+**Eine Live-Vorschau in der MediaPlay-Karte**
+
+- Zeigt die Song-Zeile so, wie sie tatsächlich aussehen wird, und
+  aktualisiert sich beim Klicken. Läuft Musik, ist es dein Song; sonst
+  ein Platzhalter-Titel, damit man die Einstellungen beurteilen kann,
+  ohne vorher Musik zu starten.
+- Gerendert wird über dieselbe Funktion, die auch die echte Zeile
+  erzeugt. Ein zweiter Formatierer nur für die Vorschau wäre heute
+  richtig und nach der nächsten Änderung still falsch.
+- Der Platzhalter-Titel erreicht nie LRCLIB. Ein erfundener Künstler und
+  Titel würden sonst bei jedem Tastendruck im Custom-String-Feld
+  nachgeschlagen.
+
+### Geändert
+
+**Framerate ist jetzt ein Plugin**
+
+- Alle FPS-Einstellungen haben die Hardware-Karte verlassen: die
+  Checkbox, der MangoHud-Ordner, Auto-detect und der Check-RTSS-Knopf.
+  Sie liegen in **World Stats v1.5.0** unter einem Block *Frame rate*.
+- Der Grund ist nicht Ordnungsliebe. Alles andere auf dieser Karte liest
+  `/proc`, `/sys` oder einen Windows-Zähler — das Betriebssystem kennt
+  diese Zahlen bereits. Eine Framerate existiert nur innerhalb des
+  Prozesses, der sie zeichnet; sie zu bekommen heißt, etwas **ins
+  Spiel** zu laden: einen Vulkan-Layer unter Linux, RTSS unter Windows.
+  Das ist eine andere Art von Aufgabe, mit anderen Fehlerbildern, und
+  die Hardware-Karte musste dafür eine zweite Persönlichkeit
+  mitschleppen.
+- **Verloren geht nichts, und Linux gewinnt etwas dazu.** Das Plugin
+  bringt einen eigenen Vulkan-Layer mit, der die Frames im Spiel selbst
+  zählt — kein MangoHud, kein CSV-Logging, kein Ordner zum Suchen.
+  MangoHud bleibt als Alternativquelle für alle, die es schon
+  eingerichtet haben. Windows liest RTSS wie bisher, dazu ein paar
+  Dinge, die die App nie konnte — etwa zu merken, wenn RTSS noch ein
+  längst geschlossenes Spiel meldet.
+- Wer FPS anhatte, bekommt beim nächsten Start einmal eine Meldung im
+  Log, samt dem alten MangoHud-Ordner zum Kopieren. `hw_fps` und
+  `hw_mangohud_dir` werden aus der Config entfernt, statt als
+  Einstellungen liegenzubleiben, die niemand mehr liest.
+- `{fps}` ist weiterhin ein globaler Platzhalter — **Templates,
+  AIO-Zeilen und Advanced-Mode-Canvases funktionieren unverändert
+  weiter**, sobald World Stats installiert und dessen Frame-rate-Haken
+  gesetzt ist. Der `FPS`-Ausgang am Block *RAM & System* bleibt
+  verdrahtet, nur seine Beschreibung hat sich geändert.
+
+**Die MediaPlay-Einstellungen, neu sortiert**
+
+- **Abschnitte statt einer Liste**: *Preview*, *Player*, dann *Content*,
+  *Playback time & progress* und *Styling & custom layout*. Die Karte
+  war auf rund zwanzig Bedienelemente in einer einzigen Spalte unter
+  einem „Show:" gewachsen — und wer die Songbar-Größe suchte, scrollte
+  am Lyrics-Ordner vorbei.
+- **Die letzten drei lassen sich per Pfeil einklappen**, beim Start
+  zugeklappt wie jeder andere Expander in der App. Das meiste darin
+  stellt man einmal ein und fasst es nie wieder an — die
+  Songbar-Zeichen, den Lyrics-Ordner, das Idle-Symbol.
+- **Player steht direkt unter der Vorschau und klappt nicht.** Es ist
+  das Einzige auf dieser Karte, das darüber entscheidet, ob überhaupt
+  etwas erscheint; alles darunter betrifft nur das Aussehen. Wessen
+  Chatbox leer blieb, soll da hinkommen, ohne einen Abschnitt zu öffnen.
+- **Unter-Optionen hängen sichtbar an ihrer Hauptoption.** Max length
+  unter Song title, die zwei Time-Optionen unter Time, der gesamte
+  Songbar-Block unter Songbar — jeweils hinter einer Linie am linken
+  Rand statt nur eingerückt. Mit bloßem Einzug sehen zwei verschiedene
+  Ebenen gleich aus, sobald die Karte lang genug ist.
+- **Zusammengehörige Felder stehen nebeneinander.** Songbar-Stil,
+  -Größe und Zeitposition teilen sich ein dreispaltiges Grid; Player und
+  Abfrageintervall teilen sich eine Zeile; „With seconds" und der
+  Ziffernstil stehen auf einer Zeile.
+- **Custom string graut jetzt Content und Playback time aus.** Ein
+  eigenes Layout ersetzt diese Teile, statt sie zu ergänzen — die Karte
+  ließ sie bisher aktiv aussehen, obwohl sie nichts mehr entschieden.
+  Sie bleiben sichtbar, denn die Checkboxen bestimmen weiterhin, welche
+  Werte es gibt, geben aber nicht mehr vor, die Anordnung zu steuern.
+- **Die Platzhalter-Legende sitzt jetzt in einer Info-Box.** Als dimmer
+  Text direkt auf der Karte konkurrierte sie mit den Einstellungen
+  ringsum.
+- Abschnitts-Überschriften, die Unter-Options-Linie und die Info-Box
+  sind neue Stylesheet-Regeln aus Farben, die `core/theming.py` bereits
+  kennt — jedes Theme färbt sie also mit.
+
+### Behoben
+
+- **Eine Browser-Auswahl hätte den Neustart nicht überlebt.** Firefox
+  und Chromium hängen an ihren MPRIS-Bus-Namen eine Prozess-Kennung an
+  (`…firefox.instance_1_94`); die zu speichern hätte die Einstellung auf
+  ein Firefox zeigen lassen, das es nicht mehr gibt. Der Anhang wird
+  entfernt, der gespeicherte Wert bedeutet weiterhin Firefox. Zwei
+  Fenster desselben Browsers werden außerdem zu einem Dropdown-Eintrag
+  zusammengefasst; ob er als aktiv gilt, entscheidet das Fenster, das
+  gerade spielt.
+- **YouTube Music hatte im Windows-Player-Dropdown keinen Namen.** Seine
+  Electron-AUMID hat kein „.exe" zum Abschneiden und kein „!" zum
+  Trennen, fiel also durch jede Regel und stand als
+  `com.squirrel.youtubemusicdesktopapp.youtube music desktop app` in der
+  Liste. Jetzt heißt es „YouTube Music" — für den Squirrel-Build, den
+  th-ch-Fork und YTMDesktop gleichermaßen, deren AUMIDs sich nur darin
+  unterscheiden, ob sie mit Bindestrich, Unterstrich oder Leerzeichen
+  geschrieben sind.
+- **Das Windows-Dropdown schrieb jeden unbekannten Player klein.** Das
+  Label wurde aus dem Speicher-Key gebaut, und der ist absichtlich
+  kleingeschrieben, damit die gespeicherte Einstellung eine geänderte
+  Schreibweise überlebt — nur stand dann „youtube music" im Dropdown,
+  während `{player}` in der Chatbox „YouTube Music" sagte. Labels kommen
+  jetzt aus der AUMID, wie Windows sie gemeldet hat. Betrifft auch
+  TIDAL, Deezer, SoundCloud und alles andere, was nicht in der Tabelle
+  steht.
+
+### Entfernt
+
+- `core/mangohud.py` und der RTSS-Leser in
+  `core/backends/hardware_windows.py`.
+- Aus `HardwareMonitor(log, mangohud_dir)` wird `HardwareMonitor(log)` —
+  das zweite Argument entfällt in allen drei Backends, und `snapshot()`
+  liefert keinen `fps`-Schlüssel mehr.
+
 ## [v1.4.3] – 2026-08-22
 
 **FPS setup no longer means hunting for a folder, a colon you typed

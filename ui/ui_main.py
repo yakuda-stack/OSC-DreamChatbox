@@ -139,6 +139,30 @@ QStackedWidget, QStackedWidget > QWidget { background: #14161c; }
 #previewtitle { font-size: 15px; color: #e5e9ef; }
 #hline { color: #2c313c; background: #2c313c; max-height: 1px; border: none; }
 #dim { color: #7a8290; font-size: 12px; }
+/* --- section scaffolding for the settings cards -------------------
+   Every colour here is a literal core/theming.py already knows, so a
+   theme recolours these along with everything else. Inline
+   setStyleSheet() would NOT be themed - build_style() rewrites the app
+   stylesheet, not per-widget ones. */
+#section { font-size: 13px; font-weight: 600; color: #aeb4bf; }
+/* a section header that is also the arrow to fold it away. Same look as
+   #section so folded and unfoldable sections read as one kind of thing. */
+#sectionexpander {
+    background: transparent; border: none; text-align: left;
+    color: #aeb4bf; font-size: 13px; font-weight: 600; padding: 6px 0 2px 0;
+}
+#sectionexpander:hover { color: #e5e9ef; }
+/* the vertical rule that ties a sub-option to the checkbox above it.
+   QFrame, not QWidget: a plain QWidget does not paint stylesheet
+   borders. */
+#substack { border: none; border-left: 2px solid #2c313c; }
+#infobox {
+    background: #14161c; border: 1px solid #2c313c; border-radius: 8px;
+}
+#minipreview {
+    background: #14161c; border: 1px solid #2c313c; border-radius: 8px;
+    color: #d7dbe2; font-size: 13px; padding: 8px 10px;
+}
 QLineEdit, QSpinBox {
     background: #14161c; border: 1px solid #333947; border-radius: 8px;
     padding: 8px 10px; color: #e5e9ef; selection-background-color: #5b8dc9;

@@ -8,7 +8,7 @@ core/backends/hardware_linux.HardwareMonitor, but every reading is None.
 That is deliberately not an error state: the Hardware card in the UI
 already treats None as "unknown" and simply leaves that value out of the
 chatbox line, because on Linux a missing sensor or a machine without
-MangoHud hits the same path. So the app runs, the card renders, and
+a missing backend hits the same path. So the app runs, the card renders, and
 nothing is sent that we cannot actually measure.
 
 When the real Windows readings land (LibreHardwareMonitor / WMI /
@@ -22,7 +22,6 @@ anything still unsupported.
 
 from __future__ import annotations
 
-from pathlib import Path
 
 from core.osinfo import OS_NAME
 
@@ -36,10 +35,8 @@ class NullHardwareMonitor:
     available = False
     name = "null"
 
-    def __init__(self, log_fn, mangohud_dir=None):
+    def __init__(self, log_fn):
         self.log = log_fn
-        self.mangohud_dir = Path(mangohud_dir).expanduser() \
-            if mangohud_dir else None
         # attributes the Hardware card reads directly
         self.has_nvidia = False
         self.amd_card = None
@@ -49,7 +46,7 @@ class NullHardwareMonitor:
         # label instead of the hardcoded Linux "AMD (sysfs)"
         self.gpu_backend_label = "none detected"
         self._prev_cpu = None
-        self.log(f"Hardware: no backend for {OS_NAME} yet - CPU/GPU/RAM/FPS "
+        self.log(f"Hardware: no backend for {OS_NAME} yet - CPU/GPU/RAM "
                  f"stay empty. Set a custom CPU/GPU name in the Hardware "
                  f"card if you want the labels filled in.")
 
@@ -78,10 +75,6 @@ class NullHardwareMonitor:
         'vram_pct'} - None means "don't show"."""
         return None
 
-    def fps(self, folder=None):
-        return None
-
-    # ------------------------------------------------------------ snapshot
     def snapshot(self):
         """Same shape as the Linux backend, so poll_hw() needs no
         special case: keys exist, values are None."""
@@ -89,5 +82,4 @@ class NullHardwareMonitor:
                 "cpu_temp": None,
                 "cpu_power": None,
                 "ram": None,
-                "gpu": None,
-                "fps": None}
+                "gpu": None}

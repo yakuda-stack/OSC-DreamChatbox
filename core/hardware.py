@@ -3,8 +3,8 @@ core/hardware.py – hardware monitoring: picks the backend for this OS
 
 The readings themselves live in core/backends/:
 
-    hardware_linux.HardwareMonitor          /proc, /sys, nvidia-smi, MangoHud
-    hardware_windows.WindowsHardwareMonitor Win32/PDH/nvidia-smi/LHM/RTSS
+    hardware_linux.HardwareMonitor          /proc, /sys, nvidia-smi
+    hardware_windows.WindowsHardwareMonitor Win32/PDH/nvidia-smi/LHM
     hardware_null.NullHardwareMonitor       every value is None
 
 This module only decides which of them the name ``HardwareMonitor``
@@ -12,7 +12,7 @@ refers to, the same way core/translators.py hands out a backend through
 ``get_translator()``. Existing code keeps working unchanged:
 
     from core.hardware import HardwareMonitor
-    hw = HardwareMonitor(log, mangohud_dir)
+    hw = HardwareMonitor(log)
 
 On Linux that is byte-for-byte the class that has always been here, just
 in a different file.
@@ -63,9 +63,9 @@ else:
 HARDWARE_AVAILABLE = BACKEND_NAME != "null"
 
 
-def get_hardware_monitor(log_fn, mangohud_dir=None):
+def get_hardware_monitor(log_fn):
     """Factory - use this in new code instead of the class directly."""
-    return HardwareMonitor(log_fn, mangohud_dir)
+    return HardwareMonitor(log_fn)
 
 
 def backend_note() -> str:
@@ -76,11 +76,11 @@ def backend_note() -> str:
     if not HARDWARE_AVAILABLE:
         return f"Hardware readings are not implemented on {OS_NAME} yet."
     if BACKEND_NAME == "windows":
-        # the two values Windows cannot produce on its own, so nobody
-        # files a bug about empty temperature/FPS fields
+        # the one value Windows cannot produce on its own, so nobody
+        # files a bug about an empty temperature field
         return ("Temperatures need LibreHardwareMonitor (Options > Remote "
-                "Web Server), FPS needs RTSS. Everything else works "
-                "without extra software.")
+                "Web Server). Everything else works without extra "
+                "software.")
     return ""
 
 
