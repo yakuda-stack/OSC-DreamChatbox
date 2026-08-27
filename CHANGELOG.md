@@ -252,144 +252,6 @@ one player, and the MediaPlay settings got a structure.**
   second argument is gone on all three backends, and `snapshot()` no
   longer returns an `fps` key.
 
-### Hinzugefügt
-
-**Auswahl, von welchem Player die Song-Zeile kommt**
-
-- Ein **Player**-Dropdown in den MediaPlay-Einstellungen. Bisher galt
-  „der erste, der Playing sagt" — richtig, wenn nur eins läuft, und
-  beliebig, wenn zwei laufen: Spotify mitten im Song pausieren, YouTube
-  Music starten, und welcher angezeigt wurde, hing an der Reihenfolge
-  ab, in der das System die Player auflistete — und wechselte zwischen
-  Neustarts.
-- *Automatisch* verhält sich wie vorher und bleibt Voreinstellung.
-  Wählst du einen Player, bleibt es dieser Player — auch pausiert, denn
-  pausierte Songs zeigt die Karte ohnehin.
-- Eine Checkbox **„Auf andere Player zurückfallen"**, standardmäßig an:
-  Spotify zu, nächster Player übernimmt. Aus heißt: die Zeile bedeutet
-  den gewählten Player oder gar nichts.
-- **YouTube-Music-App und ein music.youtube.com-Tab sind getrennte
-  Einträge**, weil sie sich unterschiedlich verhalten und wer das eine
-  wählt, nicht das andere meinte.
-- Funktioniert auf beiden Plattformen: MPRIS unter Linux, die
-  Windows-Media-Session unter Windows.
-
-**Eine Live-Vorschau in der MediaPlay-Karte**
-
-- Zeigt die Song-Zeile so, wie sie tatsächlich aussehen wird, und
-  aktualisiert sich beim Klicken. Läuft Musik, ist es dein Song; sonst
-  ein Platzhalter-Titel, damit man die Einstellungen beurteilen kann,
-  ohne vorher Musik zu starten.
-- Gerendert wird über dieselbe Funktion, die auch die echte Zeile
-  erzeugt. Ein zweiter Formatierer nur für die Vorschau wäre heute
-  richtig und nach der nächsten Änderung still falsch.
-- Der Platzhalter-Titel erreicht nie LRCLIB. Ein erfundener Künstler und
-  Titel würden sonst bei jedem Tastendruck im Custom-String-Feld
-  nachgeschlagen.
-
-### Geändert
-
-**Framerate ist jetzt ein Plugin**
-
-- Alle FPS-Einstellungen haben die Hardware-Karte verlassen: die
-  Checkbox, der MangoHud-Ordner, Auto-detect und der Check-RTSS-Knopf.
-  Sie liegen in **World Stats v1.5.0** unter einem Block *Frame rate*.
-- Der Grund ist nicht Ordnungsliebe. Alles andere auf dieser Karte liest
-  `/proc`, `/sys` oder einen Windows-Zähler — das Betriebssystem kennt
-  diese Zahlen bereits. Eine Framerate existiert nur innerhalb des
-  Prozesses, der sie zeichnet; sie zu bekommen heißt, etwas **ins
-  Spiel** zu laden: einen Vulkan-Layer unter Linux, RTSS unter Windows.
-  Das ist eine andere Art von Aufgabe, mit anderen Fehlerbildern, und
-  die Hardware-Karte musste dafür eine zweite Persönlichkeit
-  mitschleppen.
-- **Verloren geht nichts, und Linux gewinnt etwas dazu.** Das Plugin
-  bringt einen eigenen Vulkan-Layer mit, der die Frames im Spiel selbst
-  zählt — kein MangoHud, kein CSV-Logging, kein Ordner zum Suchen.
-  MangoHud bleibt als Alternativquelle für alle, die es schon
-  eingerichtet haben. Windows liest RTSS wie bisher, dazu ein paar
-  Dinge, die die App nie konnte — etwa zu merken, wenn RTSS noch ein
-  längst geschlossenes Spiel meldet.
-- Wer FPS anhatte, bekommt beim nächsten Start einmal eine Meldung im
-  Log, samt dem alten MangoHud-Ordner zum Kopieren. `hw_fps` und
-  `hw_mangohud_dir` werden aus der Config entfernt, statt als
-  Einstellungen liegenzubleiben, die niemand mehr liest.
-- `{fps}` ist weiterhin ein globaler Platzhalter — **Templates,
-  AIO-Zeilen und Advanced-Mode-Canvases funktionieren unverändert
-  weiter**, sobald World Stats installiert und dessen Frame-rate-Haken
-  gesetzt ist. Der `FPS`-Ausgang am Block *RAM & System* bleibt
-  verdrahtet, nur seine Beschreibung hat sich geändert.
-
-**Die MediaPlay-Einstellungen, neu sortiert**
-
-- **Abschnitte statt einer Liste**: *Preview*, *Player*, dann *Content*,
-  *Playback time & progress* und *Styling & custom layout*. Die Karte
-  war auf rund zwanzig Bedienelemente in einer einzigen Spalte unter
-  einem „Show:" gewachsen — und wer die Songbar-Größe suchte, scrollte
-  am Lyrics-Ordner vorbei.
-- **Die letzten drei lassen sich per Pfeil einklappen**, beim Start
-  zugeklappt wie jeder andere Expander in der App. Das meiste darin
-  stellt man einmal ein und fasst es nie wieder an — die
-  Songbar-Zeichen, den Lyrics-Ordner, das Idle-Symbol.
-- **Player steht direkt unter der Vorschau und klappt nicht.** Es ist
-  das Einzige auf dieser Karte, das darüber entscheidet, ob überhaupt
-  etwas erscheint; alles darunter betrifft nur das Aussehen. Wessen
-  Chatbox leer blieb, soll da hinkommen, ohne einen Abschnitt zu öffnen.
-- **Unter-Optionen hängen sichtbar an ihrer Hauptoption.** Max length
-  unter Song title, die zwei Time-Optionen unter Time, der gesamte
-  Songbar-Block unter Songbar — jeweils hinter einer Linie am linken
-  Rand statt nur eingerückt. Mit bloßem Einzug sehen zwei verschiedene
-  Ebenen gleich aus, sobald die Karte lang genug ist.
-- **Zusammengehörige Felder stehen nebeneinander.** Songbar-Stil,
-  -Größe und Zeitposition teilen sich ein dreispaltiges Grid; Player und
-  Abfrageintervall teilen sich eine Zeile; „With seconds" und der
-  Ziffernstil stehen auf einer Zeile.
-- **Custom string graut jetzt Content und Playback time aus.** Ein
-  eigenes Layout ersetzt diese Teile, statt sie zu ergänzen — die Karte
-  ließ sie bisher aktiv aussehen, obwohl sie nichts mehr entschieden.
-  Sie bleiben sichtbar, denn die Checkboxen bestimmen weiterhin, welche
-  Werte es gibt, geben aber nicht mehr vor, die Anordnung zu steuern.
-- **Die Platzhalter-Legende sitzt jetzt in einer Info-Box.** Als dimmer
-  Text direkt auf der Karte konkurrierte sie mit den Einstellungen
-  ringsum.
-- Abschnitts-Überschriften, die Unter-Options-Linie und die Info-Box
-  sind neue Stylesheet-Regeln aus Farben, die `core/theming.py` bereits
-  kennt — jedes Theme färbt sie also mit.
-
-### Behoben
-
-- **Eine Browser-Auswahl hätte den Neustart nicht überlebt.** Firefox
-  und Chromium hängen an ihren MPRIS-Bus-Namen eine Prozess-Kennung an
-  (`…firefox.instance_1_94`); die zu speichern hätte die Einstellung auf
-  ein Firefox zeigen lassen, das es nicht mehr gibt. Der Anhang wird
-  entfernt, der gespeicherte Wert bedeutet weiterhin Firefox. Zwei
-  Fenster desselben Browsers werden außerdem zu einem Dropdown-Eintrag
-  zusammengefasst; ob er als aktiv gilt, entscheidet das Fenster, das
-  gerade spielt.
-- **YouTube Music hatte im Windows-Player-Dropdown keinen Namen.** Seine
-  Electron-AUMID hat kein „.exe" zum Abschneiden und kein „!" zum
-  Trennen, fiel also durch jede Regel und stand als
-  `com.squirrel.youtubemusicdesktopapp.youtube music desktop app` in der
-  Liste. Jetzt heißt es „YouTube Music" — für den Squirrel-Build, den
-  th-ch-Fork und YTMDesktop gleichermaßen, deren AUMIDs sich nur darin
-  unterscheiden, ob sie mit Bindestrich, Unterstrich oder Leerzeichen
-  geschrieben sind.
-- **Das Windows-Dropdown schrieb jeden unbekannten Player klein.** Das
-  Label wurde aus dem Speicher-Key gebaut, und der ist absichtlich
-  kleingeschrieben, damit die gespeicherte Einstellung eine geänderte
-  Schreibweise überlebt — nur stand dann „youtube music" im Dropdown,
-  während `{player}` in der Chatbox „YouTube Music" sagte. Labels kommen
-  jetzt aus der AUMID, wie Windows sie gemeldet hat. Betrifft auch
-  TIDAL, Deezer, SoundCloud und alles andere, was nicht in der Tabelle
-  steht.
-
-### Entfernt
-
-- `core/mangohud.py` und der RTSS-Leser in
-  `core/backends/hardware_windows.py`.
-- Aus `HardwareMonitor(log, mangohud_dir)` wird `HardwareMonitor(log)` —
-  das zweite Argument entfällt in allen drei Backends, und `snapshot()`
-  liefert keinen `fps`-Schlüssel mehr.
-
 ## [v1.4.3] – 2026-08-22
 
 **FPS setup no longer means hunting for a folder, a colon you typed
@@ -416,27 +278,6 @@ changing the dropdown it rolls over.**
   but not running", and those need different next steps — the button
   tells them apart, offers to start RTSS when it is only idle, and opens
   the download page when it is genuinely missing.
-
-### Hinzugefügt
-
-**FPS-Einrichtung, die sich selbst findet**
-
-- Linux: ein **Auto-detect**-Knopf neben dem MangoHud-Log-Ordner. Er
-  liest `output_folder` aus deinen MangoHud-Configs — auch aus den
-  spielspezifischen und aus denen, die **GOverlay** schreibt, womit die
-  meisten das Logging einrichten, ohne den Pfad je zu sehen — und fällt
-  sonst auf die üblichen Ordner zurück (`~/mangologs`, `~/mangohud`, …).
-  Ein Ordner mit VRChat-Logs schlägt einen mit fremden Benchmarks, ein
-  frisches Log schlägt ein altes.
-- Findet er nichts, sagt er, welcher Schritt fehlt, statt nur „nicht
-  gefunden": MangoHud nicht installiert, installiert aber keine Config
-  schaltet das Logging ein (mit GOverlay-Weg und Launch-Options), oder
-  konfiguriert, aber der Ordner existiert noch nicht.
-- Windows: ein **Check-RTSS**-Knopf neben dem Download-Knopf. Ein leeres
-  FPS-Feld heißt entweder „RTSS ist nicht installiert" oder „RTSS läuft
-  nicht" — das sind zwei verschiedene nächste Schritte. Der Knopf
-  unterscheidet sie, bietet an RTSS zu starten, wenn es nur nicht läuft,
-  und öffnet sonst die Download-Seite.
 
 ### Fixed
 
@@ -472,43 +313,6 @@ changing the dropdown it rolls over.**
 - The filter is taken off again on quit — an application-wide event
   filter that is still installed while Qt and Python tear each other
   down segfaults on exit.
-
-### Behoben
-
-**Selbst getippte Satzzeichen verschwinden nicht mehr**
-
-- Eine Zeile wie `fps:` im All-in-one-String, in der Custom Box oder in
-  einem Plugin-Template hat ihren Doppelpunkt verloren — genauso
-  `-----` seine Striche und ein führendes `|`. Der Aufräum-Durchlauf,
-  der Reste von leeren Platzhaltern entfernt (`GPU: {gpu_usage}` bei
-  ausgeschalteter Hardware-Card), hat nur nach Satzzeichen entschieden
-  und konnte einen Rest nicht von einem absichtlich getippten Zeichen
-  unterscheiden.
-- Leere Platzhalter hinterlassen beim Rendern jetzt eine unsichtbare
-  Markierung, und aufgeräumt wird ausschließlich an diesen
-  Markierungen. Was danach noch steht, ist getippter Text und bleibt
-  unangetastet.
-- Ein fehlender Wert nimmt sein Label mit: `GPU: {gpu} | CPU: {cpu}`
-  ohne GPU ergibt `CPU: 27%` statt eines übrig gebliebenen `GPU |`.
-  `{position}/{length}` ohne Länge ist `0:27`, nicht `0:27/`.
-- Advanced Mode verhält sich genauso: Text-, Platzhalter-, Hardware- und
-  Media-Blöcke markieren ihre leeren Werte ebenfalls, ein Format-Block
-  `GPU: {a}` sendet also nichts statt eines nackten `GPU:` — OSC-out-
-  Blöcke bekommen die Markierungen nie zu sehen.
-
-**Das Mausrad verstellt keine Einstellungen mehr im Vorbeiscrollen**
-
-- Über ein Dropdown (Personal-Status-Template, Hardware-Sensoren,
-  Mikrofon, Übersetzer …), eine Zahlenauswahl oder einen Regler zu
-  scrollen hat den Wert geändert. Auf einer Seite, die mehrere Bildschirme
-  hoch ist, war die verstellte Einstellung meist längst aus dem Bild —
-  gemerkt hat man es erst, wenn VRChat das Falsche angezeigt hat.
-- Diese Elemente geben das Mausrad jetzt an die Seite weiter, in der sie
-  sitzen. Klick, Pfeiltasten, Tippen und das Scrollen in einer *offenen*
-  Dropdown-Liste funktionieren unverändert, Scrollbalken ebenfalls.
-- Beim Beenden wird der Filter wieder entfernt — ein app-weiter
-  Event-Filter, der beim Herunterfahren noch installiert ist, führt
-  zuverlässig zu einem Segfault beim Beenden.
 
 ## [v1.4.2] – 2026-08-21
 
@@ -1216,7 +1020,6 @@ works identically on Windows and Linux, and no existing config is touched.
   rendered clock string before doing anything – so a clock that changes once
   a minute causes one refresh a minute, not sixty.
 
-
 - **Plugin API 2: a plugin may now say which one it needs.** `plugin.json`
   takes `"api": 2` (and an optional `"min_app"`). A plugin asking for more
   than the app provides is listed, greyed out and **not imported**, with the
@@ -1349,7 +1152,6 @@ works identically on Windows and Linux, and no existing config is touched.
   to put a box around, and an empty frame is not a smaller message – it is a
   message that says nothing and still costs two lines and a send.
 
-
 - **Nothing the plugin system does not understand is dropped any more.** A
   settings row of a type this build does not know is kept instead of silently
   vanishing: its default is stored like any other value, `api.get()` keeps
@@ -1385,7 +1187,6 @@ works identically on Windows and Linux, and no existing config is touched.
   lining up. The preview now asks the system for its actual fixed-width font,
   and the stylesheet rules ask for `Consolas, monospace` so each platform gets
   the one it has.
-
 
 - **Updating a plugin left its old code running.** `_unload()` dropped only
   the plugin's top-level module from `sys.modules`, never the submodules a
@@ -2237,7 +2038,6 @@ only some people need no longer have to live in the app itself.
   files* only with *Lyrics* (folder row only when both are on), and the whole
   Songbar block (style, size, time position, custom editor) only when
   *Songbar* is enabled.
-
 
 ## [v1.1.0-alpha] – 2026-07-23
 
