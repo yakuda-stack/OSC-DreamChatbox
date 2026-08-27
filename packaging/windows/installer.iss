@@ -23,11 +23,11 @@
 #define AppPublisher   "yakuda"
 #define AppURL         "https://github.com/yakuda-stack/OSC-DreamChatbox"
 #define AppExe         "OSC-DreamChatbox.exe"
-; Normally passed in by make-release.ps1:  iscc /DAppVersion=1.4.4 installer.iss
+; Normally passed in by make-release.ps1:  iscc /DAppVersion=1.4.5 installer.iss
 ; The fallback below only applies when you build the .iss by hand, so it can
 ; still drift from core/constants.py -> VERSION. Prefer make-release.ps1.
 #ifndef AppVersion
-  #define AppVersion   "1.4.4"
+  #define AppVersion   "1.4.5"
 #endif
 ; where build-exe.ps1 leaves the one-folder build
 #define SourceDir      "..\..\dist\OSC-DreamChatbox"

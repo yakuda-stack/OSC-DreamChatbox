@@ -40,6 +40,15 @@ STYLE_CHOICES = (
     ("Superscript  \u2013  \u1D34\u1D2C\u1D38\u1D38\u1D3C", STYLE_SUPER),
     ("Subscript  \u2013  \u2095\u2090\u2097\u2097\u2092", STYLE_SUB),
 )
+#: the same three, labelled for a narrow column. The Hardware card sits
+#: a style dropdown next to a text input inside a half-width card, where
+#: "Superscript  -  \u1D34\u1D2C\u1D38\u1D38\u1D3C" does not fit - and a clipped label would hide
+#: exactly the preview that makes the choice obvious without reading.
+COMPACT_STYLE_CHOICES = (
+    ("Normal", STYLE_NORMAL),
+    ("Small  \u1D34\u1D2C\u1D38\u1D38\u1D3C", STYLE_SUPER),
+    ("Low  \u2095\u2090\u2097\u2097\u2092", STYLE_SUB),
+)
 # same three for a field that only ever holds digits (the music timer)
 DIGIT_STYLE_CHOICES = (
     ("Normal  \u2013  0123456789", STYLE_NORMAL),

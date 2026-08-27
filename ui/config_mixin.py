@@ -156,6 +156,10 @@ class ConfigMixin:
             "status_styles": [STYLE_NORMAL] * 20,
             "status_count": max(1, len(seed)),
             "status_cycle_sec": 10,
+            # how the next text is picked: random (the old and only
+            # behaviour) or straight down the list. True keeps every
+            # existing config doing exactly what it did before.
+            "status_random": True,
             # 10 switchable text templates, each with its own 1-20 texts
             "status_templates": [
                 {"name": f"Template {i + 1}",
@@ -595,6 +599,9 @@ class ConfigMixin:
                 min(3600, int(defaults.get("status_cycle_sec", 10))))
         except (TypeError, ValueError):
             defaults["status_cycle_sec"] = MIN_STATUS_CYCLE_SEC
+        # a config written before v1.4.5 has no key at all, and the
+        # missing value has to mean "random" - that is what it did
+        defaults["status_random"] = bool(defaults.get("status_random", True))
         defaults["aio_templates"] = aio + [""] * (AIO_MAX - len(aio))
         defaults["aio_count"] = min(AIO_MAX, max(1, int(defaults.get("aio_count", 1))))
         # per-string dwell time + field heights. All three are absent

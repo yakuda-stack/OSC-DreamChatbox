@@ -177,10 +177,11 @@ Rotating one-liners about you — the card everyone starts with.
 <summary><b>Details</b></summary>
 
 - **10 switchable text templates**, each with its own set of up to **20 texts** — exclusive toggles, enabling one switches the others off
-- Adjustable change interval (10 s minimum); texts switch **randomly** (never the same one twice in a row) and are pushed to VRChat the moment they change
+- Adjustable change interval (10 s minimum); texts are pushed to VRChat the moment they change
+- **Random order** (default) picks any text but the one currently up; turn it off and the texts run top to bottom and start over. Empty fields are skipped either way
 - Per text a **size style**: Normal · Superscript ᴴᴬᴸᴸᴼ · Subscript — same character count, less height in the chatbox
 - Text fields fold in/out so the card stays compact
-- Built-in **icon picker** (🔥 🎵 🎮 …) for every text field
+- Built-in **icon picker** (🔥 🎵 🎮 🏳️‍🌈 🇩🇪 …) for every text field — searchable in German and English
 
 </details>
 
@@ -228,6 +229,7 @@ Live GPU / VRAM / CPU / RAM stats in the chatbox.
 <details>
 <summary><b>Details</b></summary>
 
+- Settings laid out as a **2×2 grid** of component boxes (GPU · VRAM · CPU · RAM) since v1.4.5, each with its own checkboxes and, for GPU and CPU, a custom name and its size style on one row
 - Auto-detected or custom GPU/CPU names, temps as `°C` or 🔥
 - **Power draw in watts** — one tick per section puts it next to the temperature (`GPU: 68% 61°C 213W`) and fills `{gpu_power}` / `{cpu_power}`. Off by default, so no existing line gets longer without being asked. NVIDIA always reports it; AMD needs amdgpu's hwmon node, CPU watts need zenpower or readable RAPL counters, and on Windows both come from LibreHardwareMonitor
 - **FPS** — lives in the **World Stats plugin** since v1.4.4, not on this card. A frame rate only exists inside the process drawing it, so reading one means loading something into the game: a Vulkan layer on Linux, RTSS on Windows. The plugin owns both, along with the build step and the settings
@@ -464,7 +466,7 @@ OSC-DreamChatbox/
 │   ├── textutils.py      #   time format, songbar styles, templates
 │   ├── textstyle.py      #   superscript / subscript rendering
 │   ├── boxstyle.py       #   Custom Box frame templates + line building
-│   ├── emojis.py         #   emoji picker palette (10 categories)
+│   ├── emojis.py         #   emoji picker palette (12 categories, incl. flags)
 │   ├── queryfix.py       #   OSCQuery fixer (supported programs list)
 │   ├── oscquery.py       #   native OSCQuery (mDNS + dynamic ports)
 │   ├── nodegraph_eval.py #   Advanced mode: node graph evaluation

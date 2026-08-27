@@ -12,8 +12,9 @@ from PyQt6.QtWidgets import (QCheckBox, QHBoxLayout, QLabel, QLineEdit,
                              QScrollArea, QStackedWidget, QVBoxLayout,
                              QWidget, QFrame, QGridLayout, QPushButton)
 
-from core.emojis import (EMOJI_CATEGORIES, EMOJIS, cost as emoji_cost,
-                         search as emoji_search)
+from core.emojis import (CATEGORY_NOTES, EMOJI_CATEGORIES,
+                         cost as emoji_cost, search as emoji_search,
+                         visual_len as emoji_glyphs)
 
 
 # ----------------------------------------------------------------------------
@@ -159,6 +160,13 @@ QStackedWidget, QStackedWidget > QWidget { background: #14161c; }
 #infobox {
     background: #14161c; border: 1px solid #2c313c; border-radius: 8px;
 }
+/* one component inside a settings card - GPU, VRAM, CPU, RAM. Lighter
+   than the #innerbox it sits in, so a grid of them reads as four things
+   on one surface rather than four holes punched in it. */
+#hwcard {
+    background: #191c24; border: 1px solid #2c313c; border-radius: 10px;
+}
+#hwcardtitle { font-size: 14px; font-weight: 700; color: #e5e9ef; }
 #minipreview {
     background: #14161c; border: 1px solid #2c313c; border-radius: 8px;
     color: #d7dbe2; font-size: 13px; padding: 8px 10px;
@@ -316,9 +324,13 @@ class EmojiPopup(QFrame):
     picker. Each category builds its buttons the first time it is
     selected and keeps them afterwards.
     """
-    COLUMNS = 10
+    #: eleven columns of 32px, which is also what the tab strip needs:
+    #: twelve categories at 30px each no longer fit under ten.
+    COLUMNS = 11
     CELL = 32
     MAX_RESULTS = 120
+    #: the fixed inner width every page is laid out against
+    GRID_W = COLUMNS * CELL + 24
 
     def __init__(self):
         super().__init__(None, Qt.WindowType.Popup)
@@ -327,6 +339,10 @@ class EmojiPopup(QFrame):
             " border-radius: 10px; }"
             "QPushButton { background: transparent; border: none;"
             " font-size: 17px; border-radius: 6px; }"
+            # a pride stripe row draws three or four hearts in the space
+            # one emoji normally gets. The cell grows (see _metrics) and
+            # the glyphs shrink to meet it.
+            "QPushButton#emojiwide { font-size: 15px; }"
             "QPushButton:hover { background: #2a2f3a; }"
             "QPushButton:checked { background: #2f3644; }"
             "QLabel { color: #6f7684; border: none; }"
@@ -366,7 +382,7 @@ class EmojiPopup(QFrame):
 
         # ---- the grid of the selected category -----------------------
         self._stack = QStackedWidget()
-        self._stack.setFixedSize(self.COLUMNS * self.CELL + 24, 268)
+        self._stack.setFixedSize(self.GRID_W, 268)
         for i in range(len(EMOJI_CATEGORIES)):
             scroll = QScrollArea()
             scroll.setWidgetResizable(True)
@@ -395,12 +411,54 @@ class EmojiPopup(QFrame):
         self._result_grid.setAlignment(Qt.AlignmentFlag.AlignTop)
         self._result_scroll.setWidget(result_page)
         self._result_buttons = []
+        self._result_cols = None
+        self._result_cell = None
         self.RESULTS_INDEX = self._stack.addWidget(self._result_scroll)
         outer.addWidget(self._stack)
 
         self._hint = QLabel("")
         outer.addWidget(self._hint)
+        # A second line, for the things a tooltip cannot say because
+        # nobody hovers a grid to find out whether it will render. Only
+        # the two flag categories set it; it collapses otherwise.
+        self._note = QLabel("")
+        self._note.setWordWrap(True)
+        self._note.setFixedWidth(self.GRID_W)
+        self._note.setVisible(False)
+        outer.addWidget(self._note)
         self.show_category(0)
+
+    # ------------------------------------------------------------------
+    @classmethod
+    def _metrics(cls, entries):
+        """(cell width, columns, wide?) for a page holding `entries`.
+
+        A cell is square for ordinary emoji and grows for a page that
+        contains stripe rows, because those draw three or four glyphs
+        where the grid budgets for one. The whole page widens rather
+        than the one entry: a grid with a single fat cell in it has ragged
+        columns, which reads as broken rather than as deliberate.
+        """
+        widest = max((emoji_glyphs(e) for e in entries), default=1)
+        if widest <= 1:
+            return cls.CELL, cls.COLUMNS, False
+        cell = widest * 16 + 20
+        return cell, max(1, cls.GRID_W // cell), True
+
+    def _style_button(self, button, emoji, wide):
+        """Label, size class and tooltip for one entry."""
+        button.setText(emoji)
+        button.setObjectName("emojiwide" if wide else "")
+        # objectName is what the stylesheet selects on, and Qt does not
+        # re-evaluate that by itself once the widget is shown
+        button.style().unpolish(button)
+        button.style().polish(button)
+        # the 144 characters are the scarce thing here, and the entries
+        # that cost more than one are no longer just the odd heart: a
+        # country flag costs two and the trans flag five
+        spend = emoji_cost(emoji)
+        button.setToolTip("costs 1 character" if spend == 1
+                          else f"costs {spend} characters")
 
     # ------------------------------------------------------------------
     def show_category(self, index):
@@ -408,21 +466,24 @@ class EmojiPopup(QFrame):
         name, _icon, block = EMOJI_CATEGORIES[index]
         page, grid, built = self._pages[index]
         if not built:
+            cell, cols, wide = self._metrics(block)
             for i, em in enumerate(block):
-                b = QPushButton(em)
-                b.setFixedSize(self.CELL, self.CELL)
+                b = QPushButton()
+                b.setFixedSize(cell, self.CELL)
                 b.setCursor(Qt.CursorShape.PointingHandCursor)
-                # the 144 characters are the scarce thing here, and an
-                # entry carrying a variation selector quietly costs two
-                b.setToolTip("costs 2 characters" if emoji_cost(em) > 1
-                             else "costs 1 character")
+                self._style_button(b, em, wide)
                 b.clicked.connect(lambda _, e=em: self._pick(e))
-                grid.addWidget(b, i // self.COLUMNS, i % self.COLUMNS)
+                grid.addWidget(b, i // cols, i % cols)
             self._pages[index][2] = True
         self._stack.setCurrentIndex(index)
         for i, b in enumerate(self._tab_buttons):
             b.setChecked(i == index)
         self._hint.setText(f"{name}  \u2013  {len(block)} icons")
+        self._set_note(CATEGORY_NOTES.get(name, ""))
+
+    def _set_note(self, text):
+        self._note.setText(text)
+        self._note.setVisible(bool(text))
 
     def _on_tab(self, index):
         # picking a category is also how you leave a search
@@ -440,28 +501,39 @@ class EmojiPopup(QFrame):
             self.show_category(self._current)
             return
         hits = emoji_search(text, limit=self.MAX_RESULTS)
+        # results mix categories, so the cell has to fit whatever came
+        # back: a search for "pride" returns stripe rows next to
+        # single-glyph flags
+        cell, cols, wide = self._metrics(hits)
         while len(self._result_buttons) < len(hits):
             b = QPushButton("")
-            b.setFixedSize(self.CELL, self.CELL)
             b.setCursor(Qt.CursorShape.PointingHandCursor)
             b.clicked.connect(lambda _, btn=b: self._pick(btn.text()))
-            i = len(self._result_buttons)
-            self._result_grid.addWidget(b, i // self.COLUMNS, i % self.COLUMNS)
             self._result_buttons.append(b)
+            self._result_cols = None      # a new button needs placing
         for i, b in enumerate(self._result_buttons):
             if i < len(hits):
-                b.setText(hits[i])
-                b.setToolTip("costs 2 characters" if emoji_cost(hits[i]) > 1
-                             else "costs 1 character")
+                b.setFixedSize(cell, self.CELL)
+                self._style_button(b, hits[i], wide)
                 b.show()
             else:
                 b.hide()
+        # Re-adding 120 widgets on every keystroke is what made the old
+        # search feel broken, so the grid is only rebuilt when the shape
+        # actually changed - which is when a stripe row enters or leaves
+        # the results, not on every letter.
+        if (cols, cell) != (self._result_cols, self._result_cell):
+            for i, b in enumerate(self._result_buttons):
+                self._result_grid.removeWidget(b)
+                self._result_grid.addWidget(b, i // cols, i % cols)
+            self._result_cols, self._result_cell = cols, cell
         for b in self._tab_buttons:
             b.setChecked(False)
         self._stack.setCurrentIndex(self.RESULTS_INDEX)
         self._hint.setText(
             f"{len(hits)} found" if hits
             else "nothing found \u2013 try an English word, e.g. fire, heart")
+        self._set_note("")
 
     def open_for(self, line_edit, anchor):
         self._target = line_edit

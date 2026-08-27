@@ -32,7 +32,7 @@ from core.mediafetch import (
     backend_note as media_backend_note, source_label as media_source_label,
     player_label)
 from core.textstyle import (
-    DIGIT_STYLE_CHOICES, KEEP_HINT, STYLE_CHOICES, STYLE_NORMAL, apply_style, is_inline_marker, normalize as normalize_style, unsupported as unsupported_chars)
+    COMPACT_STYLE_CHOICES, DIGIT_STYLE_CHOICES, KEEP_HINT, STYLE_CHOICES, STYLE_NORMAL, apply_style, is_inline_marker, normalize as normalize_style, unsupported as unsupported_chars)
 from core.textutils import (
     CUSTOM_STYLE_INDEX, DEFAULT_CUSTOM_BAR, PLACEHOLDER_ALIASES, SONGBAR_STYLES, TIME_POSITIONS, TIME_POS_LINE, apply_template, bar_length, compose_bar_line, finish_template, make_songbar)
 from core.nodegraph_eval import (
@@ -161,6 +161,22 @@ class AppsPageMixin:
         self.status_count_spin.valueChanged.connect(self.on_status_count)
         cnt_row.addWidget(self.status_count_spin)
         cnt_row.addSpacing(16)
+
+        # Sits between the count and the interval because that is the
+        # order the three settings are read in: how many texts, in what
+        # order, how long each one stays. On its own line underneath it
+        # read like a setting about the text fields below it instead.
+        self.chk_status_random = QCheckBox("Random order")
+        self.chk_status_random.setToolTip(
+            "On: the next text is picked at random, never the same one "
+            "twice in a row.\n\n"
+            "Off: the texts run top to bottom and start over - Text 1, "
+            "Text 2, Text 3, Text 1 ... Empty fields are skipped either "
+            "way, so a gap in the middle does not stall the rotation.")
+        self.chk_status_random.toggled.connect(self.on_status_random)
+        cnt_row.addWidget(self.chk_status_random)
+        cnt_row.addSpacing(16)
+
         cnt_row.addWidget(QLabel("Change text every"))
         self.status_cycle_spin = QSpinBox()
         self.status_cycle_spin.setObjectName("smallspin")
@@ -411,6 +427,8 @@ class AppsPageMixin:
         #  Content   (foldable)
         # =============================================================
         cnt = self._collapsible_section("Content", mc)
+        self.content_custom_note = self._mode_note(
+            "Custom string is on. These still decide which values exist \u2013 an unticked box leaves its placeholder empty \u2013 they just no longer decide where things go.", cnt)
 
         self.chk_artist = QCheckBox("Artist")
         self.chk_title = QCheckBox("Song title")
@@ -510,6 +528,8 @@ class AppsPageMixin:
         #  Playback time & progress   (foldable)
         # =============================================================
         pb = self._collapsible_section("Playback time & progress", mc)
+        self.playback_custom_note = self._mode_note(
+            "Custom string is on. These still decide which values exist \u2013 an unticked box leaves its placeholder empty \u2013 they just no longer decide where things go.", pb)
         pb.addWidget(self.chk_time)
 
         # ---- sub-options of Time, side by side ----------------------
@@ -581,6 +601,7 @@ class AppsPageMixin:
         lbl_tpos = QLabel("Time position")
         lbl_tpos.setObjectName("dim")
         grid.addWidget(lbl_tpos, 0, 2)
+        self.time_pos_lbl = lbl_tpos
         self.time_pos_combo = QComboBox()
         for label, tid in TIME_POSITIONS:
             self.time_pos_combo.addItem(label, tid)
@@ -795,147 +816,159 @@ class AppsPageMixin:
         self.hw_content = QWidget()
         hc = QVBoxLayout(self.hw_content)
         hc.setContentsMargins(0, 0, 0, 0)
-        hc.setSpacing(6)
+        hc.setSpacing(8)
 
-        def hw_chk(label, key):
-            chk = QCheckBox(label)
-            chk.toggled.connect(lambda on, k=key: self.on_hw_option(k, on))
-            hc.addWidget(chk)
-            return chk
-
-        # ----- GPU -----
+        # =============================================================
+        #  Components   (2x2 grid of boxes)
+        # =============================================================
         # FPS used to live here. It moved into the World Stats plugin in
         # v1.4.4: reading a frame rate means loading something into the
         # game - a Vulkan layer on Linux, RTSS on Windows - and none of
         # that belongs in the same place as /proc and /sys. The plugin
         # owns the layer, its build step and its settings; uninstall the
         # plugin and all of it goes with it.
+        hc.addWidget(self._section_header("Components"))
 
-        gpu_lbl = QLabel("GPU:")
-        gpu_lbl.setObjectName("cardtitle")
-        gpu_lbl.setStyleSheet("font-size: 14px;")
-        hc.addWidget(gpu_lbl)
-        self.chk_gpu_usage = hw_chk("GPU usage  (e.g. GPU: 27%)", "hw_gpu_usage")
-        self.chk_gpu_temp = hw_chk("GPU temp", "hw_gpu_temp")
-        self.chk_gpu_power = hw_chk(
-            "GPU power draw in watts  (e.g. 213W)", "hw_gpu_power")
-        self.chk_gpu_power.setToolTip(
-            "Adds the card's power draw to the GPU line, and fills "
-            "{gpu_power} / {gpu_watt} for custom strings.\n\n"
-            "NVIDIA always reports it. AMD needs amdgpu's hwmon node, and "
-            "on Windows both come from LibreHardwareMonitor. Where nothing "
-            "reports a value the line simply stays as it was.")
-        self.chk_gpu_name = hw_chk("GPU name", "hw_gpu_name")
-        gname_row = QHBoxLayout()
-        self.chk_gpu_custom = QCheckBox("Custom GPU name:")
-        self.chk_gpu_custom.toggled.connect(lambda on: self.on_hw_option("hw_gpu_custom", on))
-        self.gpu_custom_input = QLineEdit()
-        self.gpu_custom_input.setPlaceholderText("RX 9060 XT / RTX 5060 Ti / ...")
-        self.gpu_custom_input.setMaxLength(30)
-        self.gpu_custom_input.textChanged.connect(
-            lambda t: self.on_hw_text("hw_gpu_custom_name", t))
-        gname_row.addWidget(self.chk_gpu_custom)
-        gname_row.addWidget(self.gpu_custom_input, 1)
-        hc.addLayout(gname_row)
-        # small-letter style for the GPU name: a card name is the longest
-        # thing on a hardware line, so this is where the space is
-        gstyle_row = QHBoxLayout()
-        gstyle_row.addSpacing(24)
-        gstyle_row.addWidget(QLabel("GPU name style:"))
-        self.gpu_style_combo = self._make_style_combo(
-            "Renders the GPU name small to save room on the line. "
-            "Applies to the detected name and to your custom one.")
-        self.gpu_style_combo.currentIndexChanged.connect(
-            lambda _i: self.on_hw_style("hw_gpu_name_style",
-                                        self.gpu_style_combo.currentData()))
-        gstyle_row.addWidget(self.gpu_style_combo)
-        gstyle_row.addStretch()
-        hc.addLayout(gstyle_row)
+        comp = QGridLayout()
+        comp.setContentsMargins(0, 0, 0, 0)
+        comp.setHorizontalSpacing(10)
+        comp.setVerticalSpacing(10)
+        comp.setColumnStretch(0, 1)
+        comp.setColumnStretch(1, 1)
+        # Boxes in a row share a height, so the grid reads as a grid.
+        # VRAM and RAM have less in them than GPU and CPU, which is why
+        # they end with a stretch: their content sits at the top of the
+        # box rather than floating in the middle of it.
+
+        # ----- GPU -----
+        gpu_box, gpu = self._hw_component("GPU")
+        (self.chk_gpu_usage, self.chk_gpu_temp,
+         self.chk_gpu_power, self.chk_gpu_name) = self._hw_check_grid(gpu, (
+             ("Usage", "hw_gpu_usage",
+              "The load on the card, e.g. GPU: 27%."),
+             ("Temp", "hw_gpu_temp",
+              "The card's temperature. Shown as \u00b0C or as a flame - "
+              "see Config & formatting below."),
+             ("Power draw", "hw_gpu_power",
+              "Adds the card's power draw to the GPU line, and fills "
+              "{gpu_power} / {gpu_watt} for custom strings.\n\n"
+              "NVIDIA always reports it. AMD needs amdgpu's hwmon node, "
+              "and on Windows both come from LibreHardwareMonitor. Where "
+              "nothing reports a value the line simply stays as it was."),
+             ("Name", "hw_gpu_name",
+              "The detected card name. Off means the line says GPU."),
+         ))
+        (self.chk_gpu_custom, self.gpu_custom_input,
+         self.gpu_style_combo) = self._hw_name_row(
+            gpu, "gpu", "RX 9060 XT / RTX 5060 Ti / \u2026")
+        comp.addWidget(gpu_box, 0, 0)
 
         # ----- VRAM -----
-        vram_lbl = QLabel("VRAM:")
-        vram_lbl.setObjectName("cardtitle")
-        vram_lbl.setStyleSheet("font-size: 14px;")
-        hc.addWidget(vram_lbl)
-        self.chk_vram_used = hw_chk("VRAM usage in numbers  (e.g. 12/16GB)", "hw_vram_used")
-        self.chk_vram_pct = hw_chk("VRAM usage in %", "hw_vram_pct")
-
+        vram_box, vram = self._hw_component("VRAM")
+        (self.chk_vram_used, self.chk_vram_pct) = self._hw_check_grid(vram, (
+            ("Numbers", "hw_vram_used", "e.g. 12/16GB"),
+            ("Percent", "hw_vram_pct", "e.g. 75%"),
+        ))
+        vram.addStretch()
+        comp.addWidget(vram_box, 0, 1)
 
         # ----- CPU -----
-        cpu_lbl = QLabel("CPU:")
-        cpu_lbl.setObjectName("cardtitle")
-        cpu_lbl.setStyleSheet("font-size: 14px;")
-        hc.addWidget(cpu_lbl)
-        self.chk_cpu_usage = hw_chk("CPU usage  (e.g. CPU: 27%)", "hw_cpu_usage")
-        self.chk_cpu_temp = hw_chk("CPU temp", "hw_cpu_temp")
-        self.chk_cpu_power = hw_chk(
-            "CPU power draw in watts  (e.g. 68W)", "hw_cpu_power")
-        self.chk_cpu_power.setToolTip(
-            "Adds the package power to the CPU line, and fills "
-            "{cpu_power} / {cpu_watt} for custom strings.\n\n"
-            "Needs zenpower or readable RAPL counters on Linux, and "
-            "LibreHardwareMonitor on Windows. Where nothing reports a "
-            "value the line simply stays as it was.")
-        if IS_WINDOWS:
-            hc.addLayout(self._build_wintemp_row())
-        self.chk_cpu_name = hw_chk("CPU name", "hw_cpu_name")
-        cname_row = QHBoxLayout()
-        self.chk_cpu_custom = QCheckBox("Custom CPU name:")
-        self.chk_cpu_custom.toggled.connect(lambda on: self.on_hw_option("hw_cpu_custom", on))
-        self.cpu_custom_input = QLineEdit()
-        self.cpu_custom_input.setPlaceholderText("Ryzen 7 9700X / i7 12700K / ...")
-        self.cpu_custom_input.setMaxLength(30)
-        self.cpu_custom_input.textChanged.connect(
-            lambda t: self.on_hw_text("hw_cpu_custom_name", t))
-        cname_row.addWidget(self.chk_cpu_custom)
-        cname_row.addWidget(self.cpu_custom_input, 1)
-        hc.addLayout(cname_row)
-        cstyle_row = QHBoxLayout()
-        cstyle_row.addSpacing(24)
-        cstyle_row.addWidget(QLabel("CPU name style:"))
-        self.cpu_style_combo = self._make_style_combo(
-            "Renders the CPU name small to save room on the line. "
-            "Applies to the detected name and to your custom one.")
-        self.cpu_style_combo.currentIndexChanged.connect(
-            lambda _i: self.on_hw_style("hw_cpu_name_style",
-                                        self.cpu_style_combo.currentData()))
-        cstyle_row.addWidget(self.cpu_style_combo)
-        cstyle_row.addStretch()
-        hc.addLayout(cstyle_row)
+        cpu_box, cpu = self._hw_component("CPU")
+        (self.chk_cpu_usage, self.chk_cpu_temp,
+         self.chk_cpu_power, self.chk_cpu_name) = self._hw_check_grid(cpu, (
+             ("Usage", "hw_cpu_usage",
+              "The load across all cores, e.g. CPU: 27%."),
+             ("Temp", "hw_cpu_temp",
+              "The package temperature. Shown as \u00b0C or as a flame - "
+              "see Config & formatting below."),
+             ("Power draw", "hw_cpu_power",
+              "Adds the package power to the CPU line, and fills "
+              "{cpu_power} / {cpu_watt} for custom strings.\n\n"
+              "Needs zenpower or readable RAPL counters on Linux, and "
+              "LibreHardwareMonitor on Windows. Where nothing reports a "
+              "value the line simply stays as it was."),
+             ("Name", "hw_cpu_name",
+              "The detected processor name. Off means the line says CPU."),
+         ))
+        (self.chk_cpu_custom, self.cpu_custom_input,
+         self.cpu_style_combo) = self._hw_name_row(
+            cpu, "cpu", "Ryzen 7 9700X / i7 12700K / \u2026")
+        comp.addWidget(cpu_box, 1, 0)
 
         # ----- RAM -----
-        ram_lbl = QLabel("RAM:")
-        ram_lbl.setObjectName("cardtitle")
-        ram_lbl.setStyleSheet("font-size: 14px;")
-        hc.addWidget(ram_lbl)
-        self.chk_ram_used = hw_chk("RAM usage in numbers  (e.g. 12/16GB)", "hw_ram_used")
-        self.chk_ram_pct = hw_chk("RAM usage in %", "hw_ram_pct")
-        ramtype_row = QHBoxLayout()
-        ramtype_row.addWidget(QLabel("RAM type (optional, e.g. DDR5):"))
+        ram_box, ram = self._hw_component("RAM")
+        (self.chk_ram_used, self.chk_ram_pct) = self._hw_check_grid(ram, (
+            ("Numbers", "hw_ram_used", "e.g. 12/32GB"),
+            ("Percent", "hw_ram_pct", "e.g. 38%"),
+        ))
+        ramtype_box, ramtype = self._sub_group()
+        rt_lbl = QLabel("Type")
+        rt_lbl.setObjectName("dim")
+        ramtype.addWidget(rt_lbl)
         self.ram_type_input = QLineEdit()
         self.ram_type_input.setPlaceholderText("DDR5")
         self.ram_type_input.setMaxLength(10)
-        self.ram_type_input.setFixedWidth(100)
+        self.ram_type_input.setFixedWidth(88)
+        self.ram_type_input.setToolTip(
+            "Optional. Nothing can detect the memory generation without "
+            "reading SPD as root, so it is yours to type or leave empty. "
+            "Fills {ram_type}.")
         self.ram_type_input.textChanged.connect(
             lambda t: self.on_hw_text("hw_ram_type", t))
-        ramtype_row.addWidget(self.ram_type_input)
-        ramtype_row.addStretch()
-        hc.addLayout(ramtype_row)
+        ramtype.addWidget(self.ram_type_input)
+        ramtype.addStretch()
+        ram.addWidget(ramtype_box)
+        comp.addWidget(ram_box, 1, 1)
 
-        # ----- Config -----
-        cfg_lbl = QLabel("Config:")
-        cfg_lbl.setObjectName("cardtitle")
-        cfg_lbl.setStyleSheet("font-size: 14px;")
-        hc.addWidget(cfg_lbl)
+        # Equal stretch alone does not give equal columns: it splits the
+        # *spare* room evenly on top of each column's own minimum, and
+        # GPU's minimum (a text field plus a dropdown on one row) is far
+        # larger than VRAM's two checkboxes. Giving both columns the
+        # larger minimum makes the spare room the only difference, which
+        # is none. Below that width the page scrolls, like every other
+        # card here.
+        # minimumSizeHint, not sizeHint: the preferred width of a box
+        # containing a text field is "as wide as you like", and using it
+        # as a floor puts a horizontal scrollbar under a 1024px window.
+        for box in (gpu_box, vram_box, cpu_box, ram_box):
+            # minimumSizeHint is computed from the child widgets' fonts,
+            # and those are not resolved until the widget is polished.
+            # Asking first gives an answer that is a dozen pixels short,
+            # which is exactly enough to un-equalise the columns again.
+            box.ensurePolished()
+        floor = max(box.minimumSizeHint().width()
+                    for box in (gpu_box, vram_box, cpu_box, ram_box))
+        for box in (gpu_box, vram_box, cpu_box, ram_box):
+            box.setMinimumWidth(floor)
+        comp.setColumnMinimumWidth(0, floor)
+        comp.setColumnMinimumWidth(1, floor)
 
-        self.chk_hw_flame = QCheckBox("Flame icon for temps  (62\U0001F525 instead of 62\u00b0C)")
-        self.chk_hw_flame.toggled.connect(lambda on: self.on_hw_option("hw_flame", on))
-        hc.addWidget(self.chk_hw_flame)
+        hc.addLayout(comp)
 
-        self.chk_hw_custom = QCheckBox("Custom string  (build your own layout)")
-        self.chk_hw_custom.toggled.connect(lambda on: self.on_hw_option("hw_custom", on))
+        # The Windows temperature helper is about the CPU but is three
+        # paragraphs of explanation, a button and a status line. In a
+        # half-width box it would be a column of two-word lines, so it
+        # gets the full width underneath the grid instead.
+        if IS_WINDOWS:
+            hc.addLayout(self._build_wintemp_row(indent=0))
+
+        # =============================================================
+        #  Custom string   (foldable help)
+        # =============================================================
+        hc.addWidget(self._section_header("Custom string"))
+
+        self.chk_hw_custom = QCheckBox("Build my own layout")
+        self.chk_hw_custom.setToolTip(
+            "Replaces the generated hardware line with your own "
+            "arrangement. The checkboxes above still decide which values "
+            "exist - {gpu_temp} stays empty while Temperature is off.")
+        self.chk_hw_custom.toggled.connect(
+            lambda on: self.on_hw_option("hw_custom", on))
         hc.addWidget(self.chk_hw_custom)
+
+        self.hw_custom_box, hwc = self._sub_group(vertical=True)
         hw_custom_row = QHBoxLayout()
+        hw_custom_row.setContentsMargins(0, 0, 0, 0)
         self.hw_custom_input = QLineEdit()
         self.hw_custom_input.setMaxLength(200)
         self.hw_custom_input.textChanged.connect(
@@ -962,28 +995,65 @@ class AppsPageMixin:
         hw_ico.setToolTip("Insert icon")
         hw_ico.setCursor(Qt.CursorShape.PointingHandCursor)
         hw_ico.clicked.connect(
-            lambda _, e=self.hw_custom_input, b=hw_ico: self.emoji_popup.open_for(e, b))
+            lambda _, e=self.hw_custom_input, b=hw_ico:
+                self.emoji_popup.open_for(e, b))
         hw_custom_row.addWidget(hw_ico)
-        hc.addLayout(hw_custom_row)
-        hw_ph = QLabel("Placeholders: {gpu_name} {gpu_usage} {gpu_temp} {vram_usage} "
-                       "{cpu_name} {cpu_usage} {cpu_temp} {ram_usage} {ram_type} "
-                       "{icon_flame} {temp_icon}  \u2013  use \\n for a line break. Values follow "
-                       "the checkboxes above (unchecked = empty, name unchecked = GPU/CPU).")
-        hw_ph.setObjectName("dim")
-        hw_ph.setWordWrap(True)
-        hc.addWidget(hw_ph)
+        hwc.addLayout(hw_custom_row)
 
-        hw_style = QLabel(
-            "Text styles: wrap any part in {super/\"word\"} or "
-            "{sub/\"word\"} to make it small \u2013 "
-            "GPU {gpu_usage} {super/\"vram\"} {vram_usage} comes out as "
-            "GPU 68% \u2CFD\u1D3F\u1D2C\u1D39 9.1G. A placeholder works "
-            "inside one too: {super/{cpu_temp}}. Not every letter has a "
-            "small form (superscript has no q, subscript is missing about "
-            "half the alphabet) \u2013 those pass through unchanged.")
-        hw_style.setObjectName("dim")
-        hw_style.setWordWrap(True)
-        hc.addWidget(hw_style)
+        # Two paragraphs of reference text used to sit here in dim grey,
+        # permanently, competing with the settings around them. Folded
+        # away they are reference material: there when you go looking,
+        # quiet when you are not.
+        help_body = self._collapsible_section(
+            "Placeholders & text styles", hwc)
+        legend = QFrame()
+        legend.setObjectName("infobox")
+        lg = QVBoxLayout(legend)
+        lg.setContentsMargins(10, 8, 10, 8)
+        lg.setSpacing(6)
+        for heading, body in (
+            ("Placeholders",
+             "{gpu_name} {gpu_usage} {gpu_temp} {gpu_power} {vram_usage} "
+             "{cpu_name} {cpu_usage} {cpu_temp} {cpu_power} {ram_usage} "
+             "{ram_type} {icon_flame} {temp_icon}"),
+            ("Line breaks",
+             "\\n starts a new line. Values follow the checkboxes above: "
+             "unchecked is empty, and a name left unchecked comes out as "
+             "GPU or CPU."),
+            ("Small text",
+             "Wrap any part in {super/\"word\"} or {sub/\"word\"} to shrink "
+             "it. GPU {gpu_usage} {super/\"vram\"} {vram_usage} comes out "
+             "as GPU 68% \u2CFD\u1D3F\u1D2C\u1D39 9.1G. A placeholder works "
+             "inside one too: {super/{cpu_temp}}."),
+            ("What will not shrink",
+             "Unicode has no small form for every letter - superscript is "
+             "missing q, subscript about half the alphabet. Those "
+             "characters pass through at full size."),
+        ):
+            h = QLabel(heading)
+            h.setObjectName("dim")
+            h.setStyleSheet("font-weight: 600;")
+            lg.addWidget(h)
+            b = QLabel(body)
+            b.setObjectName("dim")
+            b.setWordWrap(True)
+            lg.addWidget(b)
+        help_body.addWidget(legend)
+        hc.addWidget(self.hw_custom_box)
+
+        # =============================================================
+        #  Config & formatting
+        # =============================================================
+        hc.addWidget(self._section_header("Config & formatting"))
+
+        self.chk_hw_flame = QCheckBox(
+            "Flame icon for temps  (62\U0001F525 instead of 62\u00b0C)")
+        self.chk_hw_flame.setToolTip(
+            "Applies to both temperatures, and to {temp_icon} in a custom "
+            "string. Saves one character per temperature.")
+        self.chk_hw_flame.toggled.connect(
+            lambda on: self.on_hw_option("hw_flame", on))
+        hc.addWidget(self.chk_hw_flame)
 
         hpoll_row = QHBoxLayout()
         hpoll_row.addWidget(QLabel("Query hardware every"))
@@ -992,6 +1062,10 @@ class AppsPageMixin:
         self.hw_poll_spin.setRange(1, 60)
         self.hw_poll_spin.setFixedSize(64, 28)
         self.hw_poll_spin.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.hw_poll_spin.setToolTip(
+            "How often /proc, /sys and the GPU are read. The chatbox "
+            "sends on its own schedule; this only decides how fresh the "
+            "numbers are when it does.")
         self.hw_poll_spin.valueChanged.connect(self.on_hw_poll_changed)
         hpoll_row.addWidget(self.hw_poll_spin)
         hpoll_row.addWidget(QLabel("sec"))
@@ -1335,14 +1409,20 @@ class AppsPageMixin:
     # ================================================================
     # small-letter styles (superscript / subscript)
     # ================================================================
-    def _make_style_combo(self, tooltip, choices=STYLE_CHOICES):
+    def _make_style_combo(self, tooltip, choices=STYLE_CHOICES, width=196):
         """One dropdown for one styled field. The label carries its own
-        preview, so the effect is visible before anything is picked."""
+        preview, so the effect is visible before anything is picked.
+
+        `width` exists for the Hardware component cards, which are half
+        a card wide and share their row with a text field. Pair a
+        narrower box with COMPACT_STYLE_CHOICES rather than clipping the
+        long labels.
+        """
         combo = QComboBox()
         for label, value in choices:
             combo.addItem(label, value)
         combo.setToolTip(tooltip)
-        combo.setFixedWidth(196)
+        combo.setFixedWidth(width)
         combo.setCursor(Qt.CursorShape.PointingHandCursor)
         return combo
 
@@ -1472,6 +1552,14 @@ class AppsPageMixin:
         self.save_config()
         self.update_timers()
 
+    def on_status_random(self, on):
+        if getattr(self, "_block_updating", False):
+            return
+        self.cfg["status_random"] = on
+        self.save_config()
+        self.log("Personal Status: texts switch "
+                 + ("randomly" if on else "in order, top to bottom"))
+
     def _update_plugin_timer(self):
         """Keeps the preview refreshing while any plugin is active, so
         live values (clocks, world info) don't sit there stale between
@@ -1499,16 +1587,30 @@ class AppsPageMixin:
         return apply_style(text, style)
 
     def advance_status(self):
-        """Switches to a RANDOM other status text (never the same one
-        twice in a row) instead of cycling sequentially."""
+        """Moves to the next status text.
+
+        Two orders, chosen by the Random order checkbox:
+
+        - **random**, which is what this always did: any text except the
+          one currently up, so nothing repeats back to back;
+        - **in order**, straight down the list and around again.
+
+        Both walk the *non-empty* texts only. Leaving a gap in the
+        middle of the list is a normal thing to do while editing, and a
+        sequential rotation that stopped on Text 4 because it is blank
+        would look like the app had frozen.
+        """
         texts = [t.strip() for t in
                  self.cfg["status_texts"][:self.cfg["status_count"]]]
         texts = [t for t in texts if t]
         if len(texts) <= 1:
             return
         current = self.status_index % len(texts)
-        choices = [i for i in range(len(texts)) if i != current]
-        nxt = random.choice(choices)
+        if self.cfg.get("status_random", True):
+            choices = [i for i in range(len(texts)) if i != current]
+            nxt = random.choice(choices)
+        else:
+            nxt = (current + 1) % len(texts)
 
         # The new text is only PENDING at this point. The preview must not
         # show anything VRChat is not showing, so the switch is committed
@@ -1548,8 +1650,9 @@ class AppsPageMixin:
                 if t.strip()]
 
     def current_status_text(self):
-        """Returns the currently shown status text (switches randomly
-        between the non-empty texts every status_cycle_sec seconds)."""
+        """Returns the currently shown status text (switches between the
+        non-empty texts every status_cycle_sec seconds - randomly or in
+        order, see advance_status)."""
         slots = self._status_slots()
         if not slots:
             return ""
@@ -1705,6 +1808,125 @@ class AppsPageMixin:
         layout.setSpacing(6 if vertical else 8)
         return frame, layout
 
+    # ================================================================
+    #  Hardware card scaffolding
+    # ================================================================
+    def _hw_component(self, title, subtitle=""):
+        """One bordered box for one component. Returns (frame, layout).
+
+        The Hardware card used to be one column of eighteen checkboxes
+        with four bold labels somewhere in it, and finding the CPU half
+        meant scrolling past the GPU half. Four boxes in a 2x2 grid fit
+        the same options in a third of the height, and "which component
+        is this" stops being something you work out from the label above
+        the checkbox you happen to be looking at.
+        """
+        frame = QFrame()
+        frame.setObjectName("hwcard")
+        layout = QVBoxLayout(frame)
+        layout.setContentsMargins(12, 10, 12, 12)
+        layout.setSpacing(6)
+        head = QLabel(title)
+        head.setObjectName("hwcardtitle")
+        layout.addWidget(head)
+        if subtitle:
+            sub = QLabel(subtitle)
+            sub.setObjectName("dim")
+            sub.setWordWrap(True)
+            layout.addWidget(sub)
+        return frame, layout
+
+    def _hw_check_grid(self, parent_layout, specs, columns=2):
+        """The component's checkboxes, two per row.
+
+        `specs` is (label, config key, tooltip or None). The labels are
+        short because the box above them already says GPU or CPU - the
+        examples that used to be in the label ("GPU usage  (e.g. GPU:
+        27%)") moved into the tooltips, which is where a thing you read
+        once belongs.
+        """
+        grid = QGridLayout()
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(10)
+        grid.setVerticalSpacing(2)
+        made = []
+        for i, (label, key, tip) in enumerate(specs):
+            chk = QCheckBox(label)
+            if tip:
+                chk.setToolTip(tip)
+            chk.toggled.connect(lambda on, k=key: self.on_hw_option(k, on))
+            grid.addWidget(chk, i // columns, i % columns)
+            made.append(chk)
+        for col in range(columns):
+            grid.setColumnStretch(col, 1)
+        parent_layout.addLayout(grid)
+        return made
+
+    def _hw_name_row(self, parent_layout, which, placeholder):
+        """The "Custom name" checkbox and, indented under it, the name
+        field and its style dropdown on one shared row.
+
+        Returns (checkbox, line edit, combo).
+
+        Only the text field follows the checkbox. The dropdown does not,
+        because the style applies to the *detected* name as well - see
+        _hw_display_name() - so greying it out with the custom name off
+        would take away a setting that is still doing something.
+        """
+        chk = QCheckBox("Custom name")
+        chk.setToolTip(
+            f"Use your own text instead of the detected {which.upper()} "
+            "name. Detection returns marketing names that are long and "
+            "sometimes wrong; 30 characters of the 144 is a lot to spend "
+            "on one.")
+        chk.toggled.connect(
+            lambda on, k=f"hw_{which}_custom": self.on_hw_option(k, on))
+        parent_layout.addWidget(chk)
+
+        box, row = self._sub_group()
+        edit = QLineEdit()
+        edit.setPlaceholderText(placeholder)
+        edit.setMaxLength(30)
+        # no minimum: the card is half a settings card wide, and a field
+        # that refuses to shrink pushes the dropdown off the edge on a
+        # 1024px window instead of just getting narrow
+        edit.setMinimumWidth(0)
+        edit.textChanged.connect(
+            lambda t, k=f"hw_{which}_custom_name": self.on_hw_text(k, t))
+        row.addWidget(edit, 1)
+
+        combo = self._make_style_combo(
+            f"Renders the {which.upper()} name small to save room on the "
+            "line. Applies to the detected name and to your custom one.",
+            choices=COMPACT_STYLE_CHOICES, width=126)
+        combo.currentIndexChanged.connect(
+            lambda _i, k=f"hw_{which}_name_style", c=combo:
+                self.on_hw_style(k, c.currentData()))
+        row.addWidget(combo)
+        parent_layout.addWidget(box)
+        return chk, edit, combo
+
+    def _mode_note(self, text, parent_layout):
+        """A line at the top of a section, shown only when a setting
+        somewhere else changed what that section does.
+
+        This exists because the alternative - greying the section out -
+        was a lie. Greyed means "this does nothing"; these controls do
+        plenty in custom-string mode, they just stopped deciding the
+        layout. Saying so costs one line and leaves everything clickable.
+        """
+        frame = QFrame()
+        frame.setObjectName("infobox")
+        lay = QHBoxLayout(frame)
+        lay.setContentsMargins(10, 6, 10, 6)
+        lbl = QLabel(text)
+        lbl.setObjectName("dim")
+        lbl.setWordWrap(True)
+        lay.addWidget(lbl, 1)
+        frame.setVisible(False)
+        parent_layout.addWidget(frame)
+        return frame
+
     def _collapsible_section(self, title, parent_layout):
         """A section header that is also the arrow to fold it away.
 
@@ -1813,7 +2035,11 @@ class AppsPageMixin:
         - Time with seconds -> only with Time
         - Use my own .lrc files -> only with Lyrics
         - all Songbar options -> only with Songbar
-        The custom songbar editor additionally needs the Custom style."""
+        The custom songbar editor additionally needs the Custom style.
+
+        Custom-string mode adds a note to Content and Playback rather
+        than disabling them - see the comment further down for why.
+        """
         title_on = self.chk_title.isChecked()
         time_on = self.chk_time.isChecked()
         lyrics_on = self.chk_lyrics.isChecked()
@@ -1834,16 +2060,29 @@ class AppsPageMixin:
         is_custom = self.bar_style_combo.currentIndex() == CUSTOM_STYLE_INDEX
         self.bar_custom_box.setVisible(bar_on and is_custom)
         self.media_custom_box.setVisible(custom_on)
-        # A custom string replaces the parts above it rather than adding
-        # to them, so leaving Content and Playback time looking live
-        # while they no longer decide the layout is a lie the old card
-        # told. They stay visible - the checkboxes still control which
-        # values exist - but greyed out, which is what "these are inputs
-        # now, not the layout" looks like.
-        for widget in (self.chk_artist, self.chk_title, self.title_max_row,
-                       self.chk_time, self.time_opts_box, self.chk_bar,
-                       self.songbar_box):
+        # A custom string replaces the LAYOUT above it, not the settings.
+        # Everything in Content and Playback still feeds it: an unticked
+        # Song title leaves {title} empty, Max length still truncates,
+        # "With seconds" still picks the time format, and the songbar
+        # style and size still build {bar}. Greying them out - which is
+        # what v1.4.4 did - locked people out of settings that were
+        # still doing their job, so the sections say what changed
+        # instead and stay usable.
+        self.content_custom_note.setVisible(custom_on)
+        self.playback_custom_note.setVisible(custom_on)
+        # The one genuine exception. "Time position" merges the clock
+        # into the bar line, and that merge only happens while the
+        # standard layout is building the lines - a custom string places
+        # {bar} and {time} itself. This one really does nothing, so it
+        # really is greyed.
+        for widget in (self.time_pos_combo, self.time_pos_lbl):
             widget.setEnabled(not custom_on)
+        self.time_pos_combo.setToolTip(
+            "Not used while a custom string is on - your string decides "
+            "where {time} goes."
+            if custom_on else
+            "Merging the time into the bar keeps the chatbox at two "
+            "lines instead of three.")
         # folder row: only when Lyrics AND "use my own .lrc" are both on
         self._sync_lyrics_local()
         self.update_media_preview()
@@ -2013,9 +2252,35 @@ class AppsPageMixin:
         self.update_timers()
         self.update_preview()
 
+    def _sync_hw_dependents(self):
+        """Greys out the fields whose parent checkbox is off.
+
+        Three separate rules, because the three things depend on
+        different checkboxes:
+
+        - the custom GPU/CPU name field follows its own "Custom name";
+        - the style dropdown does NOT, because _hw_display_name() styles
+          the detected name too - it only goes dead when neither a
+          detected nor a custom name is going out, and the line would
+          say a bare GPU or CPU;
+        - the custom string editor follows "Build my own layout".
+
+        Greyed rather than hidden, on purpose: a row that vanishes takes
+        its own explanation with it, and someone who ticks "Custom name"
+        should find the field where they last saw it.
+        """
+        for which in ("gpu", "cpu"):
+            custom_on = getattr(self, f"chk_{which}_custom").isChecked()
+            name_on = getattr(self, f"chk_{which}_name").isChecked()
+            getattr(self, f"{which}_custom_input").setEnabled(custom_on)
+            getattr(self, f"{which}_style_combo").setEnabled(
+                custom_on or name_on)
+        self.hw_custom_box.setEnabled(self.chk_hw_custom.isChecked())
+
     def on_hw_option(self, key, on):
         self.cfg[key] = on
         self.save_config()
+        self._sync_hw_dependents()
         self.update_preview()
 
     def on_hw_text(self, key, text):
@@ -3145,14 +3410,20 @@ class AppsPageMixin:
         return f"{t:.0f}\U0001F525" if self.cfg["hw_flame"] else f"{t:.0f}\u00b0C"
 
     # ------------------------------------------------- Windows temps
-    def _build_wintemp_row(self):
+    def _build_wintemp_row(self, indent=24):
         """Windows only: CPU temperatures need a kernel driver, which no
-        unelevated process has. See core/backends/wintemp.py for why."""
+        unelevated process has. See core/backends/wintemp.py for why.
+
+        `indent` was the 24px that tied this block to the CPU checkbox
+        above it. Since v1.4.5 it is its own full-width block under the
+        component grid, where there is no checkbox to hang off and the
+        indent is just a margin - so the caller passes 0.
+        """
         outer = QVBoxLayout()
         outer.setSpacing(4)
 
         row = QHBoxLayout()
-        row.addSpacing(24)
+        row.addSpacing(indent)
         self.wintemp_btn = QPushButton(
             "Enable advanced temperature monitoring\u2026")
         self.wintemp_btn.setObjectName("linkbtn")
@@ -3176,7 +3447,7 @@ class AppsPageMixin:
         outer.addLayout(row)
 
         hint_row = QHBoxLayout()
-        hint_row.addSpacing(24)
+        hint_row.addSpacing(indent)
         self.wintemp_lbl = QLabel("\u2139 checking\u2026")
         self.wintemp_lbl.setStyleSheet("color: #7a8290; font-size: 11px;")
         self.wintemp_lbl.setWordWrap(True)
@@ -3185,7 +3456,7 @@ class AppsPageMixin:
 
         # ----- recommended extra software -----
         rec_row = QHBoxLayout()
-        rec_row.addSpacing(24)
+        rec_row.addSpacing(indent)
         rec = QLabel(
             "Recommended extra software: LibreHardwareMonitor (LHM). "
             "Lightweight, open source and uses practically no system "
@@ -3197,7 +3468,7 @@ class AppsPageMixin:
         outer.addLayout(rec_row)
 
         dl_row = QHBoxLayout()
-        dl_row.addSpacing(24)
+        dl_row.addSpacing(indent)
         lhm_btn = QPushButton("Download LibreHardwareMonitor")
         lhm_btn.setObjectName("linkbtn")
         lhm_btn.setFixedHeight(26)

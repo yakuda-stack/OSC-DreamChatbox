@@ -514,6 +514,8 @@ class MainWindow(ConfigMixin, AppsPageMixin, AdvancedPageMixin,
                                  self.cfg["status_styles"][i])
         self.status_count_spin.setValue(self.cfg["status_count"])
         self.status_cycle_spin.setValue(self.cfg["status_cycle_sec"])
+        self.chk_status_random.setChecked(
+            bool(self.cfg.get("status_random", True)))
         self.tpl_buttons[self.cfg["status_template_active"]].setChecked(True)
         self._update_texts_expander_label()
         for i, row in enumerate(self.status_rows):
@@ -721,6 +723,10 @@ class MainWindow(ConfigMixin, AppsPageMixin, AdvancedPageMixin,
         self.chk_cpu_temp.setChecked(self.cfg["hw_cpu_temp"])
         self.chk_cpu_power.setChecked(self.cfg["hw_cpu_power"])
         self.hw_poll_spin.setValue(self.cfg["hw_poll_sec"])
+        # after every checkbox above has its stored value: setChecked()
+        # fires nothing when the value already matches, so the greying
+        # cannot be left to the toggled handlers alone
+        self._sync_hw_dependents()
         self.toggle_send.setChecked(self.cfg["send_to_vrchat"])
         self.interval_spin.setValue(self.cfg["interval_sec"])
         self.toggle_instant.blockSignals(True)

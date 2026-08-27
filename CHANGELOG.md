@@ -6,6 +6,118 @@ All notable changes to OSC-DreamChatbox are documented here.
 
 🟢 Linux Support: Complete & Stable (v1.2.6)
 
+## [v1.4.5] – 2026-08-26
+
+**Flags in the icon picker, a status rotation that can run in order,
+Hardware settings that stop being one long column, and a MediaPlay card
+that is clickable again.**
+
+### Added
+
+**Personal Status can run its texts in order**
+
+- A **Random order** checkbox on the Personal Status card, **on by
+  default** — which is what the rotation always did, so no existing
+  config changes behaviour. It sits between *Number of texts* and
+  *Change text every*, which is the order the three are read in: how
+  many texts, in what order, how long each one stays.
+- Turn it off and the texts run **top to bottom** and start over: Text 1,
+  Text 2, Text 3, Text 1 … Useful for anything where the order carries
+  meaning and a shuffle does not, like a greeting followed by what you
+  are doing followed by where to find you.
+- **Empty fields are skipped either way.** Leaving a gap in the middle
+  of the list while editing is normal, and a rotation that stopped on a
+  blank Text 3 would look like the app had frozen.
+
+**Pride and country flags**
+
+- Two new categories in the icon picker: **Pride** and **Flags**. The
+  rainbow and transgender flags, 149 country flags, plus the plain ones
+  (🏁 🚩 🏳️ 🏴 🏴‍☠️).
+- The picker is reachable from every text field that already had the 😀
+  button, so this covers Personal Status, MediaPlay, Hardware, the Chat
+  box, All-in-one and plugin settings.
+- **Flags were deliberately left out until now**, and the reason has not
+  gone away: a country flag is two characters of the chatbox's 144, the
+  rainbow flag four and the transgender flag five, and whether they draw
+  at all is up to VRChat's font. So the cost is shown rather than hidden
+  — every button says what it costs, and both flag categories carry a
+  line under the grid saying they may come out as letters.
+- **Identities Unicode has no flag for** get their stripes as coloured
+  hearts instead: bi, pan, lesbian, ace, non-binary, agender and
+  aromantic. Those are ordinary hearts, so they render where a flag
+  might not, and they cost one character per stripe.
+- **Search works in German and English.** Unicode calls the German flag
+  "REGIONAL INDICATOR SYMBOL LETTER D", which is not what anyone types,
+  so the names come from a table: *deutschland*, *schweiz*, *türkei*,
+  *trans*, *queer* and *pride* all find something now.
+
+### Changed
+
+**The Hardware settings are a grid**
+
+- GPU, VRAM, CPU and RAM each get their own box, laid out **two by
+  two**. The card was 883 pixels tall and is now 580 — a third shorter
+  with nothing removed.
+- Checkboxes sit **two per row** inside each box. The examples that used
+  to be in the labels ("GPU usage  (e.g. GPU: 27%)") moved into
+  tooltips, which is where something you read once belongs.
+- **Custom name and its style share one row** under the component they
+  belong to, indented under their checkbox.
+- **Custom string got its own section**, and its two paragraphs of
+  reference text are now a *Placeholders & text styles* panel that folds
+  away. It used to sit on the card permanently in dim grey, competing
+  with the settings around it.
+- **Config & formatting** is a section at the bottom: the flame icon,
+  the poll interval and the GPU backend line.
+- On Windows, the advanced-temperature block moved out of the CPU box
+  and under the grid. Three paragraphs of explanation in a half-width
+  column would have been a stack of two-word lines.
+
+**Greying that follows the setting it belongs to**
+
+- The custom name field follows its own checkbox.
+- The style dropdown does **not**, because it also styles the *detected*
+  name — it only goes dead when neither a detected nor a custom name is
+  going out.
+- The custom string editor follows *Build my own layout*.
+
+### Fixed
+
+**MediaPlay: the Content and Playback settings were unusable with a
+custom string on**
+
+- Turning on the MediaPlay custom string greyed out the entire **Content**
+  and **Playback time & progress** sections — Artist, Song title, Max
+  length, the time format, the digit style, the songbar style and its
+  size slider. None of them could be clicked, dragged or opened.
+- That was wrong, because **every one of those settings still fed the
+  custom string**. An unticked *Song title* leaves `{title}` empty, Max
+  length still truncates, *With seconds* still picks between `1:18/3:47`
+  and `0:01/0:03`, and the songbar style and size still build `{bar}`.
+  Greying a control means it does nothing; these were doing their job
+  and simply could not be reached.
+- Both sections are **fully usable again**. When the custom string is on
+  they show a line saying what changed: they still decide which values
+  exist, they just no longer decide where things go.
+- **Time position** stays greyed, because it is the one setting that
+  genuinely does nothing in custom mode — merging the clock into the bar
+  only happens while the standard layout builds the lines, and a custom
+  string places `{bar}` and `{time}` itself. Its tooltip now says so.
+- Lyrics was inconsistently left clickable while everything around it
+  was not; the sections now behave the same way throughout.
+
+- **Icon search gave up before reaching the last categories.** It
+  stopped at the first 120 matches in palette order, so "japan" filled
+  its results with 👹 and 🏣 and never reached the Japanese flag. The
+  whole palette is searched now.
+- **A duplicate entry in the search alias table** meant one of the two
+  🎮 keyword sets was silently discarded.
+- Variation selectors and regional indicators no longer contribute their
+  Unicode names to the search index, where they put the words "letter"
+  and "symbol" on a fifth of the palette and matched queries meant for
+  something else.
+
 ## [v1.4.4] – 2026-08-26
 
 **FPS moved into the World Stats plugin, the song line can be pinned to
