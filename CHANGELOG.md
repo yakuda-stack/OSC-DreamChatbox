@@ -6,7 +6,77 @@ All notable changes to OSC-DreamChatbox are documented here.
 
 🟢 Linux Support: Complete & Stable (v1.2.6)
 
-## [v1.4.5] – 2026-08-26
+## [v1.4.6] – 2026-08-28
+
+**A settings lookup that was sweeping the Windows registry every two
+seconds is gone, and the app can now measure its own CPU usage and say
+where it went.**
+
+### Fixed
+
+**The Hardware card was re-scanning the Windows registry on every poll**
+
+- `refresh_wintemp_status()` runs after every hardware poll — every two
+  seconds by default — and asked the temperature helper for its status.
+  When that helper is not active, which is the normal state for anyone
+  who never pressed *Enable advanced temperature monitoring*, answering
+  meant calling `find_lhm()`.
+- `find_lhm()` walks **three Uninstall registry hives**, opens every
+  subkey under them and reads `DisplayName` out of each one, looking for
+  LibreHardwareMonitor. On an ordinary Windows install that is one to two
+  thousand registry opens. It ran uncached, **blocking, on the GUI
+  thread**, for the whole session. With LibreHardwareMonitor installed a
+  `tasklist` call enumerating every process on the machine ran on top of
+  it.
+- The answer to "is LibreHardwareMonitor installed" changes when somebody
+  installs a program, not twice a minute. `find_lhm()` is now cached for
+  five minutes and `_lhm_running()` for fifteen seconds. The button
+  passes `force=True` and still sees the truth — it is about to start a
+  process based on the answer, so a five-minute-old *not installed* would
+  be exactly the case the user is trying to fix.
+- **This got much worse on a slow or failing disk.** Registry reads go to
+  the disk, so on a drive that is on its way out every one of those
+  thousand-odd lookups can block for a long time — the app looked like it
+  was burning the CPU when it was really waiting for hardware. None of
+  this exists on Linux, where the same values come out of hwmon, which is
+  why it went unnoticed for so long.
+- Six tests pin the caches down: fifty calls may touch the registry once,
+  `force=True` has to bypass the cache, a hit is cached like a miss, the
+  cache expires so a mid-session install is still noticed, and on Linux
+  the registry must not be touched at all.
+
+### Added
+
+**A performance probe, off unless asked for**
+
+- Set `DCB_PERF=1` in the environment and the app measures itself,
+  writing a report every 30 seconds to the Debug Console and to
+  `perf-report.txt` next to the config. Nothing to install, works inside
+  the frozen `.exe`, and costs nothing at all when the variable is not
+  set.
+- **Why it exists:** "it feels laggy" is not a bug report, and a user on
+  Windows cannot attach a profiler to a PyInstaller build. Now they can
+  start the app once with one variable set, use it normally, and send a
+  file.
+- Three measurements, deliberately kept apart because each one alone
+  misleads. **CPU per thread** comes from the operating system
+  (`GetThreadTimes` on Windows, `/proc/self/task` on Linux) and is the
+  ground truth — a thread parked in `recv()` reads zero. **Stack
+  sampling** every 20 ms says *where*, grouped per thread and headed with
+  that thread's measured CPU, so 80% of the samples under a 0.6% heading
+  reads as "this is where it waits" instead of a false hotspot. **Poller
+  timings** are wall clock with a worst case, because a poll that takes
+  300 ms on the GUI thread is a stutter even when its CPU share is small.
+- Tuning: `DCB_PERF_SEC` for the report interval, `DCB_PERF_MS` for the
+  sampling interval. The probe shows up in its own thread table as
+  `dcb-perf-sampler` at roughly 0.4% of a core — not subtracted, because
+  a measurement that hides its own cost is not one.
+
+### Changed
+
+- `core/constants.py`, the AUR `PKGBUILD`/`.SRCINFO` and the Inno Setup
+  script all read **1.4.6**.
+
 
 **Flags in the icon picker, a status rotation that can run in order,
 Hardware settings that stop being one long column, and a MediaPlay card

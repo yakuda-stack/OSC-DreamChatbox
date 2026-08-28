@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-OSC-DreamChatbox v1.4.5
+OSC-DreamChatbox v1.4.6
 A clean VRChat OSC chatbox sender.
 
 Entry point only – the actual code lives in:
@@ -97,6 +97,13 @@ def main():
     from ui import nowheel
     from ui.mainwindow import MainWindow
 
+    # Opt-in performance probe. Does nothing at all unless DCB_PERF=1 is
+    # in the environment - see core/perfprobe.py. Two halves on purpose:
+    # arm() has to patch the class BEFORE MainWindow.__init__ connects
+    # its timers, install() needs a finished window to sample.
+    from core import perfprobe
+    perfprobe.arm(MainWindow)
+
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     # the mouse wheel scrolls the page instead of editing whatever
@@ -125,6 +132,8 @@ def main():
     win = MainWindow()
     if icon_path.exists():
         win.setWindowIcon(QIcon(str(icon_path)))
+    # the other half of the probe armed above
+    perfprobe.install(win)
     # log what we ended up on + whether a config was moved, so a bug
     # report from a .exe user says which platform/backends were active
     try:

@@ -146,31 +146,79 @@ def _lhm_from_registry():
     return found
 
 
-def find_lhm():
-    """Path to LibreHardwareMonitor.exe, or None."""
+#: (when, result) for find_lhm(). See _FIND_TTL for why this exists.
+_find_cache = (0.0, None)
+
+#: How long a find_lhm() answer is reused. This is NOT a micro
+#: optimisation. _lhm_from_registry() walks three Uninstall hives and
+#: opens every subkey under them - one to two thousand registry opens on
+#: a normal machine - and status() calls it from refresh_wintemp_status(),
+#: which hangs off every hardware poll. Uncached that is a full registry
+#: sweep on the GUI thread every hw_poll_sec (default 2s), forever, for
+#: everyone who never pressed the temperature button. It is the single
+#: most expensive thing this app does on Windows and it exists to answer
+#: a question whose answer changes when somebody installs a program.
+_FIND_TTL = 300.0
+
+
+def find_lhm(force=False):
+    """Path to LibreHardwareMonitor.exe, or None.
+
+    Cached for _FIND_TTL seconds. ``force=True`` skips the cache, for the
+    one case that has to be exact: right after the button tried to start
+    LHM, where a stale "not installed" would be the wrong answer to show.
+    """
+    global _find_cache
     if not IS_WINDOWS:
         return None
+    now = time.monotonic()
+    if not force and now - _find_cache[0] < _FIND_TTL:
+        return _find_cache[1]
+
+    found = None
     for cand in _lhm_from_registry() + _lhm_candidates():
         try:
             if cand and cand.is_file():
-                return cand
+                found = cand
+                break
         except OSError:
             continue
-    which = shutil.which("LibreHardwareMonitor")
-    return Path(which) if which else None
+    if found is None:
+        which = shutil.which("LibreHardwareMonitor")
+        found = Path(which) if which else None
+    _find_cache = (now, found)
+    return found
 
 
-def _lhm_running():
-    """True when an LHM process exists. Cheap enough for a button click."""
+#: (when, result) for _lhm_running(), same reasoning as _find_cache -
+#: tasklist enumerates every process on the machine, which is fine once
+#: on a click and not fine on a two-second poll.
+_running_cache = (0.0, False)
+_RUNNING_TTL = 15.0
+
+
+def _lhm_running(force=False):
+    """True when an LHM process exists.
+
+    Cached for _RUNNING_TTL seconds; ``force=True`` for the button, which
+    has to see the truth rather than a recent memory of it.
+    """
+    global _running_cache
+    now = time.monotonic()
+    if not force and now - _running_cache[0] < _RUNNING_TTL:
+        return _running_cache[1]
+    result = False
     try:
         import subprocess
         out = subprocess.run(
             ["tasklist", "/FI", "IMAGENAME eq LibreHardwareMonitor.exe",
              "/NH"], capture_output=True, text=True, timeout=5,
             creationflags=0x08000000).stdout
-        return "LibreHardwareMonitor" in out
+        result = "LibreHardwareMonitor" in out
     except Exception:
-        return False
+        result = False
+    _running_cache = (now, result)
+    return result
 
 
 def configure_lhm_webserver(exe_path, port=8085):
@@ -350,9 +398,12 @@ class TempHelper:
         messages = []
 
         # --- path A: LibreHardwareMonitor, the real sensor source ---
-        exe = find_lhm()
+        # force=True: this runs once, on a click, and is about to start a
+        # process based on the answer. A five-minute-old "not installed"
+        # is exactly the case the user is trying to fix.
+        exe = find_lhm(force=True)
         if exe:
-            if not _lhm_running():
+            if not _lhm_running(force=True):
                 ok, msg = configure_lhm_webserver(exe)
                 messages.append(msg)
                 ok, msg = _shell_execute_runas(exe, "", exe.parent)
