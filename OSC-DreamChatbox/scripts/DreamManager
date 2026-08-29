@@ -1,0 +1,10 @@
+#!/bin/bash
+# DreamManager – CLI wrapper for OSC-DreamChatbox
+# Usage: DreamManager Start All | Stop All | Start <App> | Stop <App>
+DIR="$(cd "$(dirname "$0")/.." && pwd)"
+if [ -x "$DIR/venv/bin/python" ]; then
+    PY="$DIR/venv/bin/python"
+else
+    PY="$(command -v python3)"
+fi
+exec "$PY" "$DIR/scripts/dreammanager.py" "$@"

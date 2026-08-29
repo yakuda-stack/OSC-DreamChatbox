@@ -1,0 +1,6 @@
+PyQt6
+python-osc
+SpeechRecognition
+zeroconf
+deepl
+setproctitle
