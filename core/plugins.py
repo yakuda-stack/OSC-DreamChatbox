@@ -82,6 +82,26 @@ Beyond the required keys, plugin.json may declare:
                     Both default to true: most plugins are plain python and
                     run anywhere, so only a plugin that really touches
                     pactl, /sys, WMI or similar has to say so.
+    "about":        the long text, when one paragraph is not enough. A
+                    list of lines, or {"format": "markdown", "text": ...}
+                    for headings and bullets. "description" stays the
+                    plain string – see read_about() for why it has to.
+    "unity":        http(s) link to a prefab or .unitypackage that belongs
+                    with the plugin. Shown as a button in the store and in
+                    the info popup; anything that is not a plain web link
+                    is dropped.
+    "layout":       ["widget", "settings", "chatbox"] – the order of the
+                    three blocks a plugin card is made of. Names left out
+                    are appended, so ["widget"] means "panel first, rest
+                    as before". A {"type": "widget"} row in "settings"
+                    places the panel exactly instead, and then the
+                    "widget" block is dropped.
+    "user_reorderable": true to let the USER drag those blocks around.
+                    The arrangement is stored per plugin in config.json.
+    "chatbox":      {"enabled": false, "user_editable": true} – a plugin
+                    that has nothing to do with the chatbox. get_text()
+                    and get_lines() are not called and the chatbox block
+                    disappears from the card; get_values() keeps running.
     "template":     default custom string, e.g. "\u2728 {example_template}"
     "placeholders": {"mood": "what it means"}   – shown as a UI hint
     "global_placeholders": ["realtime"]  – claim these names WITHOUT the
@@ -237,6 +257,12 @@ CAPABILITIES = frozenset({
     "api.refresh",         # asking for a fresh chatbox render
     "api.data_dir",        # a writable folder that survives updates
     "manifest.extra",      # unknown manifest keys reach Plugin.extra
+    "manifest.about",      # long description as a list or a markdown block
+    "manifest.unity",      # a prefab / .unitypackage link shown in the store
+    "manifest.layout",     # "layout": the order of the card's blocks
+    "settings.widget",     # a {"type": "widget"} row places the panel
+    "layout.user_reorderable",   # the user may drag the blocks around
+    "manifest.chatbox",    # "chatbox": opt out of the chatbox entirely
 })
 
 # Every hook the app knows. Only used for introspection (the info popup,
@@ -258,6 +284,16 @@ ANCHOR_LABELS = (("status", "Above Personal Status"),
                  ("aio", "Above All in one"))
 DEFAULT_ANCHOR = "aio"
 CONFIG_NAME = "config.json"
+# The three blocks a plugin card's body is made of, in the order they
+# have always been rendered in. A manifest may name a different order
+# under "layout", and the user may drag them around when the manifest
+# allows it - see parse_layout() and PluginManager.layout_for().
+#
+#   chatbox   own line, custom string, the placeholder hint
+#   settings  the rows declared under "settings"
+#   widget    build_widget(), the plugin's own panel
+LAYOUT_BLOCKS = ("chatbox", "settings", "widget")
+DEFAULT_LAYOUT = list(LAYOUT_BLOCKS)
 # types that carry a value the user can change
 LEAF_SETTING_TYPES = ("text", "bool", "int", "slider", "choice", "path",
                       "emoji", "label")
@@ -266,7 +302,10 @@ LEAF_SETTING_TYPES = ("text", "bool", "int", "slider", "choice", "path",
 ACTION_TYPE = "action"
 # purely structural: a collapsible block around other settings
 GROUP_TYPE = "group"
-SETTING_TYPES = LEAF_SETTING_TYPES + (GROUP_TYPE, ACTION_TYPE)
+# not a value either: the marker that says "the plugin's own panel goes
+# HERE" instead of below everything else. See parse_layout().
+WIDGET_TYPE = "widget"
+SETTING_TYPES = LEAF_SETTING_TYPES + (GROUP_TYPE, ACTION_TYPE, WIDGET_TYPE)
 # not a type an author writes: what a row of an unknown type BECOMES, so
 # its value still exists for the plugin and the UI can say why the row is
 # greyed out. See _parse_schema().
@@ -280,12 +319,14 @@ KNOWN_ITEM_KEYS = frozenset({
 # same idea for the manifest and for config.json
 KNOWN_MANIFEST_KEYS = frozenset({
     "id", "name", "version", "author", "description", "short_description",
-    "summary", "Github",
-    "github", "main", "image", "enabled", "is_linux", "is_windows",
+    "summary", "about", "Github",
+    "github", "main", "image", "unity", "enabled", "is_linux", "is_windows",
     "template", "placeholders", "global_placeholders", "settings", "api",
+    "layout", "user_reorderable", "chatbox",
     "min_app"})
 KNOWN_CONFIG_KEYS = frozenset({
-    "enabled", "anchor", "order", "line", "custom", "template", "options"})
+    "enabled", "anchor", "order", "line", "custom", "template", "options",
+    "layout", "chat"})
 # how deep groups may nest. Two levels are plenty for a settings block
 # and the limit keeps a hand-written (or generated) manifest from
 # recursing the parser into the ground.
@@ -314,9 +355,10 @@ def iter_settings(schema):
         kind = item.get("type")
         if kind == GROUP_TYPE:
             yield from iter_settings(item.get("items"))
-        elif kind != ACTION_TYPE:
-            # a button has a key but no value - it must not end up in
-            # config.json, and api.get() has nothing to return for it
+        elif kind not in (ACTION_TYPE, WIDGET_TYPE):
+            # a button has a key but no value, and a widget row is just a
+            # position marker - neither may end up in config.json, and
+            # api.get() has nothing to return for either
             yield item
 
 
@@ -408,6 +450,172 @@ class PluginExistsError(PluginError):
 
 
 # --------------------------------------------------------------------
+# manifest text and links
+# --------------------------------------------------------------------
+# JSON has no multi-line string, so a long description written as one
+# "description" value is a single unbroken paragraph. "about" is the way
+# out and takes three shapes:
+#
+#   "about": "one string"                       same as description
+#   "about": ["line", "", "line"]               joined with newlines
+#   "about": {"format": "markdown",             headings, lists, links
+#             "text": ["## Title", "", "..."]}
+#
+# It is a SEPARATE key on purpose. An older app reads plugin.json from
+# the store over the network, and str() on a list or a dict would show
+# it "['line', 'line']" - so "description" keeps being the plain string
+# every build since v1.0 knows what to do with, and "about" lands in
+# Plugin.extra there instead of on screen.
+ABOUT_FORMATS = ("text", "markdown")
+DEFAULT_ABOUT_FORMAT = "text"
+# what a URL out of a manifest may start with. Deliberately not the same
+# rule as Plugin.github_url, which prepends https:// to a bare
+# "github.com/user": doing that here would turn "file:///etc/passwd"
+# into "https://file:///etc/passwd" - harmless - but also accept a
+# "javascript:" or "smb://" line unchanged if the prefix check ever
+# moved. A link that the app hands to the desktop has to be boring.
+URL_SCHEMES = ("http://", "https://")
+
+
+def http_url(value):
+    """A manifest URL that is safe to hand to the desktop, or "".
+
+    Only http(s), only with a host, and no whitespace or control
+    characters - a manifest comes off the network and nothing in it is
+    trusted enough to be opened as typed.
+    """
+    url = str(value or "").strip()
+    if not url:
+        return ""
+    if any(ch.isspace() or ord(ch) < 0x20 for ch in url):
+        return ""
+    if not url.lower().startswith(URL_SCHEMES):
+        return ""
+    rest = url.split("//", 1)[1]
+    # "https://" and "https:///path" have no host to go to
+    if not rest or rest.startswith("/"):
+        return ""
+    return url
+
+
+def url_filename(url):
+    """The last path segment of a URL, for a tooltip. "" when there is
+    nothing worth showing - a link ending in a slash or in a bare host
+    would otherwise produce an empty or misleading label."""
+    path = str(url or "").split("?", 1)[0].split("#", 1)[0]
+    # cut the scheme so a bare "https://host" cannot yield "host"
+    if "//" in path:
+        path = path.split("//", 1)[1]
+    if "/" not in path:
+        return ""
+    name = path.rsplit("/", 1)[-1].strip()
+    return name
+
+
+def _about_lines(value):
+    """One flat list of text lines out of a string or a (nested) list.
+
+    Anything that is not text is skipped rather than str()'d: a stray
+    dict in the list is an author's mistake, and printing its repr into
+    the store page helps nobody.
+    """
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return [str(value)]
+    if isinstance(value, (list, tuple)):
+        out = []
+        for item in value:
+            out.extend(_about_lines(item))
+        return out
+    return []
+
+
+def read_about(value):
+    """Normalises the optional "about" key into ``(text, format)``.
+
+    Never raises and never returns None: a malformed "about" falls back
+    to an empty string, and the caller keeps using "description". A
+    format this build does not know is downgraded to plain text rather
+    than refused - the text is still readable, it just loses its markup,
+    which is a better outcome than an empty page.
+    """
+    fmt = DEFAULT_ABOUT_FORMAT
+    if isinstance(value, dict):
+        raw = value.get("text")
+        if raw is None:
+            # tolerate {"markdown": "..."} / {"body": [...]} - an author
+            # who guessed the key still gets their text shown
+            raw = value.get("body") or value.get("markdown") or ""
+            if value.get("markdown") is not None:
+                fmt = "markdown"
+        declared = str(value.get("format") or "").strip().lower()
+        if declared in ABOUT_FORMATS:
+            fmt = declared
+    else:
+        raw = value
+    text = "\n".join(_about_lines(raw)).strip()
+    if not text:
+        return "", DEFAULT_ABOUT_FORMAT
+    return text, fmt
+
+
+def parse_layout(value, blocks=LAYOUT_BLOCKS):
+    """The order of a card's blocks, cleaned up.
+
+    Unknown names are dropped and blocks the caller did not mention are
+    appended in their default order. Both halves matter:
+
+    * dropping means a typo, or a block name from a newer app, costs the
+      author nothing - the card still renders in full.
+    * appending is what makes ``"layout": ["widget"]`` mean "panel
+      first, the rest as before" instead of "panel only". It is also
+      what carries a stored order across an app update that introduces a
+      fourth block: the new one lands at the end rather than vanishing.
+
+    Duplicates keep their first position, so ["widget", "widget"] is
+    just ["widget", ...].
+    """
+    out = []
+    if isinstance(value, (list, tuple)):
+        for name in value:
+            key = str(name).strip().lower()
+            if key in blocks and key not in out:
+                out.append(key)
+    for key in blocks:
+        if key not in out:
+            out.append(key)
+    return out
+
+
+def _truthy(value, default=False):
+    """Lenient bool. Manifests are hand-written and "true" in quotes is
+    the single most common thing an author gets wrong; refusing it
+    teaches them nothing and costs them an evening."""
+    if value is None:
+        return bool(default)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return str(value).strip().lower() in ("true", "yes", "on", "1")
+
+
+def parse_flag_block(value, default_enabled=True):
+    """A {"enabled": …, "user_editable": …} block.
+
+    A missing block means "on, and not the user's business", which is
+    how every manifest written before the key behaves.
+    """
+    if not isinstance(value, dict):
+        return {"enabled": bool(default_enabled), "user_editable": False}
+    return {
+        "enabled": _truthy(value.get("enabled"), default_enabled),
+        "user_editable": _truthy(value.get("user_editable"), False),
+    }
+
+
+# --------------------------------------------------------------------
 # metadata
 # --------------------------------------------------------------------
 @dataclass
@@ -421,7 +629,15 @@ class Plugin:
     #: optional one-liner for lists. Never replaces "description" - the
     #: long text is still what the store and the info popup show.
     short_description: str = ""
+    #: the long text when the author wrote one as a list or a markdown
+    #: block. Empty for every manifest that only has "description".
+    about: str = ""
+    about_format: str = DEFAULT_ABOUT_FORMAT
     github: str = ""
+    #: prefab / .unitypackage that belongs with this plugin. Already
+    #: validated by http_url(), so "" means "there was none, or it was
+    #: not a link we are willing to open".
+    unity: str = ""
     main: str = "main.py"
     default_enabled: bool = True
     is_linux: bool = True          # manifest flags, both default to true
@@ -430,6 +646,20 @@ class Plugin:
     placeholders: dict = field(default_factory=dict)   # name -> description
     global_keys: list = field(default_factory=list)    # unprefixed names
     schema: list = field(default_factory=list)         # user-editable options
+    #: the order of the card's blocks the AUTHOR asked for. Always a
+    #: complete list – parse_layout() fills in whatever was left out.
+    layout: list = field(default_factory=lambda: list(DEFAULT_LAYOUT))
+    #: may the user drag those blocks around? Off unless the manifest
+    #: opts in: a plugin whose panel only makes sense under its settings
+    #: should not have to defend that arrangement.
+    user_reorderable: bool = False
+    #: {"enabled": …, "user_editable": …}. enabled=False is a plugin
+    #: that has nothing to do with the chatbox - a bridge, a tool - and
+    #: it silences get_text()/get_lines() and drops the chatbox block
+    #: from the card. Placeholders keep working: a plugin can be
+    #: chatbox-free and still offer {its_name} to somebody else's line.
+    chatbox: dict = field(
+        default_factory=lambda: {"enabled": True, "user_editable": False})
     api_needed: int = 1            # manifest "api": the API it relies on
     min_app: str = ""              # optional "min_app": "v1.4.0" – a hint
                                # for the user, never parsed for a decision
@@ -455,6 +685,27 @@ class Plugin:
         detail page) keep reading .description directly.
         """
         return self.short_description.strip() or self.description
+
+    @property
+    def long_text(self):
+        """What a page WITH room shows: "about" when the author wrote
+        one, "description" otherwise. Pair it with .long_format."""
+        return self.about or self.description
+
+    @property
+    def long_format(self):
+        """"markdown" or "text" for whatever .long_text just returned.
+        A plain "description" is never markdown - it predates the key,
+        and running an old paragraph through a markdown renderer would
+        eat its asterisks and underscores."""
+        return self.about_format if self.about else DEFAULT_ABOUT_FORMAT
+
+    @property
+    def unity_name(self):
+        """File name behind the Unity link, for a tooltip: seeing
+        ".prefab" or ".unitypackage" before clicking is the whole
+        information a button that opens a browser can give."""
+        return url_filename(self.unity)
 
     @property
     def platform_ok(self):
@@ -672,7 +923,8 @@ class PluginManager:
             return self._read_config(plugin)
         entry = {"enabled": False, "anchor": DEFAULT_ANCHOR, "order": 1000,
                  "line": True, "custom": False,
-                 "template": "{%s}" % pid, "options": {}}
+                 "template": "{%s}" % pid, "options": {}, "layout": [],
+                 "chat": None}
         self.settings[pid] = entry
         return entry
 
@@ -745,9 +997,72 @@ class PluginManager:
                 entry["order"] = pos
                 self._write_config(plugin.pid)
 
+    # ---------------------------------------------------- chatbox flag
+    def chat_enabled(self, pid):
+        """Does this plugin contribute to the chatbox at all?
+
+        Three sources: the user's switch when the manifest allows one,
+        the manifest's own answer otherwise, on by default. A plugin
+        that says no is silent in get_text()/get_lines() - but its
+        placeholders keep working, because a plugin with nothing to say
+        in the chatbox can still have something worth putting in
+        somebody else's line.
+        """
+        plugin = self.plugins.get(pid)
+        if plugin is None:
+            return True
+        block = plugin.chatbox or {}
+        if not block.get("user_editable"):
+            return bool(block.get("enabled", True))
+        stored = self.entry(pid).get("chat")
+        if stored is None:
+            return bool(block.get("enabled", True))
+        return bool(stored)
+
+    def set_chat_enabled(self, pid, on):
+        self.entry(pid)["chat"] = bool(on)
+        self._snap = None
+        self._changed(pid)
+
     def set_line(self, pid, on):
         self.entry(pid)["line"] = bool(on)
         self._changed(pid)
+
+    # --------------------------------------------------- block layout
+    def layout_for(self, pid):
+        """The order the card's blocks are rendered in.
+
+        Three sources, in this order: what the user dragged, what the
+        manifest asked for, the default. Everything is run through
+        parse_layout(), so a stored order survives an app that adds a
+        block and a manifest that renames one.
+
+        A stored order is IGNORED while the manifest has
+        ``user_reorderable`` off - but deliberately not deleted: an
+        author who turns the switch back on in the next release should
+        find the user's arrangement still there.
+        """
+        plugin = self.plugins.get(pid)
+        author = plugin.layout if plugin else DEFAULT_LAYOUT
+        if plugin is not None and not plugin.user_reorderable:
+            return parse_layout(author)
+        stored = self.entry(pid).get("layout")
+        return parse_layout(stored or author)
+
+    def set_layout(self, pid, blocks):
+        """Stores the order the user dragged the blocks into."""
+        plugin = self.plugins.get(pid)
+        if plugin is not None and not plugin.user_reorderable:
+            return False
+        self.entry(pid)["layout"] = parse_layout(blocks)
+        self._changed(pid)
+        return True
+
+    def reset_layout(self, pid):
+        """Back to what the manifest asked for."""
+        self.entry(pid)["layout"] = []
+        self._changed(pid)
+        return self.layout_for(pid)
 
     def set_custom(self, pid, on):
         self.entry(pid)["custom"] = bool(on)
@@ -858,6 +1173,16 @@ class PluginManager:
                          or plugin.template),
             "options": (dict(data["options"])
                         if isinstance(data.get("options"), dict) else {}),
+            # the order the USER dragged the blocks into. Empty means
+            # "never touched" - which is not the same as the default
+            # order, because the author may have asked for another one
+            # and that must keep winning until the user overrides it.
+            "layout": (list(data["layout"])
+                       if isinstance(data.get("layout"), list) else []),
+            # the user's answer to "may this plugin write to the
+            # chatbox". None = never asked, so the manifest decides.
+            "chat": (bool(data["chat"])
+                     if isinstance(data.get("chat"), bool) else None),
             # keys a newer app wrote here. This build cannot use them,
             # but rewriting the file without them would quietly delete
             # settings the user made in that newer version - so they ride
@@ -980,13 +1305,25 @@ class PluginManager:
             api_needed = int(data.get("api", 1) or 1)
         except (TypeError, ValueError):
             api_needed = 1
+        # the long text, in whatever shape the author wrote it
+        about, about_format = read_about(data.get("about"))
+        # A manifest with only "about" still needs a "description": it is
+        # what the Installed row, its tooltip and .summary fall back to.
+        # Taking the long text is better than showing an empty row - it
+        # is the same words, just more of them.
+        description = str(data.get("description") or "") or about
         return Plugin(
             folder=Path(folder),
             pid=pid,
             name=str(data.get("name") or pid),
             version=str(data.get("version") or "?"),
             author=str(data.get("author") or "unknown"),
-            description=str(data.get("description") or ""),
+            description=description,
+            about=about,
+            about_format=about_format,
+            # rejected outright when it is not a plain http(s) link -
+            # this ends up in QDesktopServices.openUrl()
+            unity=http_url(data.get("unity")),
             # optional short form for the Installed list. "summary" is
             # accepted as a spelling of the same thing because the store
             # has used that key since it existed - an author writes one
@@ -1002,6 +1339,9 @@ class PluginManager:
             placeholders={str(k): str(v) for k, v in placeholders.items()},
             global_keys=global_keys,
             schema=PluginManager._parse_schema(data.get("settings")),
+            layout=parse_layout(data.get("layout")),
+            user_reorderable=bool(data.get("user_reorderable", False)),
+            chatbox=parse_flag_block(data.get("chatbox")),
             api_needed=max(1, api_needed),
             min_app=str(data.get("min_app") or "").strip(),
             # anything this build has no idea about. Kept so a manifest
@@ -1065,7 +1405,15 @@ class PluginManager:
                 entry["reason"] = (
                     "nested too deeply for this version"
                     if too_deep else
-                    f"setting type '{kind}' needs a newer {APP_NAME}")
+                    # Deliberately NOT "needs a newer <app>". All this
+                    # code knows is that the name is not one of ours,
+                    # and there are three ways to get here: a type a
+                    # newer build really has, a typo, and a name that
+                    # never existed. Guessing the friendliest of the
+                    # three sends people looking for an update that does
+                    # not exist - which is exactly what happened.
+                    f"unknown setting type '{kind}' \u2013 a typo, or "
+                    f"from a newer {APP_NAME}?")
                 out.append(entry)
                 continue
 
@@ -1113,6 +1461,14 @@ class PluginManager:
                 # plugin's on_action(key).
                 entry["button"] = str(item.get("button") or item["label"])
                 entry["style"] = str(item.get("style") or "normal").lower()
+                out.append(entry)
+                continue
+
+            if kind == WIDGET_TYPE:
+                # not a setting at all: a marker saying "build_widget()
+                # goes HERE" instead of below everything else. It holds
+                # no value, so - like an action - it never reaches
+                # config.json. The key exists only to stay unique.
                 out.append(entry)
                 continue
 
@@ -1447,14 +1803,21 @@ class PluginManager:
         snap = {}
         for plugin in self._active():
             lines = []
-            ok, res = self._safe_call(plugin, "get_lines")
-            if ok:
-                if isinstance(res, str):
-                    res = [res]
-                if isinstance(res, (list, tuple)):
-                    lines = [str(x) for x in res if str(x).strip()]
+            # A plugin with "chatbox": {"enabled": false} is not asked
+            # for a line at all. get_values() below still runs: the
+            # switch is about the plugin writing to the chatbox itself,
+            # not about {its_name} inside somebody else's line.
+            chatty = self.chat_enabled(plugin.pid)
+            if chatty:
+                ok, res = self._safe_call(plugin, "get_lines")
+                if ok:
+                    if isinstance(res, str):
+                        res = [res]
+                    if isinstance(res, (list, tuple)):
+                        lines = [str(x) for x in res if str(x).strip()]
             # {<id>} is get_text() if the plugin has one, else its lines
-            ok, res = self._safe_call(plugin, "get_text")
+            ok, res = (self._safe_call(plugin, "get_text") if chatty
+                       else (False, None))
             if ok and isinstance(res, str):
                 text = res
             else:

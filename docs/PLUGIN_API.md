@@ -141,7 +141,9 @@ Capabilities in this build: `settings.text` `settings.bool`
 `settings.int` `settings.slider` `settings.choice` `settings.group`
 `settings.secret` `settings.depends` `settings.depends_value`
 `settings.unsupported_passthrough` `widget` `events` `tick` `api.set`
-`api.refresh` `api.data_dir` `manifest.extra`.
+`api.refresh` `api.data_dir` `manifest.extra` `manifest.about`
+`manifest.unity` `manifest.layout` `settings.widget`
+`layout.user_reorderable` `manifest.chatbox`.
 
 ### Declaring a minimum
 
@@ -176,7 +178,7 @@ their values today.
 
 ## Settings schema
 
-Types: `text` `bool` `int` `slider` `choice` `group`.
+Types: `text` `bool` `int` `slider` `choice` `group` `widget`.
 
 ```json
 {"key": "mode", "type": "choice", "label": "Data source",
@@ -210,11 +212,16 @@ Types: `text` `bool` `int` `slider` `choice` `group`.
   "name": "OSCLeash", "id": "oscleash", "version": "1.1.0",
   "author": "yakuda", "main": "main.py", "image": "logo.png",
   "description": "...", "short_description": "one line for the list",
+  "about": ["## What it does", "", "- point one", "- point two"],
+  "unity": "https://github.com/…/releases/download/v2.2.0/OSCLeash.prefab",
   "Github": "github.com/yakuda-stack",
   "enabled": false,
   "api": 2, "min_app": "v1.3.2",
   "is_linux": true, "is_windows": true,
   "template": "🐕 {oscleash_name}",
+  "layout": ["widget", "settings", "chatbox"],
+  "user_reorderable": true,
+  "chatbox": {"enabled": false, "user_editable": true},
   "placeholders": {"name": "what it means"},
   "global_placeholders": ["leash"],
   "settings": [ ... ]
@@ -233,7 +240,131 @@ exists so a long description does not have to make the row tall.
 `summary`, the key the store has always read, is accepted as the same
 thing, so writing either one is enough.
 
+### `about` — the long text, formatted
+
+JSON has no multi-line string, so a `description` of any length is one
+unbroken paragraph. `about` is the way out and takes three shapes:
+
+```json
+"about": "one string"
+"about": ["line", "", "line"]
+"about": {"format": "markdown", "text": ["## Title", "", "- point"]}
+```
+
+`"format"` is `text` (default) or `markdown`. The store detail page
+renders markdown; a format this build does not know falls back to plain
+text, so the words are never lost, only the markup.
+
+It is a **separate key on purpose**, and `description` should stay a
+plain string. An older app fetches your `plugin.json` from the store
+over the network and calls `str()` on whatever `description` holds — a
+list would appear on screen as `['line', 'line']`. Unknown keys have
+always been carried into `Plugin.extra` instead of being shown, so
+`about` is invisible there and `description` is what those users read.
+Write both. Without a `description`, `about` fills in for it, which
+keeps the Installed row from being blank but puts your markdown source
+in a one-line label — so a `short_description` is worth the extra line.
+
+### `unity`
+
+```json
+"unity": "https://github.com/…/releases/download/v2.2.0/OSCLeash.prefab"
+```
+
+A prefab or `.unitypackage` that belongs with the plugin. It shows up as
+a button next to *Open on GitHub* on the store detail page and as a link
+in the ⓘ popup of the installed plugin, both labelled with the file name
+so it is clear what a click downloads.
+
+Only plain `http://` and `https://` links with a host survive; anything
+else — `file://`, a scheme-less `github.com/…`, a URL with whitespace in
+it — is dropped without a word, because the value is handed straight to
+the desktop's URL handler.
+
 ---
+
+## Where the blocks go
+
+A plugin card's body is three blocks, rendered in this order unless you
+say otherwise:
+
+| Block | What is in it |
+| --- | --- |
+| `chatbox` | own line, custom string, the placeholder hint |
+| `settings` | your `settings` rows |
+| `widget` | `build_widget()` |
+
+```json
+"layout": ["widget", "settings", "chatbox"]
+```
+
+Names you leave out are **appended**, so `["widget"]` means "panel
+first, the rest as before" — not "panel only". Unknown names are
+dropped. Both rules exist so this key can never take a card apart: a
+typo costs nothing, and a block added in a later app version lands at
+the end of your order instead of disappearing.
+
+### Placing the panel exactly
+
+For "above Connection" rather than "above everything", put a row in the
+schema instead:
+
+```json
+{"key": "panel", "type": "widget"}
+```
+
+It may sit anywhere, groups included. It holds no value and never
+reaches `config.json` — the key is only there to stay unique, the same
+way an `action` key is. When such a row exists, the standalone `widget`
+block is dropped, so the panel appears once. A second `widget` row finds
+the panel already placed, renders nothing and says so in the log.
+
+An older app turns the row into the usual locked placeholder ("needs a
+newer app") and shows your panel at the bottom as before. Cosmetically
+odd there, functionally intact.
+
+### Letting the user rearrange
+
+```json
+"user_reorderable": true
+```
+
+Each block then gets a 2×3 grip and its own frame, and the user drags
+them into the order they want. It is stored per plugin in `config.json`
+and survives a restart; your `layout` is what a user who never touched
+it sees.
+
+Off by default on purpose — a plugin whose panel only makes sense
+underneath its settings should not have to defend that arrangement.
+Turning it off later does not delete an order a user already made: it
+is ignored while the switch is off and comes back if you turn it on
+again.
+
+## A plugin that is not about the chatbox
+
+```json
+"chatbox": {"enabled": false, "user_editable": true}
+```
+
+`enabled: false` means the app never asks this plugin for a line:
+`get_text()` and `get_lines()` are not called, and the chatbox block
+disappears from the card - the questions in it ("own line?", "custom
+string?") have no meaningful answer for a plugin that only runs a tool
+in the background.
+
+**`get_values()` keeps running.** The switch is about the plugin writing
+to the chatbox itself, not about its placeholders: a plugin can have
+nothing to say there and still offer `{its_name}` for somebody else's
+line.
+
+`user_editable: true` gives the user a *Send to the chatbox* switch, so
+the manifest value is only the starting position. It is stored per
+plugin and kept - not deleted - when you turn the switch off again in a
+later release.
+
+Additive, like everything else in the manifest: an older app has never
+heard of the key, carries it along invisibly and keeps printing the
+line, which is what it did before.
 
 ## Checklist before publishing
 

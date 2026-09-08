@@ -130,7 +130,10 @@ class OscParameterListener:
                 s.bind(("0.0.0.0", int(port)))
                 self._sock = s
                 self._own_socket = True
-                self.port = int(port)
+                # what the OS gave us, not what we asked for: port 0
+                # means "pick one", and reporting the 0 back would make
+                # every reader of .port believe there is no port
+                self.port = s.getsockname()[1]
             self._sock.settimeout(0.5)
         except OSError as e:
             # the usual case is another OSC tool already holding 9001.

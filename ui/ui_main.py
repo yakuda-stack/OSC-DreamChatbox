@@ -71,10 +71,21 @@ class ToggleLabel(QLabel):
 
 
 class DragHandle(QWidget):
-    """3x3 dot grip – drag it to reorder app cards."""
-    def __init__(self, on_move, on_end):
+    """Dot grip – drag it to reorder.
+
+    3x3 by default, which is what every app and plugin card uses. The
+    blocks INSIDE a plugin card pass cols=2 so the two grips cannot be
+    mistaken for each other: a 2x3 grip means "this block", a 3x3 one
+    means "the whole card".
+    """
+    def __init__(self, on_move, on_end, cols=3, rows=3):
         super().__init__()
-        self.setFixedSize(22, 22)
+        self._cols = max(1, int(cols))
+        self._rows = max(1, int(rows))
+        # 6px per dot plus 3px of padding on each side - the widget
+        # shrinks with the grid instead of leaving the dots floating in
+        # a 22px box
+        self.setFixedSize(self._cols * 6 + 4, self._rows * 6 + 4)
         self.setCursor(Qt.CursorShape.OpenHandCursor)
         self.setToolTip("Drag to reorder")
         self._on_move = on_move
@@ -85,8 +96,8 @@ class DragHandle(QWidget):
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(QBrush(QColor("#5a6270")))
-        for ix in range(3):
-            for iy in range(3):
+        for ix in range(self._cols):
+            for iy in range(self._rows):
                 p.drawEllipse(3 + ix * 6, 3 + iy * 6, 3, 3)
         p.end()
 

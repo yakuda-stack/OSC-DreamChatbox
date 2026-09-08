@@ -13,11 +13,20 @@ next to the app, so adding a plugin to the store means pasting one URL::
 
 Everything else – name, version, author, description and the preview
 image – is read from the plugin's own ``plugin.json``, the same file the
-author already maintains. Two extra keys are used by the store only:
+author already maintains. A few keys are used by the store only:
 
     "image":   "logo.png"           file in the plugin folder, or a URL
     "short_description": "one-line teaser"   falls back to "description"
                                     ("summary" is the older spelling)
+    "about":   ["line", "line"] or {"format": "markdown", "text": ...}
+                                    the long text of the detail page, for
+                                    when one paragraph is not enough.
+                                    "description" stays a plain string so
+                                    an older app still shows something
+                                    readable here.
+    "unity":   "https://.../X.prefab"   a prefab or .unitypackage that
+                                    belongs with the plugin, offered next
+                                    to the download buttons
 
 If ``image`` is missing or points at a file that isn't there, a handful of
 conventional names are tried before giving up, so a plugin folder with a
@@ -63,7 +72,9 @@ from pathlib import Path
 
 from core.constants import (
     APP_NAME, CONFIG_DIR, GITHUB_REPO, STORE_SOURCES_FILE, VERSION)
-from core.plugins import IS_WINDOWS, OS_NAME, PLUGIN_API_VERSION
+from core.plugins import (
+    DEFAULT_ABOUT_FORMAT, IS_WINDOWS, OS_NAME, PLUGIN_API_VERSION, http_url,
+    read_about, url_filename)
 
 RAW_HOST = "https://raw.githubusercontent.com"
 # where to look for a newer catalogue when plugins.json names no self_url
@@ -205,6 +216,12 @@ class StoreEntry:
     author: str = ""
     description: str = ""
     summary: str = ""
+    #: the long text when the manifest carries an "about" key, plus the
+    #: format it wants to be rendered in
+    about: str = ""
+    about_format: str = DEFAULT_ABOUT_FORMAT
+    #: already validated by http_url() – "" means nothing to offer
+    unity: str = ""
     image_url: str = ""
     image_path: Path = None
     is_linux: bool = True
@@ -221,6 +238,21 @@ class StoreEntry:
     @property
     def installed(self):
         return bool(self.installed_version)
+
+    # The three below mirror core.plugins.Plugin on purpose: the detail
+    # page shows a store entry, the info popup shows an installed
+    # Plugin, and neither should have to know which of the two it holds.
+    @property
+    def long_text(self):
+        return self.about or self.description
+
+    @property
+    def long_format(self):
+        return self.about_format if self.about else DEFAULT_ABOUT_FORMAT
+
+    @property
+    def unity_name(self):
+        return url_filename(self.unity)
 
     @property
     def platform_ok(self):
@@ -480,7 +512,12 @@ class PluginStore:
         entry.name = str(data.get("name") or entry.pid or "?")
         entry.version = str(data.get("version") or "?")
         entry.author = str(data.get("author") or "unknown")
-        entry.description = str(data.get("description") or "")
+        entry.about, entry.about_format = read_about(data.get("about"))
+        # same fallback as core.plugins._plugin_from_dict(): a manifest
+        # with only "about" must not leave the tiles blank
+        entry.description = (str(data.get("description") or "")
+                             or entry.about)
+        entry.unity = http_url(data.get("unity"))
         entry.is_linux = bool(data.get("is_linux", True))
         entry.is_windows = bool(data.get("is_windows", True))
         try:

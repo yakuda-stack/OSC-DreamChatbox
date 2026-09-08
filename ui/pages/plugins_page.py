@@ -66,6 +66,15 @@ class PluginInfoPopup(QFrame):
                 f"<a href='{self._esc(plugin.github_url)}' "
                 f"style='color:#5b8dc9'>"
                 f"{self._esc(plugin.github)}</a>")
+        # the prefab belongs here as much as in the store: the store is
+        # where you find a plugin once, this popup is where you look
+        # three weeks later when the avatar needs rebuilding
+        if getattr(plugin, "unity", ""):
+            rows.append(
+                f"<span style='color:#7a8290'>Unity</span> "
+                f"<a href='{self._esc(plugin.unity)}' "
+                f"style='color:#5b8dc9'>\U0001F9E9 "
+                f"{self._esc(plugin.unity_name or 'download')}</a>")
         rows.append(
             f"<span style='color:#7a8290'>ID</span> "
             f"<span style='font-family:Consolas, monospace'>"
@@ -178,6 +187,8 @@ class PluginsPageMixin:
         self.plugin_inputs = {}
         self.plugin_option_widgets = {}
         self.plugin_update_btns = {}
+        self.plugin_block_widgets = {}
+        self.plugin_block_layouts = {}
 
         # ------------------------------------------------ actions card
         card = QFrame()
@@ -303,6 +314,10 @@ class PluginsPageMixin:
         # (pid, key) -> the widget showing that option, so a plugin
         # writing a value with api.set() is reflected on screen
         self.plugin_option_widgets = {}
+        # pid -> {block name: widget} and pid -> the card's body layout,
+        # both only needed while blocks are draggable
+        self.plugin_block_widgets = {}
+        self.plugin_block_layouts = {}
         # user order, not folder order (Plugins page ▲▼)
         plugins = self.plugins.ordered()
         self.plugin_rows = {}
@@ -649,13 +664,144 @@ class PluginsPageMixin:
         self.update_preview()
 
     def _build_plugin_settings(self, plugin):
-        """The collapsible body: custom string + whatever the plugin
-        declared under "settings" in its plugin.json."""
-        entry = self.plugins.entry(plugin.pid)
+        """The collapsible body of one plugin card.
+
+        Three blocks - chatbox, settings, widget - built separately and
+        then assembled in the order layout_for() hands back. The author
+        picks that order with "layout" in the manifest; with
+        "user_reorderable" the user drags it into shape and it is stored
+        per plugin.
+
+        build_widget() is called EXACTLY once here and the result passed
+        around, because a plugin may cache its panel: a second call would
+        reparent the widget the first one just placed.
+        """
+        pid = plugin.pid
+        panel = self.plugins.build_widget(pid, self)
+        if not isinstance(panel, QWidget):
+            panel = None
+        # a {"type": "widget"} row anywhere in the schema places the panel
+        # itself. Then the standalone "widget" block has nothing left to
+        # show, and rendering it anyway would mean building the card
+        # around a widget that is already somewhere else in it.
+        placed = self._schema_places_widget(plugin.schema)
+
+        blocks = {
+            "chatbox": self._build_chatbox_block(plugin),
+            "settings": self._build_settings_block(plugin, panel),
+            "widget": None if (placed or panel is None)
+                      else self._build_widget_block(panel),
+        }
+
         content = QWidget()
         c = QVBoxLayout(content)
         c.setContentsMargins(12, 4, 0, 4)
         c.setSpacing(8)
+        order = [name for name in self.plugins.layout_for(pid)
+                 if blocks.get(name) is not None]
+        grips = bool(plugin.user_reorderable) and len(order) > 1
+        self.plugin_block_widgets[pid] = {}
+        self.plugin_block_layouts[pid] = c
+        for index, name in enumerate(order):
+            holder = (self._wrap_draggable_block(pid, name, blocks[name])
+                      if grips else blocks[name])
+            # without grips the blocks keep the separator lines they have
+            # always had; with grips every block has its own frame and a
+            # line between two framed boxes is just noise
+            if not grips and index:
+                sep = QFrame()
+                sep.setFrameShape(QFrame.Shape.HLine)
+                sep.setObjectName("hline")
+                c.addWidget(sep)
+            self.plugin_block_widgets[pid][name] = holder
+            c.addWidget(holder)
+        return content
+
+    @staticmethod
+    def _schema_places_widget(schema):
+        """True when a {"type": "widget"} row sits anywhere in the schema,
+        groups included."""
+        for item in schema or []:
+            if item.get("type") == "widget":
+                return True
+            if item.get("type") == "group" and \
+                    PluginsPageMixin._schema_places_widget(item.get("items")):
+                return True
+        return False
+
+    def _wrap_draggable_block(self, pid, name, inner):
+        """One block in its own frame with a 2x3 grip in the corner.
+
+        The frame is not decoration: three stacked blocks with no border
+        give the grip nothing to belong to, and the user cannot see what
+        exactly is about to move.
+        """
+        holder = QFrame()
+        holder.setObjectName("innerbox")
+        box = QHBoxLayout(holder)
+        box.setContentsMargins(8, 8, 8, 8)
+        box.setSpacing(8)
+        grip = DragHandle(
+            lambda pos, p=pid, n=name: self.plugin_block_drag(p, n, pos),
+            lambda p=pid: self.plugin_block_drag_end(p),
+            cols=2, rows=3)
+        grip.setToolTip("Drag to move this block within the card")
+        box.addWidget(grip, 0, Qt.AlignmentFlag.AlignTop)
+        box.addWidget(inner, 1)
+        return holder
+
+    def _build_widget_block(self, panel):
+        """The plugin's own UI. The settings schema covers options; a
+        Start button, a live log or a list the user adds rows to cannot
+        be expressed as one, so a plugin may hand us a finished widget."""
+        holder = QWidget()
+        box = QVBoxLayout(holder)
+        box.setContentsMargins(0, 0, 0, 0)
+        box.addWidget(panel)
+        return holder
+
+    def _build_chatbox_block(self, plugin):
+        """Own line, custom string, the placeholder hint.
+
+        None for a plugin that declared it has nothing to do with the
+        chatbox. Asking such a plugin whether it wants its own line is a
+        question with no meaningful answer, and the block simply drops
+        out of the card's layout.
+        """
+        block = plugin.chatbox or {}
+        editable = bool(block.get("user_editable"))
+        chatty = self.plugins.chat_enabled(plugin.pid)
+        if not chatty and not editable:
+            return None
+
+        entry = self.plugins.entry(plugin.pid)
+        content = QWidget()
+        c = QVBoxLayout(content)
+        c.setContentsMargins(0, 0, 0, 0)
+        c.setSpacing(8)
+
+        rest = QWidget()
+        if editable:
+            # the switch stays put and the rest of the block appears
+            # under it, rather than the card rebuilding on every toggle -
+            # a rebuild would collapse the Settings block the user is
+            # standing in
+            chk_chat = QCheckBox("Send to the chatbox")
+            chk_chat.setChecked(chatty)
+            chk_chat.setToolTip(
+                "Off means this plugin writes nothing into the chatbox "
+                "itself. It keeps running, and its {%s\u2026} "
+                "placeholders keep working inside other lines."
+                % plugin.pid)
+            chk_chat.toggled.connect(
+                lambda on, pid=plugin.pid, w=rest:
+                self.on_plugin_chat(pid, on, w))
+            c.addWidget(chk_chat)
+            c.addWidget(rest)
+            rest.setVisible(chatty)
+            c = QVBoxLayout(rest)
+            c.setContentsMargins(0, 0, 0, 0)
+            c.setSpacing(8)
 
         # ----- own line vs. placeholder-only
         chk_line = QCheckBox(
@@ -734,42 +880,49 @@ class PluginsPageMixin:
         ph.setObjectName("dim")
         ph.setWordWrap(True)
         c.addWidget(ph)
+        return content
 
-        # ----- options declared by the plugin author
-        if plugin.schema:
-            line = QFrame()
-            line.setFrameShape(QFrame.Shape.HLine)
-            line.setObjectName("hline")
-            c.addWidget(line)
-            opts = self.plugins.options(plugin.pid)
-            # parent key -> [(dependent widget, wanted values)], so a
-            # sub-option can hide with its parent (Max world name length
-            # under World name)
-            deps = {}
-            self._add_plugin_options(plugin, plugin.schema, c, opts, deps)
-            self.plugin_dependents[plugin.pid] = deps
-            self._sync_plugin_dependents(plugin.pid)
-
-        # ----- the plugin's own UI, if it brings one. The settings
-        # schema covers options; a Start button, a live log or a list the
-        # user adds rows to cannot be expressed as an option, so a plugin
-        # may hand us a finished widget instead.
-        own = self.plugins.build_widget(plugin.pid, self)
-        if isinstance(own, QWidget):
-            sep = QFrame()
-            sep.setFrameShape(QFrame.Shape.HLine)
-            sep.setObjectName("hline")
-            c.addWidget(sep)
-            c.addWidget(own)
+    def _build_settings_block(self, plugin, panel=None):
+        """The rows declared under "settings", or None when there are
+        none. ``panel`` is handed down for a {"type": "widget"} row to
+        place; it is never built here."""
+        if not plugin.schema:
+            return None
+        content = QWidget()
+        c = QVBoxLayout(content)
+        c.setContentsMargins(0, 0, 0, 0)
+        c.setSpacing(8)
+        opts = self.plugins.options(plugin.pid)
+        # parent key -> [(dependent widget, wanted values)], so a
+        # sub-option can hide with its parent (Max world name length
+        # under World name)
+        deps = {}
+        self._add_plugin_options(plugin, plugin.schema, c, opts, deps,
+                                 panel={"panel": panel, "used": False})
+        self.plugin_dependents[plugin.pid] = deps
+        self._sync_plugin_dependents(plugin.pid)
         return content
 
     def _add_plugin_options(self, plugin, schema, layout, opts, deps,
-                            depth=0):
+                            depth=0, panel=None):
         """Fills one layout with the rows of a schema level. Called again
-        for every group, which is what makes groups nestable."""
+        for every group, which is what makes groups nestable.
+
+        ``panel`` is a mutable cell, not a widget: the plugin's panel
+        goes into the FIRST {"type": "widget"} row and the cell is
+        emptied, so a second such row - in a group, three levels down,
+        wherever - finds nothing left and is skipped. One panel exists,
+        it can only be in one place, and the recursion has to agree on
+        that across its branches.
+        """
         for item in schema:
-            if item["type"] == "group":
-                w = self._build_plugin_group(plugin, item, opts, deps, depth)
+            if item["type"] == "widget":
+                w = self._take_schema_panel(plugin, panel)
+                if w is None:
+                    continue
+            elif item["type"] == "group":
+                w = self._build_plugin_group(plugin, item, opts, deps, depth,
+                                             panel=panel)
             else:
                 w = self._build_plugin_option(plugin, item, opts)
             if item.get("depends"):
@@ -779,7 +932,28 @@ class PluginsPageMixin:
                 w.setContentsMargins(24, 0, 0, 0)
             layout.addWidget(w)
 
-    def _build_plugin_group(self, plugin, item, opts, deps, depth):
+    def _take_schema_panel(self, plugin, cell):
+        """The plugin's widget, once. None afterwards.
+
+        The two ways of getting None are not the same and must not share
+        a message: the plugin has no panel at all (nothing to say - a
+        widget row in a plugin whose build_widget() returned None is
+        simply empty), or a second row is asking for a panel that is
+        already sitting somewhere else in the card.
+        """
+        if cell is None or cell["panel"] is None:
+            if cell is not None and cell["used"]:
+                self.log(f"Plugins: '{plugin.pid}' has more than one "
+                         f"\"widget\" row - only the first one gets the "
+                         f"panel.")
+            return None
+        widget = cell["panel"]
+        cell["panel"] = None
+        cell["used"] = True
+        return widget
+
+    def _build_plugin_group(self, plugin, item, opts, deps, depth,
+                            panel=None):
         """A collapsible block of settings – the same expander gesture as
         the card's own Settings button, one level further in.
 
@@ -798,7 +972,7 @@ class PluginsPageMixin:
         inner.setContentsMargins(12, 8, 12, 8)
         inner.setSpacing(8)
         self._add_plugin_options(plugin, item["items"], inner, opts, deps,
-                                 depth + 1)
+                                 depth + 1, panel=panel)
 
         btn = QPushButton()
         btn.setObjectName("expander")
@@ -1301,6 +1475,18 @@ class PluginsPageMixin:
         self.detail_github_btn.clicked.connect(self.on_store_open_github)
         row.addWidget(self.detail_github_btn)
 
+        # ---- prefab / .unitypackage, only for a plugin that names one.
+        # A puzzle piece rather than Unity's own logo: that one is a
+        # trademark, and shipping it in a UI is a licensing question
+        # nobody needs for a download button.
+        self.detail_unity_btn = QPushButton("\U0001F9E9  Unity")
+        self.detail_unity_btn.setObjectName("linkbtn")
+        self.detail_unity_btn.setFixedHeight(34)
+        self.detail_unity_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.detail_unity_btn.clicked.connect(self.on_store_open_unity)
+        self.detail_unity_btn.setVisible(False)
+        row.addWidget(self.detail_unity_btn)
+
         # only shown for a plugin that is actually installed. Uninstalling
         # from here is the same operation as the bin on the Installed
         # page - people who found a plugin in the store look for the way
@@ -1342,10 +1528,20 @@ class PluginsPageMixin:
             bits.append(f"installed: v{entry.installed_version.lstrip('v')}")
         self.detail_meta.setText("  \u00b7  ".join(bits))
         self.detail_delete_btn.setVisible(bool(entry.installed and entry.pid))
-        body = entry.description or "(no description)"
+        self.detail_unity_btn.setVisible(bool(entry.unity))
+        # the file name is the only thing this button can honestly
+        # promise before it hands the URL to a browser
+        self.detail_unity_btn.setToolTip(entry.unity_name or entry.unity)
+        body = entry.long_text or "(no description)"
         if entry.error:
             body += f"\n\nCould not be read: {entry.error}"
-        self.detail_text.setPlainText(body)
+        # setMarkdown / setPlainText each replace the whole document, so
+        # switching between two entries with different formats needs no
+        # reset of its own
+        if entry.long_format == "markdown":
+            self.detail_text.setMarkdown(body)
+        else:
+            self.detail_text.setPlainText(body)
         if not entry.supported:
             self.detail_install_btn.setText(entry.platform_note.capitalize())
             self.detail_install_btn.setEnabled(False)
@@ -1411,6 +1607,18 @@ class PluginsPageMixin:
         entry = self._current_store_entry()
         if entry is not None:
             QDesktopServices.openUrl(QUrl(entry.source.web_url))
+
+    def on_store_open_unity(self):
+        """Opens the prefab / .unitypackage link in the browser.
+
+        The URL was already filtered by http_url() when the manifest was
+        read, so there is nothing left to validate here - but the button
+        is checked against an empty value anyway, because a stale click
+        on a hidden widget is cheaper to guard than to debug.
+        """
+        entry = self._current_store_entry()
+        if entry is not None and entry.unity:
+            QDesktopServices.openUrl(QUrl(entry.unity))
 
     def _installed_versions(self):
         return {pid: p.version for pid, p in self.plugins.plugins.items()}
@@ -1680,6 +1888,65 @@ class PluginsPageMixin:
     def plugin_drag_end(self, pid):
         self.log("Plugin order: "
                  + " > ".join(p.pid for p in self.plugins.ordered()))
+
+    def plugin_block_drag(self, pid, name, global_pos):
+        """Live reorder of the blocks INSIDE one card.
+
+        Same gesture as plugin_drag() one level up: count how many other
+        blocks the cursor has passed and move there. Deliberately not a
+        refresh_plugin_list() - rebuilding would collapse the expander
+        the user is dragging inside of and drop the focus out of the
+        template field.
+        """
+        blocks = self.plugin_block_widgets.get(pid) or {}
+        layout = self.plugin_block_layouts.get(pid)
+        if layout is None or name not in blocks:
+            return
+        order = self._plugin_block_order(pid)
+        cur = order.index(name)
+        y = global_pos.y()
+        others = [k for k in order if k != name]
+        new_idx = sum(
+            1 for k in others
+            if y > blocks[k].mapToGlobal(blocks[k].rect().center()).y())
+        if new_idx == cur:
+            return
+        widget = blocks[name]
+        layout.removeWidget(widget)
+        layout.insertWidget(new_idx, widget)
+        order.insert(new_idx, order.pop(cur))
+        self.plugins.set_layout(pid, order)
+
+    def plugin_block_drag_end(self, pid):
+        self.log(f"Plugin '{pid}' blocks: "
+                 + " > ".join(self._plugin_block_order(pid)))
+
+    def _plugin_block_order(self, pid):
+        """The blocks of one card as they currently sit in its layout.
+
+        Read off the layout rather than off the stored list: the widgets
+        are the truth while a drag is in flight, and a block that was
+        never built (no schema, no panel) is simply not in it.
+        """
+        layout = self.plugin_block_layouts.get(pid)
+        blocks = self.plugin_block_widgets.get(pid) or {}
+        if layout is None:
+            return list(blocks)
+        by_widget = {w: n for n, w in blocks.items()}
+        order = []
+        for i in range(layout.count()):
+            w = layout.itemAt(i).widget()
+            if w in by_widget:
+                order.append(by_widget[w])
+        return order
+
+    def on_plugin_chat(self, pid, on, rest=None):
+        """The user's answer to "may this plugin write to the chatbox"."""
+        self.plugins.set_chat_enabled(pid, on)
+        if rest is not None:
+            rest.setVisible(bool(on))
+        if hasattr(self, "update_preview"):
+            self.update_preview()
 
     def on_plugin_line(self, pid, on):
         """Own line on/off. The plugin keeps running either way – this only

@@ -6,6 +6,68 @@ All notable changes to OSC-DreamChatbox are documented here.
 
 🟢 Linux Support: Complete & Stable (v1.2.6)
 
+## [v1.4.8] – 2026-09-08
+
+**Plugin API additions: a plugin can now say where its parts go, and
+whether it has anything to do with the chatbox at all.**
+
+### Added
+
+**The manifest**
+
+- **`about`** is the long description, written as a list of lines or as
+  `{"format": "markdown", "text": [...]}` — headings, bullets and links
+  on the store page instead of one unbroken paragraph. `description`
+  stays a plain string on purpose: an older app reads it straight off
+  the network and would print a list back as `['line', 'line']`.
+- **`unity`** links a prefab or `.unitypackage`. It shows up as a button
+  next to *Open on GitHub* in the store and as a link in the ⓘ popup of
+  the installed plugin, labelled with the file name. Only plain http(s)
+  links with a host survive — the value goes to the desktop's URL
+  handler, and a manifest comes off the network.
+- **`layout`** decides the order of the three blocks a plugin card is
+  made of (`chatbox`, `settings`, `widget`). Names left out are
+  appended, so `["widget"]` means "panel first, the rest as before".
+- **`user_reorderable`** lets the *user* drag those blocks instead, with
+  a 2×3 grip and a frame around each. Stored per plugin, kept across
+  restarts, and kept — not deleted — if the author turns the switch off
+  again later.
+- **`chatbox`** opts a plugin out of the chatbox entirely: `get_text()`
+  and `get_lines()` are not called and the block disappears from the
+  card. `get_values()` keeps running, so a plugin with nothing to say
+  there can still offer `{its_name}` for somebody else's line. With
+  `"user_editable": true` the user gets a *Send to the chatbox* switch.
+
+**Settings**
+
+- A **`{"type": "widget"}`** row places `build_widget()` at an exact
+  spot in the schema — inside a group, above a Connection block,
+  wherever — instead of always underneath everything.
+
+### Changed
+
+- `PLUGIN_API_VERSION` stays at **2**. All of the above is additive:
+  unknown manifest keys have always been carried along invisibly, and a
+  widget row turns into the usual "needs a newer app" placeholder.
+- The character counter under the preview no longer re-applies its
+  stylesheet on every update. Setting one re-polishes and repaints the
+  widget whether or not anything changed, and that path runs on every
+  keystroke in the status field.
+
+### Fixed
+
+- An unrecognised setting type no longer claims the app is out of date.
+  All the parser knows is that the name is not one of ours, and there
+  are three ways to get there: a type a newer build really has, a typo,
+  and a name that never existed. Guessing the friendliest of the three
+  sent people looking for an update that does not exist.
+- The OSC input listener reported port `0` instead of the port it was
+  actually given when asked to bind an automatic one.
+- `tests/test_wintemp_cache.py` reset its cache stamp to `0.0`, which is
+  compared against `time.monotonic()` — on a machine up for less than
+  five minutes the stale entry looked fresh and three tests failed on
+  perfectly good code.
+
 ## [v1.4.7] – 2026-08-29
 
 **Two switches under the Preview: one that notices you are away, and one

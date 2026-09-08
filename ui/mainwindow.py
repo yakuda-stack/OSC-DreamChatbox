@@ -1298,10 +1298,21 @@ class MainWindow(ConfigMixin, AppsPageMixin, AdvancedPageMixin,
             self.char_count_lbl.setText("")
         elif n > CHATBOX_LIMIT:
             self.char_count_lbl.setText(f"⚠ {n}/{CHATBOX_LIMIT} – too long, will be cut!")
-            self.char_count_lbl.setStyleSheet("color: #d9884a; font-size: 12px;")
+            self._set_count_style("color: #d9884a; font-size: 12px;")
         else:
             self.char_count_lbl.setText(f"{n}/{CHATBOX_LIMIT}")
-            self.char_count_lbl.setStyleSheet("")
+            self._set_count_style("")
+
+    def _set_count_style(self, style):
+        """setStyleSheet re-polishes the widget and repaints it whether
+        or not anything changed, and this runs on every preview update -
+        which is every keystroke in the status field. Only two styles
+        ever apply here, so remembering the last one turns almost all of
+        those calls into a comparison."""
+        if getattr(self, "_count_style", None) == style:
+            return
+        self._count_style = style
+        self.char_count_lbl.setStyleSheet(style)
 
     def _matches_last_sent(self, text):
         """True when `text` is what VRChat is already showing. The stored

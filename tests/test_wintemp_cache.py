@@ -13,6 +13,7 @@ Runs on any platform: the Windows-only bits are stubbed.
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -21,8 +22,16 @@ from core.backends import wintemp
 
 
 def _reset():
-    wintemp._find_cache = (0.0, None)
-    wintemp._running_cache = (0.0, False)
+    # NOT (0.0, ...): the caches are compared against time.monotonic(),
+    # which counts from boot. On a machine that has been up for less
+    # than _FIND_TTL - a fresh container, a CI runner - a stamp of 0.0
+    # still looks fresh, the lookup is skipped and the test fails with
+    # "swept 0x" on code that is perfectly fine. Reaching back a full
+    # TTL is stale on any uptime.
+    old = time.monotonic() - max(wintemp._FIND_TTL,
+                                 wintemp._RUNNING_TTL) - 1.0
+    wintemp._find_cache = (old, None)
+    wintemp._running_cache = (old, False)
 
 
 def test_find_lhm_scans_the_registry_once(monkeypatch):
