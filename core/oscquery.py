@@ -98,6 +98,8 @@ class OSCQueryService:
         self._vrchat = None       # (ip, port) once discovered
         self._browser = None
         self.error = ""
+        # True once both mDNS services are registered (see _announce)
+        self.announced = False
 
     # ------------------------------------------------------------ status
     @property
@@ -163,13 +165,17 @@ class OSCQueryService:
                             addresses=[addr], port=self.osc_port,
                             properties={}),
             ]
-            for info in self._infos:
-                self._zc.register_service(info)
-            self.log(f"OSCQuery: registered '{self.app_name}' "
-                     f"(OSC udp/{self.osc_port}, "
-                     f"HTTP tcp/{self.http_port}) via mDNS")
+            # register_service() probes the network for name conflicts
+            # and blocks ~1.5 s PER service - on the GUI thread that was
+            # 3 s of a frozen window at every start. Ports and HTTP server
+            # above are ready now, so only the announcement waits.
+            self.announced = False
+            threading.Thread(target=self._announce,
+                             args=(self._zc, list(self._infos)),
+                             daemon=True, name="oscquery-mdns").start()
 
-            # 4) start looking for VRChat
+            # 4) start looking for VRChat - does not need our own
+            #    registration, so it runs right away
             self._browser = ServiceBrowser(self._zc, OSCJSON_TYPE,
                                            _VRChatListener(self))
             return True
@@ -179,19 +185,45 @@ class OSCQueryService:
             self.stop()
             return False
 
-    def stop(self):
+    def _announce(self, zc, infos):
+        """Background half of start(): register both services via mDNS.
+
+        `zc` is the Zeroconf instance this thread was started for. If
+        stop() (or stop + start) ran in the meantime, self._zc is no
+        longer that instance - then this thread is outdated and quietly
+        gives up instead of reporting an error nobody caused."""
         try:
-            if self._zc is not None:
-                for info in self._infos:
+            for info in infos:
+                zc.register_service(info)
+        except Exception as e:
+            if zc is self._zc:
+                self.error = str(e)
+                self.log(f"OSCQuery: mDNS registration failed: {e}")
+                self.stop()
+            return
+        if zc is not self._zc:
+            return
+        self.announced = True
+        self.log(f"OSCQuery: registered '{self.app_name}' "
+                 f"(OSC udp/{self.osc_port}, "
+                 f"HTTP tcp/{self.http_port}) via mDNS")
+
+    def stop(self):
+        # take the instance out FIRST: a running _announce() thread
+        # compares against self._zc and must see that it was stopped
+        zc, self._zc = self._zc, None
+        infos, self._infos = self._infos, []
+        self.announced = False
+        try:
+            if zc is not None:
+                for info in infos:
                     try:
-                        self._zc.unregister_service(info)
+                        zc.unregister_service(info)
                     except Exception:
                         pass
-                self._zc.close()
+                zc.close()
         except Exception:
             pass
-        self._zc = None
-        self._infos = []
         if self._http is not None:
             try:
                 self._http.shutdown()

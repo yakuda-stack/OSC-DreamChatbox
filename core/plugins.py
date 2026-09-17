@@ -218,6 +218,7 @@ import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from core.atomicfile import write_text_atomic
 from core.constants import APP_NAME, PLUGINS_DIR, VERSION
 # re-exported below so plugins and core/plugin_store.py can keep
 # doing `from core.plugins import IS_WINDOWS, OS_NAME`
@@ -1212,9 +1213,9 @@ class PluginManager:
             # level, and never on top of a key we do own
             for key, value in (entry.get("extra") or {}).items():
                 data.setdefault(key, value)
-            plugin.config_file.write_text(
-                json.dumps(data, indent=2, ensure_ascii=False),
-                encoding="utf-8")
+            write_text_atomic(
+                plugin.config_file,
+                json.dumps(data, indent=2, ensure_ascii=False))
         except Exception as e:
             self.log(f"Plugins: could not save the settings of "
                      f"'{pid}': {e}")

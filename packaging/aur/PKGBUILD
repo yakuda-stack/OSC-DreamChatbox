@@ -1,6 +1,6 @@
 # Maintainer: yakuda <yakuda@outlook.de>
 pkgname=osc-dreamchatbox
-pkgver=1.4.8
+pkgver=1.4.9
 pkgrel=1
 pkgdesc="Native Linux alternative to MagicChatbox (VRCOSC) - VRChat OSC chatbox companion (status, now-playing, hardware, speech-to-text, OSCQuery)"
 # Reines Python, daher 'any' - der FPS-Vulkan-Layer liegt im
@@ -55,6 +55,10 @@ package() {
     # kopieren ihn laengst mit, nur hier fehlte er.
     if [ -d config ]; then cp -r config "${app}/"; fi
     install -Dm644 assets/icon.png "${app}/assets/icon.png"
+    # Optionen -> General: Highlights- und Changelog-Knopf lesen die Dateien
+    # neben der App (ui/docviewer.py)
+    install -Dm644 CHANGELOG.md "${app}/CHANGELOG.md"
+    install -Dm644 HIGHLIGHTS.md "${app}/HIGHLIGHTS.md"
     # Python-Cache/Muell nicht paketieren
     find "${app}" -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null || true
 

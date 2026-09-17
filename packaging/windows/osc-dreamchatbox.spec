@@ -92,7 +92,8 @@ else:
     print("[spec] WARNING: dreamtemp-helper.ps1 missing - the temperature "
           "button will not work in this build")
 
-for _doc in ("LICENSE", "THIRD_PARTY_NOTICES.md"):
+# CHANGELOG/HIGHLIGHTS: read by the buttons under Options -> General
+for _doc in ("LICENSE", "THIRD_PARTY_NOTICES.md", "CHANGELOG.md", "HIGHLIGHTS.md"):
     _p = PROJECT_ROOT / _doc
     if _p.exists():
         datas.append((str(_p), "."))

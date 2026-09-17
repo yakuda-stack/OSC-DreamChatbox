@@ -15,13 +15,13 @@ from core.osinfo import (  # noqa: F401  (IS_WINDOWS/OS_NAME re-exported)
     IS_WINDOWS, OS_NAME, config_dir, legacy_config_dir, resource_root)
 
 APP_NAME = "OSC-DreamChatbox"
-VERSION = "v1.4.8"
+VERSION = "v1.4.9"
 
 #: how many All-in-one strings there can be. Raised from 5 in v1.4.0;
 #: every list that is "one entry per AIO string" is sized from here.
 AIO_MAX = 10
 GITHUB_REPO = "yakuda-stack/OSC-DreamChatbox"
-DISCORD_URL = "https://discord.gg/X5TaN4A47h"
+DISCORD_URL = "https://discord.gg/ShNKvvZu74"
 DONATE_URL = "https://ko-fi.com/yakuda_"
 VRCHAT_GROUP_URL = ("https://vrchat.com/home/group/"
                     "grp_829b7777-430d-48b2-8bf3-4e348d0dac9b")

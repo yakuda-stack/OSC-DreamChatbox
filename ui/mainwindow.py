@@ -577,6 +577,22 @@ class MainWindow(ConfigMixin, AppsPageMixin, AdvancedPageMixin,
             self.scan_plugin_updates()
 
     def apply_config_to_ui(self):
+        """Puts the loaded config into every widget.
+
+        Setting a widget fires its handler, and nearly every handler ends
+        in save_config() - that was 23 full config writes on every start.
+        While _loading_config is set, save_config() skips, and the file is
+        written ONCE at the end. Once, not never: a handler may have
+        normalised a value on the way in, and that should still persist.
+        """
+        self._loading_config = True
+        try:
+            self._apply_config_to_ui()
+        finally:
+            self._loading_config = False
+        self._write_config()
+
+    def _apply_config_to_ui(self):
         self._block_updating = True
         for i, edit in enumerate(self.status_edits):
             edit.setText(self.cfg["status_texts"][i])
@@ -1382,6 +1398,8 @@ class MainWindow(ConfigMixin, AppsPageMixin, AdvancedPageMixin,
                 # the config is safely on disk
                 ("libre_server.stop_sync", self.libre_server.stop_sync),
                 ("oscq.stop", self.oscq.stop),
+                # ends the long-running nvidia-smi (Linux backend only)
+                ("hw.close", getattr(self.hw, "close", lambda: None)),
                 ("debug_console.close", self.debug_console.close)):
             try:
                 step()

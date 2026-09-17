@@ -13,7 +13,6 @@ Runs on any platform: the Windows-only bits are stubbed.
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 import sys
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -21,17 +20,26 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from core.backends import wintemp
 
 
+# A stamp that is stale no matter which clock the test uses.
+#
+# NOT 0.0: the caches are compared against time.monotonic(), which counts
+# from boot, so on a machine that has been up for less than _FIND_TTL - a
+# fresh container, a CI runner - 0.0 still looks fresh and the lookup is
+# skipped.
+#
+# And not time.monotonic() - TTL - 1 either: the tests below replace
+# time.monotonic with a clock that starts at 1000.0, while _reset() runs
+# BEFORE that patch and would use the real one. With an uptime above
+# ~1000 s the stamp then lies in the fake clock's FUTURE, the cache looks
+# fresh forever and the test fails on perfectly fine code - reliably on
+# any desktop that has been running for more than a quarter of an hour.
+# A large negative number is in the past for both clocks.
+_STALE = -1e9
+
+
 def _reset():
-    # NOT (0.0, ...): the caches are compared against time.monotonic(),
-    # which counts from boot. On a machine that has been up for less
-    # than _FIND_TTL - a fresh container, a CI runner - a stamp of 0.0
-    # still looks fresh, the lookup is skipped and the test fails with
-    # "swept 0x" on code that is perfectly fine. Reaching back a full
-    # TTL is stale on any uptime.
-    old = time.monotonic() - max(wintemp._FIND_TTL,
-                                 wintemp._RUNNING_TTL) - 1.0
-    wintemp._find_cache = (old, None)
-    wintemp._running_cache = (old, False)
+    wintemp._find_cache = (_STALE, None)
+    wintemp._running_cache = (_STALE, False)
 
 
 def test_find_lhm_scans_the_registry_once(monkeypatch):

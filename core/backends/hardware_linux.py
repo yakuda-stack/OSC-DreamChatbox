@@ -15,6 +15,7 @@ Reads CPU / RAM / GPU stats without extra dependencies:
 import re
 import shutil
 import subprocess
+import threading
 import time
 from pathlib import Path
 
@@ -46,6 +47,147 @@ def _clean_gpu_name(name: str) -> str:
     return re.sub(r"\s+", " ", name).strip() or name.strip()
 
 
+def _parse_nvsmi(line):
+    """'0, 41, 55, 1234, 8192, 120.5' -> the gpu() dict, or None.
+
+    Only card 0 is used, same as before: with --loop every card prints
+    its own line, so the index column decides instead of "the first
+    line of this call"."""
+    if not line:
+        return None
+    cols = [c.strip() for c in line.split(",")]
+    try:
+        if int(float(cols[0])) != 0:
+            return None
+        u, t, mu, mt = [float(x) for x in cols[1:5]]
+    except (IndexError, ValueError):
+        return None
+    # power.draw reads "[N/A]" on cards that do not report it, and asking
+    # for it must not cost us the four values that always work - hence
+    # parsed separately
+    try:
+        power = float(cols[5])
+    except (IndexError, ValueError):
+        power = None
+    return {"usage": u, "temp": t, "power": power,
+            "vram_used": mu / 1024.0, "vram_total": mt / 1024.0,
+            "vram_pct": 100.0 * mu / mt if mt else None}
+
+
+class _NvidiaSmiLoop:
+    """One long-running nvidia-smi instead of a new process per poll.
+
+    `nvidia-smi --loop=N` prints a fresh CSV line every N seconds; a
+    reader thread keeps the newest one. Starting a process every two
+    seconds costs far more than reading a line from a pipe that is
+    already there.
+
+    Tidying up:
+      * `close()` on app exit (ui/mainwindow.py closeEvent)
+      * no poll for IDLE_STOP_SEC (Hardware card switched off) stops the
+        process; the next call starts it again
+      * if the app dies without closing, nvidia-smi writes into a pipe
+        with no reader and gets SIGPIPE on its next line
+    """
+
+    QUERY = ("index,utilization.gpu,temperature.gpu,"
+             "memory.used,memory.total,power.draw")
+    IDLE_STOP_SEC = 15
+
+    def __init__(self, interval=2, log_fn=print):
+        self.interval = interval
+        self.log = log_fn
+        self.broken = False        # fall back to one call per poll
+        self._proc = None
+        self._line = None
+        self._line_time = 0.0
+        self._last_ask = 0.0
+        self._fails = 0
+        self._lock = threading.Lock()
+        self._have_line = threading.Event()
+
+    # ------------------------------------------------------------ read
+    def latest(self, wait=3.0):
+        """Newest CSV line, or None. Starts the process if needed."""
+        with self._lock:
+            self._last_ask = time.monotonic()
+            start_now = self._proc is None or self._proc.poll() is not None
+            if start_now:
+                self._start_locked()
+        self._have_line.wait(wait)          # only waits on the first line
+        with self._lock:
+            stale = time.monotonic() - self._line_time > 3 * self.interval + 2
+            return None if (self._line is None or stale) else self._line
+
+    def _start_locked(self):
+        self._line = None
+        self._have_line.clear()
+        try:
+            self._proc = subprocess.Popen(
+                ["nvidia-smi", f"--query-gpu={self.QUERY}",
+                 "--format=csv,noheader,nounits", f"--loop={self.interval}"],
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                text=True, bufsize=1)
+        except Exception as e:
+            self._proc = None
+            self._fail(f"could not be started ({e})")
+            return
+        threading.Thread(target=self._reader, args=(self._proc,),
+                         daemon=True, name="nvidia-smi-loop").start()
+
+    def _reader(self, proc):
+        got_line = False
+        for raw in proc.stdout:
+            line = raw.strip()
+            # every card prints its own line per round - keep card 0,
+            # the one gpu() reports
+            if not line or not line.startswith("0,"):
+                continue
+            with self._lock:
+                if proc is not self._proc:      # replaced or closed
+                    return
+                self._line = line
+                self._line_time = time.monotonic()
+                self._fails = 0
+                idle = time.monotonic() - self._last_ask > self.IDLE_STOP_SEC
+            got_line = True
+            self._have_line.set()
+            if idle:
+                self.close()                    # Hardware card is off
+                return
+        # process ended on its own
+        self._have_line.set()
+        if not got_line:
+            with self._lock:
+                if proc is self._proc:
+                    self._fail("ended without a line")
+
+    def _fail(self, why):
+        """Three starts without a single line: stop trying the loop and
+        let gpu() go back to one call per poll (old driver, no --loop)."""
+        self._fails += 1
+        if self._fails >= 3 and not self.broken:
+            self.broken = True
+            self.log(f"Hardware: nvidia-smi --loop {why} - "
+                     "falling back to one call per poll")
+
+    # ----------------------------------------------------------- close
+    def close(self):
+        with self._lock:
+            proc, self._proc = self._proc, None
+            self._line = None
+        self._have_line.set()
+        if proc is not None and proc.poll() is None:
+            try:
+                proc.terminate()
+                proc.wait(timeout=2)
+            except Exception:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+
+
 class HardwareMonitor:
     def __init__(self, log_fn):
         # FPS used to be read here. It moved into the World Stats plugin
@@ -74,6 +216,7 @@ class HardwareMonitor:
         # what the powercap/hwmon scans actually saw, for the log line
         self._rapl_seen = []
         self.has_nvidia = shutil.which("nvidia-smi") is not None
+        self._nvsmi = _NvidiaSmiLoop(log_fn=log_fn) if self.has_nvidia else None
         self.amd_card = self._find_amd_card()
         self.gpu_name_auto = self._detect_gpu_name()
         self.cpu_name_auto = self._detect_cpu_name()
@@ -546,26 +689,9 @@ class HardwareMonitor:
     def gpu(self):
         """Returns {usage, temp, vram_used, vram_total, vram_pct} (values may be None)."""
         if self.has_nvidia:
-            try:
-                out = subprocess.run(
-                    ["nvidia-smi",
-                     "--query-gpu=utilization.gpu,temperature.gpu,memory.used,memory.total,power.draw",
-                     "--format=csv,noheader,nounits"],
-                    capture_output=True, text=True, timeout=3).stdout.strip()
-                cols = out.splitlines()[0].split(",")
-                u, t, mu, mt = [float(x) for x in cols[:4]]
-                # power.draw reads "[N/A]" on cards that do not report it,
-                # and asking for it must not cost us the four values that
-                # always work - hence parsed separately
-                try:
-                    power = float(cols[4])
-                except (IndexError, ValueError):
-                    power = None
-                return {"usage": u, "temp": t, "power": power,
-                        "vram_used": mu / 1024.0, "vram_total": mt / 1024.0,
-                        "vram_pct": 100.0 * mu / mt if mt else None}
-            except Exception:
-                return None
+            line = (self._nvsmi_once() if self._nvsmi.broken
+                    else self._nvsmi.latest())
+            return _parse_nvsmi(line)
         if self.amd_card:
             try:
                 usage = _read(self.amd_card / "gpu_busy_percent")
@@ -581,6 +707,22 @@ class HardwareMonitor:
             except Exception:
                 return None
         return None
+
+    def _nvsmi_once(self):
+        """Fallback: the old one call per poll."""
+        try:
+            out = subprocess.run(
+                ["nvidia-smi", f"--query-gpu={_NvidiaSmiLoop.QUERY}",
+                 "--format=csv,noheader,nounits"],
+                capture_output=True, text=True, timeout=3).stdout.strip()
+            return out.splitlines()[0]
+        except Exception:
+            return None
+
+    def close(self):
+        """Called from closeEvent - ends the nvidia-smi process."""
+        if self._nvsmi is not None:
+            self._nvsmi.close()
 
     def snapshot(self):
         return {"cpu_usage": self.cpu_usage(),

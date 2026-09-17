@@ -7,6 +7,7 @@ window class stays small. All `self.*` refer to the MainWindow instance.
 
 import json
 import shutil
+from core.atomicfile import write_text_atomic
 from core.theming import THEMES
 from core.audiolevel import THRESHOLD_DEFAULT, clamp_threshold
 from core.lyrics_sources import DEFAULT_SOURCES, normalize_sources
@@ -884,6 +885,8 @@ class ConfigMixin:
     def save_config(self):
         """Writes the config immediately (used for toggles, checkboxes,
         spinboxes - things you change once)."""
+        if getattr(self, "_loading_config", False):
+            return      # apply_config_to_ui() writes once at the end
         self._save_timer.stop()
         self._write_config()
 
@@ -892,6 +895,8 @@ class ConfigMixin:
         file is written at most once every 800 ms instead of per keystroke.
         The single-shot timer is only armed while you type and costs
         nothing otherwise."""
+        if getattr(self, "_loading_config", False):
+            return
         self._save_timer.start(800)
 
     def _write_config(self):
@@ -901,7 +906,7 @@ class ConfigMixin:
             # plain ASCII today - the encoding is pinned anyway so a
             # hand-edited config with an emoji in it still loads on
             # Windows, where the default is the locale codepage
-            CONFIG_FILE.write_text(json.dumps(self.cfg, indent=2),
-                                   encoding="utf-8")
+            # atomic: a crash mid-write must not reset every setting
+            write_text_atomic(CONFIG_FILE, json.dumps(self.cfg, indent=2))
         except Exception as e:
             self.log(f"Could not save settings: {e}")

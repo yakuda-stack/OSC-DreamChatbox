@@ -1,8 +1,11 @@
 #!/bin/bash
 # OSC-DreamChatbox — AppImage Builder (bundled source)
 # Benötigt: python3, pip (appimagetool wird automatisch geladen)
-# Verwendung:  bash build_appimage.sh   (egal ob das Skript im
-# Projekt-Root oder in scripts/ liegt und von wo du es aufrufst)
+# Verwendung:  bash scripts/build_appimage.sh   (egal von wo aus)
+#
+# Ergebnis:    build/OSC-DreamChatbox-<version>-x86_64.AppImage
+#              build/ wird bei JEDEM Lauf komplett geleert — dort liegt
+#              danach nur die frische AppImage, nie ein alter Stand.
 
 set -e
 
@@ -20,12 +23,17 @@ if [ ! -f core/constants.py ]; then
 fi
 
 APP="OSC-DreamChatbox"
-# Version automatisch aus core/constants.py lesen (z.B. v1.0.6-alpha)
-VERSION="$(grep -o 'VERSION = "[^"]*"' core/constants.py | cut -d'"' -f2)"
-VERSION="${VERSION#v}"
+# Version automatisch aus core/constants.py lesen (VERSION = "v1.4.8" -> 1.4.8).
+# ^ am Anfang: sonst passt auch PLUGIN_API_VERSION = "..." o. Ae.
+VERSION="$(grep -oP '^VERSION\s*=\s*"v?\K[^"]+' core/constants.py)"
+if [ -z "$VERSION" ]; then
+    echo "FEHLER: VERSION in core/constants.py nicht gefunden."
+    exit 1
+fi
 ARCH="x86_64"
-BUILD_DIR="$(pwd)/AppDir"
-OUT="$(pwd)/${APP}-${VERSION}-${ARCH}.AppImage"
+OUT_DIR="$(pwd)/build"                              # Ziel fuer die fertige AppImage
+BUILD_DIR="$OUT_DIR/AppDir"                         # Zwischenstand, wird am Ende geloescht
+OUT="$OUT_DIR/${APP}-${VERSION}-${ARCH}.AppImage"
 LIB="$BUILD_DIR/usr/lib/osc-dreamchatbox"
 
 echo "=== OSC-DreamChatbox AppImage Builder ==="
@@ -33,12 +41,19 @@ echo "Version: $VERSION"
 echo ""
 
 # Sanity-Check: neue Projektstruktur vorhanden?
-for f in osc_dreamchatbox.py core/constants.py ui/mainwindow.py assets/icon.png; do
+for f in osc_dreamchatbox.py core/constants.py ui/mainwindow.py assets/icon.png \
+         CHANGELOG.md HIGHLIGHTS.md; do
     if [ ! -e "$f" ]; then
         echo "FEHLER: $f nicht gefunden — bitte aus dem Projekt-Root bauen."
         exit 1
     fi
 done
+
+# 0. build/ frisch anlegen
+echo "[0/5] Leere build/ ..."
+rm -rf "$OUT_DIR"
+rm -rf "$(pwd)/AppDir"          # Überbleibsel vom alten Build-Ort im Projekt-Root
+mkdir -p "$OUT_DIR"
 
 # 1. appimagetool prüfen
 if ! command -v appimagetool &>/dev/null; then
@@ -86,7 +101,6 @@ chmod +x "$RUNTIME"
 
 # 2. AppDir Struktur anlegen
 echo "[1/5] Erstelle AppDir Struktur..."
-rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR/usr/bin"
 mkdir -p "$LIB"
 mkdir -p "$BUILD_DIR/usr/share/applications"
@@ -100,6 +114,8 @@ mkdir -p "$LIB/assets"
 cp assets/icon.png "$LIB/assets/"
 # Plugin-Store-Katalog (core/constants.py: STORE_SOURCES_FILE)
 if [ -d config ]; then cp -r config "$LIB/"; fi
+# Optionen -> General: Highlights- und Changelog-Knopf (ui/docviewer.py)
+cp CHANGELOG.md HIGHLIGHTS.md "$LIB/"
 
 # Python-Cache nicht mitschleppen
 find "$LIB" -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null || true
@@ -126,7 +142,7 @@ Exec=osc-dreamchatbox
 Icon=osc-dreamchatbox
 Terminal=false
 Type=Application
-Categories=Utility;Network;
+Categories=Network;Chat;
 StartupWMClass=osc-dreamchatbox
 EOF
 
@@ -235,6 +251,9 @@ else
     echo "✔ Runtime ist statisch (läuft mit fuse2 UND fuse3)"
 fi
 
-echo "✔ Fertig: $OUT"
-echo "   Zum Starten: chmod +x $OUT && ./$OUT"
-echo "   Ohne FUSE testen: APPIMAGE_EXTRACT_AND_RUN=1 $OUT"
+# 8. AppDir wegräumen — in build/ bleibt nur die AppImage
+rm -rf "$BUILD_DIR"
+
+echo "✔ Fertig: build/$(basename "$OUT")"
+echo "   Zum Starten: chmod +x \"$OUT\" && \"$OUT\""
+echo "   Ohne FUSE testen: APPIMAGE_EXTRACT_AND_RUN=1 \"$OUT\""

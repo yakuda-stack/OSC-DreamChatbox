@@ -121,7 +121,7 @@ def _desktop_text(exec_cmd: str) -> str:
         f"Exec={exec_cmd}\n"
         f"Icon={ICON_NAME}\n"           # theme name, not an absolute path
         "Terminal=false\n"
-        "Categories=Utility;Network;Chat;\n"
+        "Categories=Network;Chat;\n"
         "Keywords=VRChat;OSC;Chatbox;VR;\n"
         "StartupNotify=true\n"
         f"StartupWMClass={WM_CLASS}\n"
@@ -151,9 +151,15 @@ def _entry_is_current() -> bool:
     if not _icon_file().exists():
         return False
     try:
-        return f"Icon={ICON_NAME}\n" in store.read_text(encoding="utf-8")
+        text = store.read_text(encoding="utf-8")
     except OSError:
         return False
+    # Categories too: an entry written before v1.4.9 still says
+    # "Utility;Network;Chat;", two main categories, which makes some
+    # menus list the app twice. Without this line the fix would call
+    # that entry current and never repair it.
+    return (f"Icon={ICON_NAME}\n" in text
+            and "Categories=Network;Chat;\n" in text)
 
 
 def _remove_old_entry() -> bool:

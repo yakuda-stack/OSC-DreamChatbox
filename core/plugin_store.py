@@ -70,6 +70,7 @@ import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
+from core.atomicfile import write_text_atomic
 from core.constants import (
     APP_NAME, CONFIG_DIR, GITHUB_REPO, STORE_SOURCES_FILE, VERSION)
 from core.plugins import (
@@ -120,8 +121,10 @@ class Source:
 
     @property
     def tarball(self):
-        return f"{CODELOAD}/{self.owner}/{self.repo}/tar.gz/refs/heads/" \
-               f"{self.ref}"
+        # plain ref, not refs/heads/<ref>: that form only knows branches.
+        # This way a catalogue link can pin a tag or a commit, e.g.
+        # .../tree/<commit-sha>/<folder> - GitHub resolves all three.
+        return f"{CODELOAD}/{self.owner}/{self.repo}/tar.gz/{self.ref}"
 
     @property
     def web_url(self):
@@ -401,9 +404,9 @@ class PluginStore:
         data.setdefault("self_url", url)
         try:
             CACHED_SOURCES_FILE.parent.mkdir(parents=True, exist_ok=True)
-            CACHED_SOURCES_FILE.write_text(
-                json.dumps(data, indent=2, ensure_ascii=False),
-                encoding="utf-8")
+            write_text_atomic(
+                CACHED_SOURCES_FILE,
+                json.dumps(data, indent=2, ensure_ascii=False))
         except OSError as e:
             self.log(f"Store: could not cache the plugin list: {e}")
             return (False, self.catalogue_version, str(e))
@@ -458,9 +461,9 @@ class PluginStore:
         data = dict(self._remote_data)
         try:
             CACHED_SOURCES_FILE.parent.mkdir(parents=True, exist_ok=True)
-            CACHED_SOURCES_FILE.write_text(
-                json.dumps(data, indent=2, ensure_ascii=False),
-                encoding="utf-8")
+            write_text_atomic(
+                CACHED_SOURCES_FILE,
+                json.dumps(data, indent=2, ensure_ascii=False))
         except OSError as e:
             self.log(f"Store: could not save the catalogue: {e}")
             return ""

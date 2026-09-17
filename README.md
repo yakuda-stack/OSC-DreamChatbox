@@ -13,7 +13,7 @@
 [![Python](https://img.shields.io/badge/Python-3.10%2B-yellow.svg)]()
 [![AUR](https://img.shields.io/badge/AUR-osc--dreamchatbox-1793D1.svg)](https://aur.archlinux.org/packages/osc-dreamchatbox)
 [![YouTube](https://img.shields.io/badge/YouTube-Watch-FF0000.svg)](https://www.youtube.com/watch?v=XJFplUvuGVs)
-[![Discord](https://img.shields.io/badge/Discord-Join-5865F2.svg)](https://discord.gg/X5TaN4A47h)
+[![Discord](https://img.shields.io/badge/Discord-Join-5865F2.svg)](https://discord.gg/ShNKvvZu74)
 [![Ko-fi](https://img.shields.io/badge/Ko--fi-Support-FF5E5B.svg)](https://ko-fi.com/yakuda_)
 
 ![OSC-DreamChatbox main window](assets/p8.png)
@@ -570,7 +570,7 @@ OSC-DreamChatbox/
 
 ## ❤️ Support
 
-- 💬 [Discord](https://discord.gg/X5TaN4A47h)
+- 💬 [Discord](https://discord.gg/ShNKvvZu74)
 - 👥 [VRChat group](https://vrchat.com/home/group/grp_829b7777-430d-48b2-8bf3-4e348d0dac9b)
 - ☕ [Support me on Ko-fi](https://ko-fi.com/yakuda_)
 - 📋 [Changelog](CHANGELOG.md) · 🧩 [Plugin API](docs/PLUGIN_API.md)

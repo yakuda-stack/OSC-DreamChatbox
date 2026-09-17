@@ -1,5 +1,9 @@
 """
-ui/pages/options_page.py – Options page: OSC target, OSCQuery, updates, fixes, sending, debug.
+ui/pages/options_page.py – Options page, split into three tabs:
+
+    General   Community & Updates, Highlights + Changelog, Linux fixes
+    OSC       OSCQuery / OSC input / hotkeys, Slim Chatbox, sending, target
+    Design    theme, colours, background
 
 Mixin for MainWindow; see ui/mainwindow.py. Kept separate so the
 window class stays small. All `self.*` refer to the MainWindow instance.
@@ -14,7 +18,7 @@ from pathlib import Path
 from PyQt6.QtCore import QUrl, Qt
 from PyQt6.QtGui import QColor, QDesktopServices, QPainter, QPixmap
 from PyQt6.QtWidgets import (
-    QColorDialog, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget, QMessageBox, QPushButton, QSlider, QSpinBox, QVBoxLayout, QWidget)
+    QButtonGroup, QColorDialog, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget, QMessageBox, QPushButton, QSlider, QSpinBox, QVBoxLayout, QWidget)
 from core import desktop_integration, queryfix, vrc_pictures
 from core.theming import (
     TOKEN_LABELS, import_background, list_backgrounds, remove_background,
@@ -23,7 +27,9 @@ from core.constants import (
     CHATBOX_INPUT, DISCORD_URL, DONATE_URL, GITHUB_REPO, OSC_MIN_SEND_GAP_SEC, OSC_RATE_MAX_SENDS, OSC_RATE_WINDOW_SEC, VERSION, VRCHAT_GROUP_URL)
 from core.oscin import DEFAULT_IN_PORT
 from core.oscquery import HAS_ZEROCONF
+from core.plugin_store import compare_versions
 from core.osinfo import IS_WINDOWS, OS_NAME
+from ui.docviewer import CHANGELOG_FILE, HIGHLIGHTS_FILE, show_doc
 from ui.ui_main import ToggleLabel, ToggleSwitch
 try:
     from pythonosc.udp_client import SimpleUDPClient
@@ -42,6 +48,44 @@ class OptionsPageMixin:
         title = QLabel("Options")
         title.setObjectName("pagetitle")
         layout.addWidget(title)
+
+        # ---- General / OSC / Design switch ---------------------------
+        # Same look and placement as Installed / Store on the Plugins
+        # page: own row under the title, packed left, so a narrow window
+        # never cuts them off.
+        tabs_row = QHBoxLayout()
+        tabs_row.setSpacing(8)
+        self.options_tab_group = QButtonGroup(self)
+        self.options_tab_group.setExclusive(True)
+        for i, label in enumerate(("\u2699\uFE0F  General",
+                                   "\U0001F4E1  OSC",
+                                   "\U0001F3A8  Design")):
+            b = QPushButton(label)
+            b.setCheckable(True)
+            b.setFixedHeight(30)
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.setStyleSheet(
+                "QPushButton { background: #232833; border: 1px solid #333947;"
+                " border-radius: 8px; color: #aeb4bf; padding: 0 14px; }"
+                "QPushButton:hover { border-color: #5b8dc9; }"
+                "QPushButton:checked { background: #5b8dc9;"
+                " border-color: #5b8dc9; color: #ffffff; }")
+            self.options_tab_group.addButton(b, i)
+            tabs_row.addWidget(b)
+        tabs_row.addStretch()
+        self.options_tab_group.button(0).setChecked(True)
+        self.options_tab_group.idClicked.connect(self.on_options_tab)
+        layout.addLayout(tabs_row)
+
+        # one plain widget per tab; the cards below are added to these
+        # instead of straight to the page
+        tab_general, tab_osc, tab_design = QWidget(), QWidget(), QWidget()
+        general_lay, osc_lay, design_lay = (
+            QVBoxLayout(tab_general), QVBoxLayout(tab_osc),
+            QVBoxLayout(tab_design))
+        for lay in (general_lay, osc_lay, design_lay):
+            lay.setContentsMargins(0, 0, 0, 0)
+            lay.setSpacing(16)
 
         # ---------------- OSCQuery Fix (core/queryfix.py) ----------------
         qcard = QFrame()
@@ -243,7 +287,7 @@ class OptionsPageMixin:
         self.queryfix_result.setObjectName("dim")
         self.queryfix_result.setWordWrap(True)
         qc.addWidget(self.queryfix_result)
-        layout.addWidget(qcard)
+        osc_lay.addWidget(qcard)
 
         card = QFrame()
         card.setObjectName("card")
@@ -332,57 +376,65 @@ class OptionsPageMixin:
         hint2.setWordWrap(True)
         c.addWidget(hint2)
 
-        layout.addWidget(card)
-        layout.addWidget(self.build_customization_card())
+        osc_lay.addWidget(card)
+        design_lay.addWidget(self.build_customization_card())
 
-        # ----- Community & Updates -----
-        ucard = QFrame()
-        ucard.setObjectName("card")
-        uc = QVBoxLayout(ucard)
-        uc.setContentsMargins(16, 14, 16, 16)
-        uc.setSpacing(10)
-        ut = QLabel("Community & Updates")
-        ut.setObjectName("cardtitle")
-        uc.addWidget(ut)
+        # ----- General: three cards, one job each ---------------------
+        # 1 Updates    what version you have, what changed
+        # 2 Community  where to talk to people / support the project
+        # 3 Fixes      one-off repairs for Linux desktops
 
-        btn_row = QHBoxLayout()
-        upd_btn = QPushButton("\U0001F504  Check for updates")
-        upd_btn.setObjectName("sendbtn")
-        upd_btn.setFixedHeight(34)
-        upd_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        upd_btn.clicked.connect(self.check_for_updates)
-        btn_row.addWidget(upd_btn)
-        dc_btn = QPushButton("\U0001F4AC  Discord")
-        dc_btn.setObjectName("linkbtn")
-        dc_btn.setFixedHeight(34)
-        dc_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        dc_btn.clicked.connect(
-            lambda: QDesktopServices.openUrl(QUrl(DISCORD_URL)))
-        btn_row.addWidget(dc_btn)
-        don_btn = QPushButton("\u2615  Support on Ko-fi")
-        don_btn.setObjectName("linkbtn")
-        don_btn.setFixedHeight(34)
-        don_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        don_btn.setToolTip("Support development on Ko-fi")
-        don_btn.clicked.connect(
-            lambda: QDesktopServices.openUrl(QUrl(DONATE_URL)))
-        btn_row.addWidget(don_btn)
+        # 1 ---- Updates
+        upd_card, upd = self._opt_card(
+            "Updates",
+            "Check whether a new version is out, and read what changed.")
+        upd_row = QHBoxLayout()
+        upd_row.setSpacing(8)
+        upd_row.addWidget(self._opt_button(
+            "\U0001F504  Check for updates", "sendbtn",
+            self.check_for_updates))
+        upd_row.addWidget(self._opt_button(
+            "\u2728  Highlights", "linkbtn",
+            lambda: show_doc(self, "Highlights", HIGHLIGHTS_FILE),
+            "The most important changes of every release, in a few lines each"))
+        upd_row.addWidget(self._opt_button(
+            "\U0001F4DC  Changelog", "linkbtn",
+            lambda: show_doc(self, "Changelog", CHANGELOG_FILE),
+            "Every change in detail"))
+        upd_row.addStretch()
+        upd.addLayout(upd_row)
 
-        vrc_btn = QPushButton("\U0001F465  VRChat Group")
-        vrc_btn.setObjectName("linkbtn")
-        vrc_btn.setFixedHeight(34)
-        vrc_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        vrc_btn.setToolTip("Join the OSC-DreamChatbox VRChat group")
-        vrc_btn.clicked.connect(
-            lambda: QDesktopServices.openUrl(QUrl(VRCHAT_GROUP_URL)))
-        btn_row.addWidget(vrc_btn)
+        self.update_lbl = QLabel(f"Current version: {VERSION}")
+        self.update_lbl.setObjectName("dim")
+        self.update_lbl.setWordWrap(True)
+        self.update_lbl.setOpenExternalLinks(True)
+        upd.addWidget(self.update_lbl)
+        general_lay.addWidget(upd_card)
 
-        btn_row.addStretch()
-        uc.addLayout(btn_row)
+        # 2 ---- Community
+        com_card, com = self._opt_card(
+            "Community",
+            "Questions, ideas and bug reports are welcome on Discord.")
+        com_row = QHBoxLayout()
+        com_row.setSpacing(8)
+        com_row.addWidget(self._opt_button(
+            "\U0001F4AC  Discord", "linkbtn",
+            lambda: QDesktopServices.openUrl(QUrl(DISCORD_URL)),
+            "Join the OSC-DreamChatbox Discord server"))
+        com_row.addWidget(self._opt_button(
+            "\u2615  Support on Ko-fi", "linkbtn",
+            lambda: QDesktopServices.openUrl(QUrl(DONATE_URL)),
+            "Support development on Ko-fi"))
+        com_row.addWidget(self._opt_button(
+            "\U0001F465  VRChat Group", "linkbtn",
+            lambda: QDesktopServices.openUrl(QUrl(VRCHAT_GROUP_URL)),
+            "Join the OSC-DreamChatbox VRChat group"))
+        com_row.addStretch()
+        com.addLayout(com_row)
+        general_lay.addWidget(com_card)
 
-        # App Tray Fix sits on its own row directly under "Check for updates"
-        #
-        # Both buttons below fix problems that only exist on Linux:
+        # 3 ---- Fixes
+        # Both buttons fix problems that only exist on Linux:
         #   App Tray Fix        writes a freedesktop .desktop entry so
         #                       Wayland/KDE can match the window to an icon.
         #                       Windows takes the icon from the .exe itself,
@@ -393,53 +445,91 @@ class OptionsPageMixin:
         #                       Proton prefix. On Windows there IS no
         #                       prefix - VRChat writes straight into
         #                       %USERPROFILE%\Pictures\VRChat.
-        # So on Windows the whole row is skipped rather than shown greyed
+        # So on Windows the whole card is skipped rather than shown greyed
         # out: a disabled button invites the question "what am I missing?",
         # and the honest answer is "nothing".
-        fix_row = QHBoxLayout()
-        self.tray_fix_btn = QPushButton("\U0001F527  App Tray Fix")
-        self.tray_fix_btn.setObjectName("linkbtn")
-        self.tray_fix_btn.setFixedHeight(34)
-        self.tray_fix_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.tray_fix_btn.setToolTip(
+        self.tray_fix_btn = self._opt_button(
+            "\U0001F527  App Tray Fix", "linkbtn", self.run_app_tray_fix,
             "Registers a desktop entry so the correct taskbar/tray icon shows "
             "and the app appears in your application menu. For install-script "
             "users – does nothing if an entry already exists.")
-        self.tray_fix_btn.clicked.connect(self.run_app_tray_fix)
-        fix_row.addWidget(self.tray_fix_btn)
-
-        self.vrc_pic_btn = QPushButton("\U0001F5BC\uFE0F  VRC Picture Folder Fix")
-        self.vrc_pic_btn.setObjectName("linkbtn")
-        self.vrc_pic_btn.setFixedHeight(34)
-        self.vrc_pic_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.vrc_pic_btn.setToolTip(
+        self.vrc_pic_btn = self._opt_button(
+            "\U0001F5BC\uFE0F  VRC Picture Folder Fix", "linkbtn",
+            self.run_vrc_picture_fix,
             "Creates a symlink so VRChat's camera photos – normally saved "
             "inside the Proton prefix – land directly in your Linux Pictures "
             "folder (~/Pictures/VRChat). Existing photos in the prefix are "
             "moved over. Does nothing if it's already set up.")
-        self.vrc_pic_btn.clicked.connect(self.run_vrc_picture_fix)
-        fix_row.addWidget(self.vrc_pic_btn)
-
-        fix_row.addStretch()
         if IS_WINDOWS:
             # created but never shown: other code (and any future preset)
             # may still reference the attributes
             self.tray_fix_btn.setVisible(False)
             self.vrc_pic_btn.setVisible(False)
         else:
-            uc.addLayout(fix_row)
+            fix_card, fix = self._opt_card(
+                "Fixes",
+                "One-click repairs for Linux desktops. Each one does "
+                "nothing if it is already set up.")
+            fix_row = QHBoxLayout()
+            fix_row.setSpacing(8)
+            fix_row.addWidget(self.tray_fix_btn)
+            fix_row.addWidget(self.vrc_pic_btn)
+            fix_row.addStretch()
+            fix.addLayout(fix_row)
+            general_lay.addWidget(fix_card)
+        # cards keep their natural height and sit at the top of their tab
+        for lay in (general_lay, osc_lay, design_lay):
+            lay.addStretch(1)
 
-        self.update_lbl = QLabel(f"Current version: {VERSION}")
-        self.update_lbl.setObjectName("dim")
-        self.update_lbl.setWordWrap(True)
-        self.update_lbl.setOpenExternalLinks(True)
-        uc.addWidget(self.update_lbl)
-        # Community & Updates goes to the TOP of the page (index 0 is the
-        # "Options" title, so this card lands right underneath it)
-        layout.insertWidget(1, ucard)
+        # All three tabs sit in the page, only one is visible. Not a
+        # QStackedWidget on purpose: that one is always as tall as its
+        # TALLEST page (also for word-wrapped labels), so the short General
+        # tab would scroll into empty space sized for the OSC tab. Hidden
+        # widgets take no room in a layout, so this is only as tall as the
+        # tab you are looking at.
+        self.options_tabs = (tab_general, tab_osc, tab_design)
+        for tab in self.options_tabs:
+            layout.addWidget(tab)
+        self.on_options_tab(0)
 
         layout.addStretch()
         return page
+
+    @staticmethod
+    def _opt_card(title, description=""):
+        """A card with a title and an optional dim line under it.
+        Returns (card, layout) - add rows to the layout."""
+        card = QFrame()
+        card.setObjectName("card")
+        lay = QVBoxLayout(card)
+        lay.setContentsMargins(16, 14, 16, 16)
+        lay.setSpacing(10)
+        head = QLabel(title)
+        head.setObjectName("cardtitle")
+        lay.addWidget(head)
+        if description:
+            desc = QLabel(description)
+            desc.setObjectName("dim")
+            desc.setWordWrap(True)
+            lay.addWidget(desc)
+        return card, lay
+
+    @staticmethod
+    def _opt_button(label, object_name, on_click, tooltip=""):
+        """The 34 px buttons used on the General tab."""
+        btn = QPushButton(label)
+        btn.setObjectName(object_name)
+        btn.setFixedHeight(34)
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        if tooltip:
+            btn.setToolTip(tooltip)
+        btn.clicked.connect(on_click)
+        return btn
+
+    def on_options_tab(self, idx):
+        """Show one Options tab (0 General, 1 OSC, 2 Design)."""
+        for i, tab in enumerate(self.options_tabs):
+            tab.setVisible(i == idx)
 
 
     # ================================================================
@@ -800,7 +890,13 @@ class OptionsPageMixin:
             self.update_lbl.setText(
                 f"Update check failed (no releases yet or offline). "
                 f"Current version: {VERSION}")
-        elif tag and tag != VERSION:
+        elif tag and compare_versions(tag, VERSION) < 0:
+            # a dev build or a release that is not published yet: "!="
+            # used to call that an update, and pointed at an OLDER one
+            self.update_lbl.setText(
+                f"\u2705 You are ahead of the latest release "
+                f"({VERSION}, latest is {tag}).")
+        elif tag and compare_versions(tag, VERSION) > 0:
             kind = self._install_kind()
             if kind == "appimage":
                 how = (f" \u2013 <a href=\"{info}\">download the new "
@@ -1024,6 +1120,10 @@ class OptionsPageMixin:
             elif not self.oscq.running:
                 txt = (f"not running ({self.oscq.error}) – "
                        "manual target is used.")
+            elif not self.oscq.announced:
+                txt = (f"\u23F3 announcing via mDNS \u2026 "
+                       f"(dynamic udp/{self.oscq.osc_port}, "
+                       f"http/{self.oscq.http_port})")
             elif target is not None:
                 txt = (f"\u2705 VRChat found: {target[0]}:{target[1]} "
                        f"\u2013 registered as dynamic udp/"

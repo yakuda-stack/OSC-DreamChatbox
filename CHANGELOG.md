@@ -6,6 +6,133 @@ All notable changes to OSC-DreamChatbox are documented here.
 
 🟢 Linux Support: Complete & Stable (v1.2.6)
 
+## [v1.4.9] – 2026-09-17
+
+**The window opens in a third of a second instead of four, the Options
+page is sorted into three tabs, and a Highlights button says what
+changed in plain words.**
+
+### Fixed
+
+**The start hung for three seconds on OSCQuery**
+
+- `register_service()` probes the network for name conflicts and blocks
+  roughly 1.5 s per service. Both calls ran on the GUI thread, so the
+  window stayed empty until mDNS was done.
+- Ports and the OSCQuery HTTP server are still set up synchronously —
+  they have to be, everything else reads `osc_port` right away. Only the
+  announcement moved into `_announce()` on a daemon thread, and the
+  search for VRChat starts immediately instead of waiting for it.
+- Stopping while the announcement is still running is handled: the
+  thread compares against the Zeroconf instance it was started for and
+  gives up quietly if OSCQuery was switched off in the meantime.
+- Measured: **window after 0.33 s instead of 3.87 s.**
+
+**The config was written 23 times on every start**
+
+- `apply_config_to_ui()` sets every widget, each widget fires its
+  handler, and nearly every handler ends in `save_config()`.
+- While the config is being applied, `save_config()` now returns early,
+  and the file is written once at the end — once, not never, because a
+  handler may have normalised a value on the way in.
+
+**A crash while saving could reset every setting**
+
+- `write_text()` truncates the file first. A crash, a kill or a power
+  cut in between left an empty config, and the next start fell back to
+  defaults.
+- New `core/atomicfile.py`: write a `.tmp` sibling, `fsync` it, then
+  `os.replace()` it over the target — one step on Linux and Windows.
+  Used for the app config, plugin configs and the store catalogue cache.
+
+**The update check compared strings**
+
+- `tag != VERSION` reported an update whenever the strings differed,
+  including for a build that is *newer* than the latest release — it
+  then pointed at the older one.
+- It now uses `compare_versions()` from the plugin store, and a build
+  ahead of the latest release says so instead.
+
+**`nvidia-smi` was started fresh every two seconds**
+
+- The Hardware card spawned one process per poll for the whole session.
+- Now one `nvidia-smi --loop` runs in the background and a thread keeps
+  the newest CSV line; `index` was added to the query so card 0 is
+  picked by its index rather than by being the first line.
+- It ends when the app closes, after 15 seconds without a poll (Hardware
+  card switched off), and — if the app dies without closing — through
+  SIGPIPE on the next line it writes. If `--loop` produces nothing three
+  times, the old one-call-per-poll path takes over permanently.
+
+**A test that failed on any machine with more than ~15 minutes of uptime**
+
+- `tests/test_wintemp_cache.py` reset the caches with
+  `time.monotonic() - TTL - 1`, but the tests then replace
+  `time.monotonic` with a clock starting at 1000.0. On a desktop that
+  has been up longer than that, the reset stamp lay in the fake clock's
+  future, the cache looked fresh forever and two tests failed on code
+  that was fine. It now resets to a stamp that is in the past for both
+  clocks.
+
+**The desktop entry had two main categories**
+
+- `Categories=Utility;Network;Chat;` names two main categories, so some
+  menus list the app twice. It is now `Network;Chat;` - Chat is an
+  additional category that belongs under Network anyway. Changed in the
+  packaged entry, the AppImage, `install.sh` and the App Tray Fix.
+- The App Tray Fix also checks the `Categories` line now, so an entry
+  written by an older version counts as outdated and gets replaced
+  instead of being left alone as "already set up".
+
+**A lost changelog heading**
+
+- `## [v1.4.5]` disappeared in the v1.4.6 commit, so v1.4.5 read as part
+  of v1.4.6. Restored, and a test now checks that every Highlights entry
+  has a changelog heading.
+
+### Changed
+
+**Options: General / OSC / Design**
+
+- The page is split into three tabs, in the same style as *Installed /
+  Store* on the Plugins page. Nothing was renamed or removed.
+- **General** holds three cards: *Updates* (check, Highlights,
+  Changelog, current version), *Community* (Discord, Ko-fi, VRChat
+  group) and *Fixes* (App Tray Fix, VRC Picture Folder Fix, Linux only —
+  on Windows the card is gone instead of greyed out).
+- **OSC** holds OSCQuery, OSC input, hotkeys and the external target,
+  plus Slim Chatbox, send interval, instant send and the manual target.
+- **Design** holds the Customization card.
+- Deliberately not a `QStackedWidget`: it is always as tall as its
+  tallest page, which left the short General tab scrolling into empty
+  space. All three tabs live in the layout and only one is visible.
+
+**Plugins can be pinned to a tag or a commit**
+
+- `Source.tarball` asked for `tar.gz/refs/heads/<ref>`, which only
+  resolves branches, so a catalogue link could only ever point at a
+  moving branch. It is now `tar.gz/<ref>`: branch, tag and commit all
+  work.
+- The third-party plugin in the catalogue points at a commit instead of
+  `main`, so a push to that repository no longer reaches everyone
+  automatically. Its updates now arrive when the catalogue entry is
+  updated.
+
+### Added
+
+- **Highlights** (`HIGHLIGHTS.md`): two or three lines per release in
+  plain words, opened from Options → General. *Full changelog* leads to
+  the long version.
+- **Changelog** in the same window, rendered from the Markdown file. Both
+  files ship with the AppImage, the AUR package and the Windows build;
+  if one is missing the button opens it on GitHub.
+- `scripts/bump_version.py` sets the version in `core/constants.py`, the
+  AUR `PKGBUILD` (including `pkgrel`), the Inno Setup script, the
+  `.SRCINFO` copy and the docstring, and `--check` verifies all of them
+  plus the Discord link and the two documentation blocks.
+- `scripts/build_appimage.sh` empties `build/` and puts the AppImage
+  there instead of leaving `AppDir/` and the image in the project root.
+
 ## [v1.4.8] – 2026-09-08
 
 **Plugin API additions: a plugin can now say where its parts go, and
@@ -284,6 +411,8 @@ where it went.**
 - `core/constants.py`, the AUR `PKGBUILD`/`.SRCINFO` and the Inno Setup
   script all read **1.4.6**.
 
+
+## [v1.4.5] – 2026-08-26
 
 **Flags in the icon picker, a status rotation that can run in order,
 Hardware settings that stop being one long column, and a MediaPlay card
