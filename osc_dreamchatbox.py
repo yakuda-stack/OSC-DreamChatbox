@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-OSC-DreamChatbox v1.4.9
+OSC-DreamChatbox v1.5.0
 A clean VRChat OSC chatbox sender.
 
 Entry point only – the actual code lives in:
@@ -92,10 +92,12 @@ def main():
         sys.exit(stt_child.main(sys.argv[pos + 1:]))
     _set_process_name()
     _set_windows_app_id()
-    from PyQt6.QtGui import QFont, QIcon
+    from PyQt6.QtGui import QIcon
     from PyQt6.QtWidgets import QApplication
+    from core import emojifont
     from ui import nowheel
     from ui.mainwindow import MainWindow
+    from ui.ui_main import warn_if_no_emoji_font
 
     # Opt-in performance probe. Does nothing at all unless DCB_PERF=1 is
     # in the environment - see core/perfprobe.py. Two halves on purpose:
@@ -128,7 +130,11 @@ def main():
         icon_path = osinfo.resource("icon.png")
     if icon_path.exists():
         app.setWindowIcon(QIcon(str(icon_path)))
-    app.setFont(QFont("Sans", 10))
+    # "Sans" alone covers the old monochrome symbols and stops short of
+    # the emoji blocks, so every emoji in the app came out blank on a
+    # machine whose fontconfig did not fall back for us. ui_font() puts
+    # the installed emoji families behind it - see core/emojifont.py.
+    app.setFont(emojifont.ui_font("Sans", 10))
     win = MainWindow()
     if icon_path.exists():
         win.setWindowIcon(QIcon(str(icon_path)))
@@ -138,11 +144,19 @@ def main():
     # report from a .exe user says which platform/backends were active
     try:
         win.log(f"Platform: {osinfo.describe()}")
+        # no emoji font is not our bug to fix, but it is ours to name:
+        # without this the report is "the picker is empty"
+        hint = emojifont.missing_hint()
+        if hint:
+            win.log(hint)
         if _MIGRATION[1]:
             win.log(_MIGRATION[1])
     except Exception:
         pass
     win.show()
+    # after show(), so the dialog has a window to sit on top of instead
+    # of appearing over an empty desktop
+    warn_if_no_emoji_font(win)
     sys.exit(app.exec())
 
 

@@ -3,6 +3,11 @@
 The short version of every release — what you will actually notice.
 The full details are in the changelog.
 
+## v1.5.0 – 2026-09-19
+
+- **Emoji show up again** — the picker no longer has empty cells, and the preview stops dropping icons the box line contains.
+- **No emoji font installed?** The start says so, with the command for your distro instead of a blank grid.
+
 ## v1.4.9 – 2026-09-17
 
 - **The window opens in a third of a second** instead of four.

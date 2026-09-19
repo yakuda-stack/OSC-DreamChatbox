@@ -7,11 +7,13 @@ import datetime
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QPainter, QColor, QBrush
-from PyQt6.QtWidgets import (QCheckBox, QHBoxLayout, QLabel, QLineEdit,
-                             QMainWindow, QPlainTextEdit,
+from PyQt6.QtWidgets import (QApplication, QCheckBox, QHBoxLayout, QLabel,
+                             QLineEdit, QMainWindow, QMessageBox,
+                             QPlainTextEdit,
                              QScrollArea, QStackedWidget, QVBoxLayout,
                              QWidget, QFrame, QGridLayout, QPushButton)
 
+from core import emojifont
 from core.emojis import (CATEGORY_NOTES, EMOJI_CATEGORIES,
                          cost as emoji_cost, search as emoji_search,
                          visual_len as emoji_glyphs)
@@ -373,6 +375,12 @@ class EmojiPopup(QFrame):
             " border-radius: 6px; color: #d7dae0; padding: 4px 8px; }"
             "QLineEdit:focus { border-color: #5b8dc9; }"
             "QScrollArea { border: none; background: transparent; }")
+        # The picker is the one place where a missing glyph is not a
+        # cosmetic problem but an empty grid, so it does not rely on
+        # inheriting a font someone set up correctly elsewhere: the
+        # emoji families are named on the popup itself and every button
+        # in it inherits them. See core/emojifont.py.
+        self.setFont(emojifont.apply(self.font()))
         self._target = None
         self._current = 0
         self._pages = {}        # index -> (widget, built?)
@@ -571,3 +579,54 @@ class EmojiPopup(QFrame):
         if self._target is not None:
             self._target.insert(emoji)
         self.close()
+
+
+# ----------------------------------------------------------------------------
+# "you have no emoji font" dialog
+# ----------------------------------------------------------------------------
+def warn_if_no_emoji_font(parent):
+    """Show the install instructions once per start, if they apply.
+
+    The log line in main() is there for the bug report; this is for the
+    person sitting in front of it. Without a font installed there is
+    nothing to draw an emoji with, so the picker is a grid of empty
+    cells and the preview silently loses characters - a state that
+    looks like a broken program and is not one. It is worth a dialog:
+    it appears exactly once, on machines that genuinely cannot draw
+    emoji, and stops appearing the moment the font is there.
+
+    A font is only read when a QFont asks for it, so nothing needs to
+    be reloaded - but Qt keeps its font database for the life of the
+    process, so a restart after installing is the honest instruction
+    rather than "it should work now".
+    """
+    if emojifont.available():
+        return
+    command = emojifont.install_command()
+    box = QMessageBox(parent)
+    box.setIcon(QMessageBox.Icon.Warning)
+    box.setWindowTitle("No emoji font installed")
+    box.setTextFormat(Qt.TextFormat.RichText)
+    box.setText("<b>Emoji cannot be drawn on this system.</b>")
+    box.setInformativeText(
+        "No emoji font was found, so the icon picker shows empty cells "
+        "and emoji disappear from the preview. The text itself is fine "
+        "– VRChat still receives and displays it.<br><br>"
+        "Install one:<br>"
+        f"<code style='font-size:13px'>{command}</code><br><br>"
+        "<b>Please restart OSC-DreamChatbox afterwards</b> – fonts "
+        "are read once when the program starts.")
+    # so the command can be selected and copied out of the dialog
+    label = box.findChild(QLabel, "qt_msgbox_informativelabel")
+    if label is not None:
+        label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse)
+    copy_btn = box.addButton("Copy command",
+                             QMessageBox.ButtonRole.ActionRole)
+    box.addButton(QMessageBox.StandardButton.Ok)
+    box.setDefaultButton(QMessageBox.StandardButton.Ok)
+    box.exec()
+    # clicking "Copy command" closes the dialog like any other button,
+    # so the copy happens here rather than in a handler
+    if box.clickedButton() is copy_btn:
+        QApplication.clipboard().setText(command)

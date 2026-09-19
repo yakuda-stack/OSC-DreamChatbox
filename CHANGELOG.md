@@ -6,6 +6,39 @@ All notable changes to OSC-DreamChatbox are documented here.
 
 🟢 Linux Support: Complete & Stable (v1.2.6)
 
+## [v1.5.0] – 2026-09-19
+
+**Emoji have a font to be drawn with, on every distro and without one
+being installed by luck.**
+
+### Fixed
+
+**Emoji were blank in the picker and dropped from the preview**
+
+- Reported on Linux: the emoji grid showed empty cells and the box
+  preview drew `♡` but not `🕐`, while VRChat received the text intact
+  and rendered both. Nothing was wrong with the text — the font Qt drew
+  it with had no glyph for it.
+- `QFont("Sans")` and the system fixed-width font behind the box
+  preview stop at the old monochrome symbol blocks. Whether Qt finds an
+  emoji font after that is up to the distro's fontconfig, and on a
+  minimal install it often does not.
+- New `core/emojifont.py` names the installed emoji families
+  explicitly, so they sit in the font's fallback chain regardless of
+  fontconfig. Applied to the app font, the picker popup and the box
+  preview.
+- The chain is built from the family Qt *resolved*, not the name asked
+  for: `monospace` is a fontconfig alias that stops resolving once it
+  is one entry in a list, which would have drawn the box frame in a
+  proportional font. Frame widths are unchanged.
+- If no emoji font is installed at all, nothing can be drawn — the
+  start now says so instead of leaving an empty grid to explain
+  itself: a dialog with the install command for the distro it is
+  running on (`/etc/os-release`, Arch when that says nothing useful), a
+  "Copy command" button, and the note to restart afterwards, because
+  Qt reads the font database once per process. The same line goes to
+  the log for bug reports. Both disappear once a font is installed.
+
 ## [v1.4.9] – 2026-09-17
 
 **The window opens in a third of a second instead of four, the Options

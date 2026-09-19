@@ -32,6 +32,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFontDatabase
 from PyQt6.QtWidgets import (
     QCheckBox, QComboBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QSpinBox, QVBoxLayout, QWidget)
+from core import emojifont
 from core.boxstyle import (
     BOX_TEMPLATES, CLOCK_FORMATS, CUSTOM_BOX_INDEX, DEFAULT_CUSTOM_BOX, MIDDLE_MODES, MODE_CLOCK, MODE_CUSTOM, MODE_NONE, SIDE_BOTTOM, SIDE_TOP, WIDTH_MAX, WIDTH_MIN, clock_needs_seconds, clock_text, normalize_mode, render_pair, template)
 from core.textutils import apply_template
@@ -131,9 +132,14 @@ class CustomBoxMixin:
         # is simply not a family on Windows, where Qt would fall back to
         # whatever it likes and the frame preview would stop lining up.
         # Ask the system for its fixed-width font instead.
+        # ... and that fixed-width font is exactly the one with no emoji
+        # in it: the preview dropped every icon the box line contained
+        # while the plain symbols next to it rendered. The frame still
+        # lines up - the emoji families only get asked for the
+        # characters the mono font has no glyph for.
         mono = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
         mono.setPointSize(11)
-        self.box_preview_lbl.setFont(mono)
+        self.box_preview_lbl.setFont(emojifont.apply(mono))
         self.box_preview_lbl.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse)
         bc.addWidget(self.box_preview_lbl)
