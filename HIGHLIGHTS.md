@@ -3,6 +3,12 @@
 The short version of every release — what you will actually notice.
 The full details are in the changelog.
 
+## v1.5.1 – 2026-09-20
+
+- **Pick your graphics card.** Have more than one? The Hardware card now lists them, so it stops reporting on the Radeon inside your CPU when you meant the real one.
+- **Two cards at once.** Switch on *Second GPU*, pick it, and it gets its own values — either on its own line or all in one line with the first.
+- **New placeholders** `{gpu2_name}`, `{gpu2_usage}`, `{gpu2_temp}`, `{gpu2_power}`, `{vram2_usage}` for your own layouts, All in one and the node canvas.
+
 ## v1.5.0 – 2026-09-19
 
 - **Emoji show up again** — the picker no longer has empty cells, and the preview stops dropping icons the box line contains.

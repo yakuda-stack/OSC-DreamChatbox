@@ -1,152 +1,96 @@
-# Drop-in v1.4.9: Release-Blocker, schnellerer Start, Optionen in Tabs, Highlights
+# Drop-in v1.5.1: GPU auswählen, zweite GPU
 
-Über den Baum kopieren. Version ist auf **v1.4.9** gesetzt,
+Über den Baum kopieren. Version ist auf **v1.5.1** gesetzt,
 CHANGELOG.md und HIGHLIGHTS.md haben ihren Block oben.
 
 ## Geändert
 
-    ui/pages/options_page.py         Tabs General / OSC / Design
-    ui/docviewer.py            NEU   Fenster für Highlights + Changelog
-    HIGHLIGHTS.md              NEU   Kurzfassung jeder Version für Nutzer
-    CHANGELOG.md                     fehlende Überschrift [v1.4.5] wieder da
-    tests/test_docs.py         NEU   5 Tests für die beiden Dateien
-    scripts/bump_version.py    NEU   Version an allen Stellen setzen/prüfen
-    scripts/build_appimage.sh        build/ leeren -> AppImage nach build/,
-                                     CHANGELOG + HIGHLIGHTS mit in die AppImage
-    packaging/aur/PKGBUILD           CHANGELOG + HIGHLIGHTS neben die App
-    packaging/windows/osc-dreamchatbox.spec   dasselbe für Windows
-    core/constants.py                VERSION v1.4.9,
-                                     DISCORD_URL -> discord.gg/ShNKvvZu74
-    CHANGELOG.md + HIGHLIGHTS.md     Block v1.4.9
-    packaging/windows/installer.iss  1.4.9
-    .SRCINFO, osc_dreamchatbox.py    1.4.9
-    README.md                        Discord-Badge + Link -> ShNKvvZu74
+    core/backends/hardware_linux.py    alle Karten aufzählen, pro Karte lesen
+    core/backends/hardware_windows.py  dasselbe, nvidia-smi pro Index
+    core/backends/hardware_null.py     list_gpus/select_gpus als Stub
+    core/constants.py                  VERSION v1.5.1, GPU2_MODE_*
+    core/nodegraph_eval.py             Quelle "hw_gpu2"
+    core/textutils.py                  Aliase {gpu_2_temp}, {gpu2_watt}, {vram2}
+    ui/nodegraph.py                    Block "GPU 2" in der Palette
+    ui/config_mixin.py                 neue Keys + Normalisierung
+    ui/mainwindow.py                   neue Widgets laden, _fill_gpu_combos()
+    ui/pages/apps_page.py              Card-Dropdown, Sektion "Second GPU",
+                                       {gpu2_*}-Werte, Zeilen-Layout
+    ui/pages/placeholder_picker.py     Gruppe "GPU 2" im +-Menü
+    tests/test_gpu2.py           NEU   26 Tests
+    CHANGELOG.md + HIGHLIGHTS.md       Block v1.5.1
+    README.md                          Hardware-Abschnitt
+    packaging/windows/installer.iss, packaging/aur/PKGBUILD,
+    .SRCINFO, osc_dreamchatbox.py      1.5.1
 
-## Release-Blocker
+## Was neu ist
 
-    ui/pages/options_page.py   Update-Check vergleicht Zahlen statt !=
-    core/atomicfile.py   NEU   write_text_atomic(): .tmp + os.replace
-    ui/config_mixin.py         Config atomar schreiben
-    core/plugins.py            Plugin-Config atomar schreiben
-    core/plugin_store.py       Katalog-Cache atomar, tarball ohne refs/heads
-    config/plugins.json        Gray-Gaming auf Commit 2150604c gepinnt,
-                               Katalog-Version 1.1.1 -> 1.1.2
-    tests/test_atomicfile.py   NEU 4 Tests
-    pytest.ini                 NEU Warnungen von standard-aifc/audioop aus
-    packaging/*.desktop, install.sh, core/desktop_integration.py,
-    scripts/build_appimage.sh        Categories=Network;Chat;
-    tests/test_wintemp_cache.py      Reset-Stempel unabhängig von der Uptime
+**„Select GPU"-Dropdown in der GPU-Box**, direkt unter dem Namensfeld,
+immer sichtbar und mit dem gefüllt, was erkannt wurde — auch bei nur
+einer Karte, weil man erst daran sieht, von welcher Karte die Werte
+kommen. *Automatic* = die mit dem meisten VRAM, also genau das alte
+Verhalten — eine bestehende `config.json` ändert sich nicht.
 
-**Update-Check:** nutzt `compare_versions()` aus dem Plugin-Store. Neuer
-Fall: lokal neuer als das letzte Release -> "You are ahead of the latest
-release" statt einer Update-Meldung auf eine ältere Version.
+Auf Linux ist jede `/sys/class/drm/card*` mit `gpu_busy_percent` eine
+Karte, dazu jeder Index von `nvidia-smi`. Die Namen kommen über die
+PCI-Adresse der Karte aus `lspci`, damit zwei AMD-Karten sich am Namen
+und nicht an der Nummer unterscheiden; für die erste bleibt der exakte
+Mesa-Name aus `glxinfo` bevorzugt.
 
-**Plugin-Store:** `Source.tarball` hieß `tar.gz/refs/heads/<ref>` und
-konnte damit nur Branches. Jetzt `tar.gz/<ref>` — Branch, Tag und Commit
-funktionieren (alle drei gegen codeload getestet). Das fremde Plugin
-zeigt jetzt auf einen Commit statt auf `main`, ein Push dort erreicht
-also niemanden mehr automatisch. Kehrseite: Updates von Gray-Gaming
-kommen erst an, wenn du die SHA im Katalog änderst. Deine eigenen
-Plugins stehen weiter auf `main`.
+**Sektion „Second GPU"** über *Build my own layout*: Haken rein, Karte
+wählen, eigene Haken (Usage / Temp / Power / Name / VRAM), eigener Name,
+eigener Style. Der Kasten ist ein **GPU-2-Kasten im selben Rahmen und
+derselben Spaltenbreite** wie GPU / VRAM / CPU / RAM — und er ist
+**versteckt**, solange der Haken nicht drin ist, statt wie sonst nur
+ausgegraut: auf einer Maschine mit einer Karte wären das neun Bedienteile,
+die nie etwas tun. Ist nur eine Karte da und der Haken trotzdem gesetzt,
+steht an der Stelle die Zeile, die sagt warum.
+*Show as* entscheidet nur das generierte Layout —
+eigene Zeile oder all in one hinter der ersten Karte. Im eigenen String,
+in All in one und auf dem Node-Canvas (Block *GPU 2*) platzierst du es
+selbst.
 
-**Noch von Hand (ZIP kann nichts löschen):**
+Neue Platzhalter: `{gpu2_name}` `{gpu2_usage}` `{gpu2_temp}`
+`{gpu2_power}` `{vram2_usage}` `{vram2_pct}`. Sie existieren auch bei
+ausgeschalteter Funktion und sind dann leer, fallen also mit ihren
+Trennzeichen weg wie jeder andere leere Platzhalter.
 
-    git rm tests/test_plugin_osc.py core/oscbridge.py
+Die beiden Dropdowns bieten nie dieselbe Karte an: die Karte der ersten
+GPU-Box fehlt in der Liste der zweiten.
 
-## Performance: nvidia-smi als Dauerprozess
+## Zwei Bugs, die dabei auffielen
 
-    core/backends/hardware_linux.py   _NvidiaSmiLoop + _parse_nvsmi
-    ui/mainwindow.py                  closeEvent ruft hw.close()
+    nvidia-smi --loop    behielt nur die Zeile mit "0," → eine zweite
+                         NVIDIA-Karte war nicht lesbar, obwohl ihre Werte
+                         schon in der Pipe standen
+    amdgpu-hwmon-Cache   lag unter einem Schlüssel für „die" Karte →
+                         Temperatur und Watt einer zweiten AMD-Karte wären
+                         von der ersten gekommen. Jetzt pro Karte, und der
+                         globale „irgendein Knoten namens amdgpu"-Fallback
+                         nur noch für die Standardkarte
 
-Statt alle 2 s einen neuen Prozess läuft ein `nvidia-smi --loop=2`, ein
-Thread hält die neueste CSV-Zeile. Nur Karte 0 (neue Spalte `index`).
-Ende des Prozesses: `hw.close()` beim Schließen, nach 15 s ohne Poll
-(Hardware-Karte aus), und bei einem Absturz über SIGPIPE, weil niemand
-mehr aus der Pipe liest. Gibt `--loop` dreimal keine Zeile (alter
-Treiber), schaltet es dauerhaft auf den alten Weg zurück.
+## Grenzen (stehen auch im Changelog)
 
-Mit einem Fake-nvidia-smi getestet: erster Poll sofort, weitere Polls
-ohne messbaren Aufwand, Idle-Stop, Neustart danach, Fallback, Waise nach
-`kill -9`. **Auf echter NVIDIA-Karte nicht getestet** — bitte einmal
-Hardware-Karte an/aus und Werte prüfen.
+* Windows: Werte pro Karte kommen von `nvidia-smi`. Die PDH-Zähler von
+  Windows sind maschinenweit, nicht pro Adapter — eine zweite
+  Nicht-NVIDIA-Karte lässt sich benennen und auswählen, liefert aber
+  keine Werte. Der Dropdown-Eintrag sagt das selbst.
+* Intel-GPUs haben unter Linux keinen Usage-Zähler in sysfs; sie
+  erscheinen wie bisher nur als Name.
 
-## Performance: Start 3,9 s -> 0,3 s
+## Testen
 
-    core/oscquery.py     mDNS-Anmeldung im Hintergrund-Thread
-    ui/config_mixin.py   save_config() pausiert beim Laden
-    ui/mainwindow.py     apply_config_to_ui() schreibt die Config 1x statt 23x
-    ui/pages/options_page.py   Statuszeile "announcing via mDNS ..."
+    python3 -m pytest tests/test_gpu2.py -q     # 26 Tests
+    python3 -m pytest -q                        # alles
 
-**OSCQuery:** `register_service()` blockierte ~1,5 s pro Dienst im
-UI-Thread. Ports + HTTP-Server entstehen weiter sofort, nur die
-Anmeldung läuft in `_announce()`. Die VRChat-Suche startet sofort.
-Kein `run_async`: core/ bleibt ohne Qt. Stop während der Anmeldung ist
-abgefangen (alter Thread gibt still auf).
+Hier im Container liefen alle Tests außer `test_afk.py` und
+`test_media_custom_mode.py` — die importieren `ui/mainwindow.py`, und
+`ui/pages/options_page.py` + `ui/pages/plugins_page.py` enthalten
+f-Strings mit Backslash, die erst ab Python 3.12 erlaubt sind (der
+Container hat 3.11). Auf deinem Arch mit 3.13 ist das kein Thema.
 
-**Config:** `_loading_config`-Flag, am Ende ein `_write_config()`.
+## Noch von Hand
 
-Gemessen (offscreen): Fenster nach 0,33 s statt 3,87 s, 1 statt 23
-Schreibvorgänge, Leerlauf unverändert 0,1 % CPU. Stop direkt nach
-Start + Neustart getestet: keine Fehlermeldung, nur eine Anmeldung.
-
-## Optionen in Tabs
-
-Drei Knöpfe unter dem Titel, gleiche Optik wie Installed / Store:
-
-    General   drei Karten:
-                Updates    Check for updates, Highlights, Changelog, Version
-                Community  Discord, Ko-fi, VRChat Group
-                Fixes      App Tray Fix, VRC Picture Folder Fix
-                           (ganze Karte nur unter Linux, wie vorher die Zeile)
-    OSC       OSCQuery-Karte (OSCQuery, OSC input, externes Ziel, Hotkeys,
-              Fix OSCQuery) und die Karte mit Slim Chatbox, Intervall,
-              Instant send, OSC-Ziel
-    Design    Customization-Karte
-
-Keine Einstellung wurde umbenannt, nur auf Tabs und Karten verteilt.
-Karten und Knöpfe auf dem General-Tab kommen aus zwei kleinen Helfern,
-`_opt_card()` und `_opt_button()`, statt jeden Knopf sechs Zeilen lang
-von Hand zu bauen.
-Alle `self.*`-Namen bleiben gleich, `apps_page.py` greift weiter auf
-`toggle_osc_in` zu.
-
-Absichtlich kein QStackedWidget: der ist immer so hoch wie seine längste
-Seite (auch über heightForWidth bei umbrechenden Labels), der kurze
-General-Tab hätte dann in leeren Platz gescrollt. Stattdessen liegen alle
-drei Tabs im Layout, nur einer ist sichtbar — versteckte Widgets nehmen
-keinen Platz.
-
-## Highlights + Changelog
-
-`ui/docviewer.py` zeigt die Markdown-Datei mit Qts eigenem Markdown
-(`QTextBrowser.setMarkdown`), keine neue Abhängigkeit. Gesucht wird neben
-der App (Quelltext, AppImage, AUR, Windows) und unter
-`/usr/share/doc/osc-dreamchatbox`. Fehlt die Datei, öffnet sie GitHub.
-Im Highlights-Fenster führt "Full changelog" zum langen.
-
-`HIGHLIGHTS.md` hat 2-3 Punkte pro Version von v1.4.9 bis v1.2.0, in
-Nutzersprache. Beim Schreiben ist aufgefallen, dass in CHANGELOG.md die
-Überschrift `## [v1.4.5]` fehlte (seit Commit "v1.4.6") — v1.4.5 stand
-als Teil von v1.4.6 da. Aus der Git-Historie wiederhergestellt.
-
-## Getestet
-
-    Tests                 181 grün, ohne tests/test_plugin_osc.py
-    bump 1.4.9 + --check  grün, AppImage baut als 1.4.9
-    Gegenprobe            ohne [v1.4.5]-Überschrift wird test_docs rot
-    App offscreen         alle 3 Tabs + neue General-Karten gerendert, General/Design ohne
-                          Scrollbalken, OSC scrollt wie vorher
-    Dialoge               Highlights + Changelog gerendert
-    AppImage-Build        grün, HIGHLIGHTS.md liegt in usr/lib/osc-dreamchatbox
-    bump --check          grün, meldet jetzt auch fehlenden HIGHLIGHTS-Block
-
-## Nicht getestet
-
-Windows-Build und AUR-Paket nicht gebaut — nur die Kopierzeilen ergänzt.
-Nicht auf echtem Desktop angesehen, nur offscreen: Farben unter anderen
-Themes als Default bitte einmal durchklicken.
-
-## Altlasten — nicht angefasst
-
-    git rm tests/test_plugin_osc.py core/oscbridge.py scripts/build-appimage.sh \
-           packaging/.SRCINFO PATCH-README.md PATCH-AIO-README.md
+    python3 scripts/bump_version.py --check --expect 1.5.1
+    git add -A && git commit  → Tag v1.5.1
+    bash scripts/build_appimage.sh

@@ -136,6 +136,16 @@ PLACEHOLDER_ALIASES = {
     "ram_typ": "ram_type", "ramtype": "ram_type",
     "gpu_temperature": "gpu_temp", "cpu_temperature": "cpu_temp",
     "vram": "vram_usage", "ram": "ram_usage",
+    # the second GPU (v1.5.1). Both spellings of every name, because
+    # {gpu_2_temp} is exactly as natural to type as {gpu2_temp}.
+    "gpu_2_name": "gpu2_name", "gpu_2_usage": "gpu2_usage",
+    "gpu_2_temp": "gpu2_temp", "gpu_2_temperature": "gpu2_temp",
+    "gpu2_temperature": "gpu2_temp",
+    "gpu_2_power": "gpu2_power", "gpu2_watt": "gpu2_power",
+    "gpu2_watts": "gpu2_power", "gpu2_w": "gpu2_power",
+    "gpu2power": "gpu2_power", "gpu_2_watt": "gpu2_power",
+    "vram2": "vram2_usage", "vram_2": "vram2_usage",
+    "vram_2_usage": "vram2_usage", "vram_2_pct": "vram2_pct",
     "song": "title", "song_title": "title", "songtitle": "title",
     "songbar": "bar",
     "lyric": "lyrics", "songtext": "lyrics", "liedtext": "lyrics",

@@ -10,9 +10,16 @@ Reads CPU / RAM / GPU stats without extra dependencies:
 - GPU (AMD):   /sys/class/drm/card*/device (gpu_busy_percent, vram) + hwmon
 - GPU (NVIDIA): nvidia-smi
 - GPU name:    nvidia-smi or lspci (best effort – custom name recommended)
+
+Since v1.5.1 every card the machine has is enumerated instead of one
+being guessed: list_gpus() returns them all with a stable id, and
+select_gpus() says which one the GPU line reports on and which one -
+if any - fills the second set of values. gpu() with no argument keeps
+meaning "the selected card", so callers written before this still work.
 """
 
 import re
+import shlex
 import shutil
 import subprocess
 import threading
@@ -47,17 +54,29 @@ def _clean_gpu_name(name: str) -> str:
     return re.sub(r"\s+", " ", name).strip() or name.strip()
 
 
-def _parse_nvsmi(line):
+def _nvsmi_index(line):
+    """The index column of an nvidia-smi CSV line, or None."""
+    if not line:
+        return None
+    try:
+        return int(float(line.split(",", 1)[0].strip()))
+    except (IndexError, ValueError):
+        return None
+
+
+def _parse_nvsmi(line, index=None):
     """'0, 41, 55, 1234, 8192, 120.5' -> the gpu() dict, or None.
 
-    Only card 0 is used, same as before: with --loop every card prints
-    its own line, so the index column decides instead of "the first
-    line of this call"."""
+    `index` is the card the caller wants: a line from another card is
+    rejected, because with --loop every card prints its own line and the
+    index column is what tells them apart. None accepts any line, which
+    is what the single-card fallback path wants.
+    """
     if not line:
         return None
     cols = [c.strip() for c in line.split(",")]
     try:
-        if int(float(cols[0])) != 0:
+        if index is not None and int(float(cols[0])) != index:
             return None
         u, t, mu, mt = [float(x) for x in cols[1:5]]
     except (IndexError, ValueError):
@@ -99,16 +118,19 @@ class _NvidiaSmiLoop:
         self.log = log_fn
         self.broken = False        # fall back to one call per poll
         self._proc = None
-        self._line = None
-        self._line_time = 0.0
+        #: index -> (csv line, monotonic time). Every card gets its own
+        #: entry since v1.5.1: keeping only card 0 made a second NVIDIA
+        #: card unreadable even though its line was already in the pipe.
+        self._lines = {}
         self._last_ask = 0.0
         self._fails = 0
         self._lock = threading.Lock()
         self._have_line = threading.Event()
 
     # ------------------------------------------------------------ read
-    def latest(self, wait=3.0):
-        """Newest CSV line, or None. Starts the process if needed."""
+    def latest(self, index=0, wait=3.0):
+        """Newest CSV line of one card, or None. Starts the process if
+        needed."""
         with self._lock:
             self._last_ask = time.monotonic()
             start_now = self._proc is None or self._proc.poll() is not None
@@ -116,11 +138,15 @@ class _NvidiaSmiLoop:
                 self._start_locked()
         self._have_line.wait(wait)          # only waits on the first line
         with self._lock:
-            stale = time.monotonic() - self._line_time > 3 * self.interval + 2
-            return None if (self._line is None or stale) else self._line
+            entry = self._lines.get(index)
+            if entry is None:
+                return None
+            line, stamp = entry
+            stale = time.monotonic() - stamp > 3 * self.interval + 2
+            return None if stale else line
 
     def _start_locked(self):
-        self._line = None
+        self._lines = {}
         self._have_line.clear()
         try:
             self._proc = subprocess.Popen(
@@ -139,15 +165,15 @@ class _NvidiaSmiLoop:
         got_line = False
         for raw in proc.stdout:
             line = raw.strip()
-            # every card prints its own line per round - keep card 0,
-            # the one gpu() reports
-            if not line or not line.startswith("0,"):
+            # every card prints its own line per round, and all of them
+            # are kept - which card is reported is decided by the caller
+            idx = _nvsmi_index(line)
+            if idx is None:
                 continue
             with self._lock:
                 if proc is not self._proc:      # replaced or closed
                     return
-                self._line = line
-                self._line_time = time.monotonic()
+                self._lines[idx] = (line, time.monotonic())
                 self._fails = 0
                 idle = time.monotonic() - self._last_ask > self.IDLE_STOP_SEC
             got_line = True
@@ -175,7 +201,7 @@ class _NvidiaSmiLoop:
     def close(self):
         with self._lock:
             proc, self._proc = self._proc, None
-            self._line = None
+            self._lines = {}
         self._have_line.set()
         if proc is not None and proc.poll() is None:
             try:
@@ -217,25 +243,43 @@ class HardwareMonitor:
         self._rapl_seen = []
         self.has_nvidia = shutil.which("nvidia-smi") is not None
         self._nvsmi = _NvidiaSmiLoop(log_fn=log_fn) if self.has_nvidia else None
-        self.amd_card = self._find_amd_card()
-        self.gpu_name_auto = self._detect_gpu_name()
+        self.amd_cards = self._find_amd_cards()
+        # kept as a single value because plugins and the UI read it to
+        # decide "is there an AMD card at all"
+        self.amd_card = self.amd_cards[0][1] if self.amd_cards else None
+        self._gpus = self._enumerate_gpus()
+        #: ids chosen in the Hardware card; None = "the first one"
+        self.sel_gpu = None
+        self.sel_gpu2 = None
+        self.gpu_name_auto = self._name_of(self._gpu_entry(None))
+        self.gpu2_name_auto = "GPU"
         self.cpu_name_auto = self._detect_cpu_name()
         self.log(f"Hardware: GPU={'NVIDIA' if self.has_nvidia else ('AMD' if self.amd_card else 'none detected')}"
                  f", CPU='{self.cpu_name_auto}', GPU name='{self.gpu_name_auto}'")
+        if len(self._gpus) > 1:
+            self.log("Hardware: cards found: "
+                     + ", ".join(f"{g['id']}='{g['name']}'"
+                                 for g in self._gpus))
 
     # ------------------------------------------------------------- detection
-    def _find_amd_card(self):
-        """The AMD card to report on.
+    def _find_amd_cards(self):
+        """Every AMD card sysfs reports on, the one with the most VRAM
+        first. Returns [(card name, device dir, vram bytes), ...].
 
         A Ryzen desktop chip brings its own integrated Radeon, so there
         are usually two candidates and card0 is as likely to be the iGPU
-        as the discrete card. Whichever has more VRAM is the one the user
-        means - an iGPU carves a few hundred MB out of system memory, a
+        as the discrete card. Whichever has more VRAM is the better
+        default - an iGPU carves a few hundred MB out of system memory, a
         discrete card has gigabytes - and that beats trusting the
-        numbering, which changes with the boot order.
+        numbering, which changes with the boot order. Since v1.5.1 the
+        other cards are not thrown away: they end up in the GPU dropdown,
+        so a wrong guess is a dropdown away from being corrected.
         """
-        best, best_vram = None, -1
-        for card in sorted(Path("/sys/class/drm").glob("card[0-9]")):
+        found = []
+        for card in sorted(Path("/sys/class/drm").glob("card*")):
+            # cardN, not the cardN-DP-1 connector directories next to it
+            if not re.fullmatch(r"card\d+", card.name):
+                continue
             dev = card / "device"
             if not (dev / "gpu_busy_percent").exists():
                 continue
@@ -243,9 +287,142 @@ class HardwareMonitor:
                 vram = int(_read(dev / "mem_info_vram_total") or 0)
             except ValueError:
                 vram = 0
-            if vram > best_vram:
-                best, best_vram = dev, vram
-        return best
+            found.append((card.name, dev, vram))
+        found.sort(key=lambda c: -c[2])
+        return found
+
+    def _find_nvidia_cards(self):
+        """[(index, name), ...] from nvidia-smi, or []."""
+        if not self.has_nvidia:
+            return []
+        try:
+            out = subprocess.run(
+                ["nvidia-smi", "--query-gpu=index,name",
+                 "--format=csv,noheader"],
+                capture_output=True, text=True, timeout=5).stdout
+        except Exception:
+            return []
+        cards = []
+        for line in out.splitlines():
+            parts = line.split(",", 1)
+            if len(parts) != 2:
+                continue
+            try:
+                idx = int(parts[0].strip())
+            except ValueError:
+                continue
+            cards.append((idx, _clean_gpu_name(parts[1].strip()) or "GPU"))
+        cards.sort()
+        return cards
+
+    def _pci_device_names(self):
+        """{"03:00.0": "Navi 48 [Radeon RX 9070 XT]"} from lspci.
+
+        sysfs knows a card's PCI address but not its marketing name, so
+        the two are joined here. Called once per start, like every other
+        detection step.
+        """
+        names = {}
+        if not shutil.which("lspci"):
+            return names
+        try:
+            out = subprocess.run(["lspci", "-mm"], capture_output=True,
+                                 text=True, timeout=3).stdout
+        except Exception:
+            return names
+        for line in out.splitlines():
+            try:
+                fields = shlex.split(line)
+            except ValueError:
+                continue
+            if len(fields) >= 4:
+                names[fields[0]] = fields[3]
+        return names
+
+    def _enumerate_gpus(self):
+        """Every card the machine has, as the dicts list_gpus() hands out.
+
+        {"id": "nvidia:0" | "amd:card1", "name", "vendor", "label",
+         "index" (NVIDIA), "path" (AMD)}
+        """
+        gpus = []
+        nvidia = self._find_nvidia_cards()
+        if not nvidia and self.has_nvidia:
+            # nvidia-smi is there but the enumerating call did not answer
+            # (driver still loading, a timeout). Card 0 is what this
+            # backend has always read, so it stays available either way.
+            nvidia = [(0, self._detect_gpu_name())]
+        for idx, name in nvidia:
+            gpus.append({"id": f"nvidia:{idx}", "name": name,
+                         "vendor": "NVIDIA", "index": idx,
+                         "label": f"NVIDIA #{idx} · {name}"})
+        pci = self._pci_device_names() if self.amd_cards else {}
+        for pos, (card, dev, vram) in enumerate(self.amd_cards):
+            name = ""
+            try:
+                slot = dev.resolve().name.split(":", 1)[-1]
+            except OSError:
+                slot = ""
+            if slot:
+                name = _clean_gpu_name(pci.get(slot, ""))
+            # the card with the most VRAM is the one glxinfo describes
+            # (it reports the renderer the desktop is running on), and a
+            # Mesa name is exact where lspci often lists every variant
+            # sharing one PCI id
+            if pos == 0:
+                name = self._detect_gpu_name() or name
+            if not name:
+                name = f"GPU {card}"
+            gb = vram / GB if vram else 0
+            gpus.append({"id": f"amd:{card}", "name": name, "vendor": "AMD",
+                         "path": dev,
+                         "label": f"AMD {card} · {name}"
+                                  + (f" ({gb:.0f}GB)" if gb >= 1 else "")})
+        if not gpus:
+            # Intel, or a driver with no counters: nothing to read, but
+            # the detected name still fills {gpu_name} the way it did
+            # before there was a list at all
+            name = self._detect_gpu_name()
+            gpus.append({"id": "display", "name": name, "vendor": "",
+                         "label": f"{name} (name only - no readings)"})
+        return gpus
+
+    # --------------------------------------------------------- selection
+    def list_gpus(self):
+        """Every card that can be reported on. The UI fills its dropdown
+        from this, so the ids are what end up in the config file."""
+        return list(self._gpus)
+
+    def select_gpus(self, primary=None, second=None):
+        """Which card the GPU values come from, and which one - if any -
+        fills the second set. Both are ids from list_gpus(); anything
+        unknown falls back to the default card (primary) or to nothing
+        (second), so a card that was unplugged cannot empty the line."""
+        self.sel_gpu = primary or None
+        self.sel_gpu2 = second or None
+        self.gpu_name_auto = self._name_of(self._gpu_entry(None))
+        self.gpu2_name_auto = self._name_of(
+            self._gpu_entry(self.sel_gpu2, fallback=False)) if self.sel_gpu2 \
+            else "GPU"
+
+    def _gpu_entry(self, gpu_id=None, fallback=True):
+        """The dict for one id. None means "the selected card"."""
+        if gpu_id is None:
+            gpu_id = self.sel_gpu
+        for g in self._gpus:
+            if g["id"] == gpu_id:
+                return g
+        if fallback and self._gpus:
+            return self._gpus[0]
+        return None
+
+    @staticmethod
+    def _name_of(entry):
+        return entry["name"] if entry else "GPU"
+
+    def gpu_name_for(self, gpu_id):
+        """The detected name of one card, for the second GPU's label."""
+        return self._name_of(self._gpu_entry(gpu_id, fallback=False))
 
     def _detect_cpu_name(self):
         txt = _read("/proc/cpuinfo") or ""
@@ -321,11 +498,14 @@ class HardwareMonitor:
     def cpu_temp(self):
         return self._hwmon_temp({"k10temp", "zenpower", "coretemp", "cpu_thermal"})
 
-    def amd_gpu_temp(self):
+    def amd_gpu_temp(self, card=None):
         """Same reasoning as amd_gpu_power(): our card's own node first,
         so the temperature cannot come from the iGPU while the load
-        comes from the discrete card."""
-        node = self._card_hwmon()
+        comes from the discrete card.
+
+        `card` is a device directory from list_gpus(); None means the
+        selected one, which is what every pre-1.5.1 caller wants."""
+        node = self._card_hwmon(card)
         if node:
             for t in ("temp1_input", "temp2_input"):
                 v = _read(node / t)
@@ -334,6 +514,13 @@ class HardwareMonitor:
                         return int(v) / 1000.0
                     except ValueError:
                         pass
+        # The global scan is a second try for older kernels that put the
+        # node elsewhere - but only for the card this monitor defaults to.
+        # For a specifically chosen second card it would be a coin flip
+        # between two nodes both called amdgpu, and a temperature from the
+        # wrong chip is worse than an empty one.
+        if card is not None and card != self.amd_card:
+            return None
         return self._hwmon_temp({"amdgpu"})
 
     # ---------------------------------------------------------------- power
@@ -395,7 +582,7 @@ class HardwareMonitor:
                 return watts
         return None
 
-    def _card_hwmon(self):
+    def _card_hwmon(self, card=None):
         """The hwmon directory belonging to *our* GPU.
 
         A desktop Ryzen has an integrated Radeon on top of the discrete
@@ -407,18 +594,22 @@ class HardwareMonitor:
         ends up mixing two different chips.
 
         The card device owns its own hwmon node, so going through it
-        removes the guess entirely.
+        removes the guess entirely - and it is what makes a second card
+        readable at all: both of them are called amdgpu in
+        /sys/class/hwmon, only their own directories tell them apart.
         """
-        if not self.amd_card:
+        card = card if card is not None else self.amd_card
+        if not card:
             return None
-        if "card_hwmon" in self._hwmon_cache:
-            return self._hwmon_cache["card_hwmon"]
+        key = ("card_hwmon", str(card))
+        if key in self._hwmon_cache:
+            return self._hwmon_cache[key]
         try:
-            nodes = sorted((self.amd_card / "hwmon").glob("hwmon*"))
+            nodes = sorted((card / "hwmon").glob("hwmon*"))
         except OSError:
             nodes = []
         node = nodes[0] if nodes else None
-        self._hwmon_cache["card_hwmon"] = node
+        self._hwmon_cache[key] = node
         return node
 
     def _hwmon_energy(self, wanted_names):
@@ -637,15 +828,17 @@ class HardwareMonitor:
                 out.append(name)
         return ", ".join(out) or "none"
 
-    def amd_gpu_power(self):
+    def amd_gpu_power(self, card=None):
         """Watts from our own card's hwmon node - see _card_hwmon()."""
-        node = self._card_hwmon()
+        node = self._card_hwmon(card)
         watts = self._power_from_node(node) if node else None
-        if watts is None:
+        if watts is None and (card is None or card == self.amd_card):
             # older kernels put the node elsewhere; the global scan is
-            # still a reasonable second try
+            # still a reasonable second try - but only for the default
+            # card, see amd_gpu_temp()
             watts = self._hwmon_power({"amdgpu"})
-        if watts is None and not self._gpu_power_warned:
+        if (watts is None and not self._gpu_power_warned
+                and (card is None or card == self.amd_card)):
             self._gpu_power_warned = True
             self.log("Hardware: this GPU reports no power sensor "
                      "- {gpu_power} stays empty.")
@@ -686,33 +879,50 @@ class HardwareMonitor:
                 "pct": 100.0 * used / total}
 
     # ------------------------------------------------------------------- gpu
-    def gpu(self):
-        """Returns {usage, temp, vram_used, vram_total, vram_pct} (values may be None)."""
-        if self.has_nvidia:
-            line = (self._nvsmi_once() if self._nvsmi.broken
-                    else self._nvsmi.latest())
-            return _parse_nvsmi(line)
-        if self.amd_card:
+    def gpu(self, gpu_id=None):
+        """Returns {usage, temp, power, vram_used, vram_total, vram_pct}
+        (values may be None) for one card.
+
+        `gpu_id` is an id from list_gpus(); None means the card selected
+        in the Hardware card, which is what this method always returned.
+        """
+        entry = self._gpu_entry(gpu_id, fallback=gpu_id is None)
+        if entry is None:
+            return None
+        if entry["vendor"] == "NVIDIA":
+            idx = entry["index"]
+            line = (self._nvsmi_once(idx) if self._nvsmi.broken
+                    else self._nvsmi.latest(idx))
+            return _parse_nvsmi(line, idx)
+        card = entry.get("path")
+        if card:
             try:
-                usage = _read(self.amd_card / "gpu_busy_percent")
-                vu = _read(self.amd_card / "mem_info_vram_used")
-                vt = _read(self.amd_card / "mem_info_vram_total")
+                usage = _read(card / "gpu_busy_percent")
+                vu = _read(card / "mem_info_vram_used")
+                vt = _read(card / "mem_info_vram_total")
                 vu = int(vu) / GB if vu else None
                 vt = int(vt) / GB if vt else None
                 return {"usage": float(usage) if usage else None,
-                        "temp": self.amd_gpu_temp(),
-                        "power": self.amd_gpu_power(),
+                        "temp": self.amd_gpu_temp(card),
+                        "power": self.amd_gpu_power(card),
                         "vram_used": vu, "vram_total": vt,
                         "vram_pct": (100.0 * vu / vt) if (vu is not None and vt) else None}
             except Exception:
                 return None
         return None
 
-    def _nvsmi_once(self):
-        """Fallback: the old one call per poll."""
+    def gpu2(self):
+        """The second card's values, or None when none is selected."""
+        if not self.sel_gpu2 or self.sel_gpu2 == self.sel_gpu:
+            return None
+        return self.gpu(self.sel_gpu2)
+
+    def _nvsmi_once(self, index=0):
+        """Fallback: the old one call per poll, for one card."""
         try:
             out = subprocess.run(
-                ["nvidia-smi", f"--query-gpu={_NvidiaSmiLoop.QUERY}",
+                ["nvidia-smi", "-i", str(index),
+                 f"--query-gpu={_NvidiaSmiLoop.QUERY}",
                  "--format=csv,noheader,nounits"],
                 capture_output=True, text=True, timeout=3).stdout.strip()
             return out.splitlines()[0]
@@ -729,4 +939,5 @@ class HardwareMonitor:
                 "cpu_temp": self.cpu_temp(),
                 "cpu_power": self.cpu_power(),
                 "ram": self.ram(),
-                "gpu": self.gpu()}
+                "gpu": self.gpu(),
+                "gpu2": self.gpu2()}

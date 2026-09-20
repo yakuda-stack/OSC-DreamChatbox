@@ -212,13 +212,16 @@ _GPU_CLASS = r"SYSTEM\CurrentControlSet\Control\Class" \
              r"\{4d36e968-e325-11ce-bfc1-08002be10318}"
 
 
-def _registry_gpu():
-    """(name, vram_total_bytes) of the adapter with the most VRAM.
+def _registry_gpus():
+    """[(name, vram_total_bytes), ...], the adapter with the most VRAM
+    first.
 
-    Picking by VRAM size skips the Microsoft Basic Display Adapter and,
-    on a laptop, prefers the dedicated card over the iGPU.
+    Sorting by VRAM size puts the Microsoft Basic Display Adapter last
+    and, on a laptop, the dedicated card before the iGPU. Everything is
+    kept since v1.5.1: the Hardware card's GPU dropdown is filled from
+    this, so a machine with two adapters can say which one it means.
     """
-    best = ("", 0)
+    found = []
     try:
         import winreg
         with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, _GPU_CLASS) as root:
@@ -239,13 +242,25 @@ def _registry_gpu():
                                 k, "HardwareInformation.qwMemorySize")[0])
                         except Exception:
                             vram = 0
-                        if vram >= best[1]:
-                            best = (desc, vram)
+                        found.append((desc, vram))
                 except OSError:
                     continue
     except Exception:
         pass
-    return best
+    # de-duplicate: one physical adapter can have several class subkeys
+    seen, out = set(), []
+    for name, vram in sorted(found, key=lambda a: -a[1]):
+        if name in seen:
+            continue
+        seen.add(name)
+        out.append((name, vram))
+    return out
+
+
+def _registry_gpu():
+    """(name, vram_total_bytes) of the adapter with the most VRAM."""
+    gpus = _registry_gpus()
+    return gpus[0] if gpus else ("", 0)
 
 
 # ====================================================================
@@ -559,13 +574,20 @@ class WindowsHardwareMonitor:
         except Exception:
             self.temp_helper = None
 
-        reg_name, reg_vram = _registry_gpu()
+        self._reg_gpus = _registry_gpus()
+        reg_name, reg_vram = (self._reg_gpus[0] if self._reg_gpus
+                              else ("", 0))
         self._vram_total_bytes = reg_vram or None
         if not self.has_nvidia:
             self.amd_card = bool(reg_name) or None
 
         self.cpu_name_auto = _registry_cpu_name() or "CPU"
-        self.gpu_name_auto = self._detect_gpu_name(reg_name)
+        self._gpus = self._enumerate_gpus(reg_name)
+        #: ids chosen in the Hardware card; None = "the first one"
+        self.sel_gpu = None
+        self.sel_gpu2 = None
+        self.gpu_name_auto = self._name_of(self._gpu_entry(None))
+        self.gpu2_name_auto = "GPU"
 
         # the UI currently hardcodes "AMD (sysfs)" for a non-NVIDIA card,
         # which is a Linux-only phrase. Step 2b can read this instead:
@@ -598,6 +620,89 @@ class WindowsHardwareMonitor:
         if registry_name:
             return _clean_gpu_name(registry_name)
         return "GPU"
+
+    # ------------------------------------------------------ gpu selection
+    def _nvidia_cards(self):
+        """[(index, name), ...] from nvidia-smi, or []."""
+        if not self.has_nvidia:
+            return []
+        out = _run([self.nvidia_smi, "--query-gpu=index,name",
+                    "--format=csv,noheader"], timeout=5)
+        cards = []
+        for line in (out or "").splitlines():
+            parts = line.split(",", 1)
+            if len(parts) != 2:
+                continue
+            try:
+                idx = int(parts[0].strip())
+            except ValueError:
+                continue
+            cards.append((idx, _clean_gpu_name(parts[1].strip()) or "GPU"))
+        cards.sort()
+        return cards
+
+    def _enumerate_gpus(self, registry_name=""):
+        """Every card the Hardware card can offer.
+
+        NVIDIA cards are listed one by one, because nvidia-smi answers per
+        card. Everything else comes from the display-adapter registry: the
+        performance counters Windows itself offers are machine-wide, not
+        per adapter, so only the first of those carries readings and the
+        rest are names (their label says so). Picking one still fixes the
+        case this exists for - the wrong card's name on the line.
+        """
+        gpus = []
+        nvidia = self._nvidia_cards()
+        if not nvidia and self.has_nvidia:
+            nvidia = [(0, self._detect_gpu_name(registry_name))]
+        for idx, name in nvidia:
+            gpus.append({"id": f"nvidia:{idx}", "name": name,
+                         "vendor": "NVIDIA", "index": idx,
+                         "label": f"NVIDIA #{idx} · {name}"})
+        if not self.has_nvidia:
+            for pos, (name, vram) in enumerate(self._reg_gpus):
+                clean = _clean_gpu_name(name) or "GPU"
+                gb = (vram or 0) / GB
+                label = f"{clean}" + (f" ({gb:.0f}GB)" if gb >= 1 else "")
+                gpus.append({"id": f"win:{pos}", "name": clean,
+                             "vendor": "Windows", "counters": pos == 0,
+                             "vram_total": vram or None,
+                             "label": label if pos == 0
+                                      else f"{label} - name only"})
+        if not gpus:
+            name = self._detect_gpu_name(registry_name)
+            gpus.append({"id": "display", "name": name, "vendor": "",
+                         "counters": False, "vram_total": None,
+                         "label": f"{name} (name only - no readings)"})
+        return gpus
+
+    def list_gpus(self):
+        return list(self._gpus)
+
+    def select_gpus(self, primary=None, second=None):
+        self.sel_gpu = primary or None
+        self.sel_gpu2 = second or None
+        self.gpu_name_auto = self._name_of(self._gpu_entry(None))
+        self.gpu2_name_auto = (
+            self._name_of(self._gpu_entry(self.sel_gpu2, fallback=False))
+            if self.sel_gpu2 else "GPU")
+
+    def _gpu_entry(self, gpu_id=None, fallback=True):
+        if gpu_id is None:
+            gpu_id = self.sel_gpu
+        for g in self._gpus:
+            if g["id"] == gpu_id:
+                return g
+        if fallback and self._gpus:
+            return self._gpus[0]
+        return None
+
+    @staticmethod
+    def _name_of(entry):
+        return entry["name"] if entry else "GPU"
+
+    def gpu_name_for(self, gpu_id):
+        return self._name_of(self._gpu_entry(gpu_id, fallback=False))
 
     # ------------------------------------------------------------- cpu
     def cpu_usage(self):
@@ -632,12 +737,13 @@ class WindowsHardwareMonitor:
         return self._win32.ram() if self._win32 else None
 
     # ------------------------------------------------------------- gpu
-    def gpu(self):
+    def gpu(self, gpu_id=None):
         """{usage, temp, vram_used, vram_total, vram_pct}, values may be
         None. Returns None only when there is no GPU source at all - the
         Linux backend behaves the same way."""
-        if self.has_nvidia:
-            out = _run([self.nvidia_smi,
+        entry = self._gpu_entry(gpu_id, fallback=gpu_id is None) or {}
+        if entry.get("vendor") == "NVIDIA":
+            out = _run([self.nvidia_smi, "-i", str(entry.get("index", 0)),
                         "--query-gpu=utilization.gpu,temperature.gpu,"
                         "memory.used,memory.total,power.draw",
                         "--format=csv,noheader,nounits"])
@@ -656,6 +762,17 @@ class WindowsHardwareMonitor:
             except Exception:
                 pass          # driver hiccup - fall through to PDH/LHM
 
+        # An adapter without counters (the second entry of a registry
+        # list) has nothing but its name and the VRAM size the driver
+        # wrote down. Saying so with an all-None dict is better than
+        # handing back the machine-wide counters under its name.
+        if entry and entry.get("vendor") == "Windows" \
+                and not entry.get("counters"):
+            vt = entry.get("vram_total")
+            return {"usage": None, "temp": None, "power": None,
+                    "vram_used": None,
+                    "vram_total": vt / GB if vt else None,
+                    "vram_pct": None}
         if self._pdh is None:
             return None
         usage, vram_used = self._pdh.poll()
@@ -669,13 +786,20 @@ class WindowsHardwareMonitor:
                 "vram_pct": (100.0 * vu / vt)
                             if (vu is not None and vt) else None}
 
+    def gpu2(self):
+        """The second card's values, or None when none is selected."""
+        if not self.sel_gpu2 or self.sel_gpu2 == self.sel_gpu:
+            return None
+        return self.gpu(self.sel_gpu2)
+
     # -------------------------------------------------------- snapshot
     def snapshot(self):
         return {"cpu_usage": self.cpu_usage(),
                 "cpu_temp": self.cpu_temp(),
                 "cpu_power": self.cpu_power(),
                 "ram": self.ram(),
-                "gpu": self.gpu()}
+                "gpu": self.gpu(),
+                "gpu2": self.gpu2()}
 
 
 # ====================================================================

@@ -15,7 +15,7 @@ from core.osinfo import (  # noqa: F401  (IS_WINDOWS/OS_NAME re-exported)
     IS_WINDOWS, OS_NAME, config_dir, legacy_config_dir, resource_root)
 
 APP_NAME = "OSC-DreamChatbox"
-VERSION = "v1.5.0"
+VERSION = "v1.5.1"
 
 #: how many All-in-one strings there can be. Raised from 5 in v1.4.0;
 #: every list that is "one entry per AIO string" is sized from here.
@@ -88,6 +88,23 @@ OSC_MIN_SEND_GAP_SEC = 1.5
 
 TITLE_MAX_LEN = 24   # max characters of the song title shown
 SONGBAR_LEN = 13     # number of segments in the song progress bar
+
+# ------------------------------------------------------------ second GPU
+# Where the second card's values go in the GENERATED hardware layout
+# (v1.5.1). A custom string ignores this - there the {gpu2_*}
+# placeholders sit wherever you put them.
+#
+#   line    its own line under the first GPU, the way CPU has one
+#   inline  appended to the first GPU line, all in one line
+GPU2_MODE_LINE = "line"
+GPU2_MODE_INLINE = "inline"
+GPU2_MODES = (GPU2_MODE_LINE, GPU2_MODE_INLINE)
+
+
+def normalize_gpu2_mode(value):
+    """A hand-edited config cannot smuggle an unknown mode past this."""
+    return value if value in GPU2_MODES else GPU2_MODE_LINE
+
 
 # ------------------------------------------------------------------ AFK
 # The avatar parameter Detect AFK reads. VRChat sets this one itself

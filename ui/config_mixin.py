@@ -13,7 +13,7 @@ from core.audiolevel import THRESHOLD_DEFAULT, clamp_threshold
 from core.lyrics_sources import DEFAULT_SOURCES, normalize_sources
 from core.textstyle import STYLE_NORMAL, normalize as normalize_style
 from core.constants import (
-    AFK_PRESET_COUNT, AIO_MAX, CHAT_MODES, CHATBOX_LIMIT, DEFAULT_AFK_PARAM, DEFAULT_AFK_TEXTS, DEFAULT_AFK_TIMER_TEXT, DEFAULT_TRANSLATE_NOTICE, CHAT_MODE_DIRECT, CONFIG_DIR, CONFIG_FILE, LYRICS_DIR, MIN_STATUS_CYCLE_SEC, OLD_CONFIG_FILE, SLIM_SUFFIX, TITLE_MAX_LEN)
+    AFK_PRESET_COUNT, AIO_MAX, CHAT_MODES, CHATBOX_LIMIT, DEFAULT_AFK_PARAM, DEFAULT_AFK_TEXTS, DEFAULT_AFK_TIMER_TEXT, DEFAULT_TRANSLATE_NOTICE, CHAT_MODE_DIRECT, CONFIG_DIR, CONFIG_FILE, GPU2_MODE_LINE, LYRICS_DIR, MIN_STATUS_CYCLE_SEC, normalize_gpu2_mode, OLD_CONFIG_FILE, SLIM_SUFFIX, TITLE_MAX_LEN)
 from core.boxstyle import (
     CLOCK_24_HM, DEFAULT_CUSTOM_BOX, MODE_CUSTOM as BOX_MODE_CUSTOM, normalize_clock_format, normalize_custom as normalize_box_custom, normalize_mode as normalize_box_mode, normalize_template as normalize_box_template, normalize_width as normalize_box_width)
 from core.textutils import DEFAULT_CUSTOM_BAR, TIME_POS_LINE
@@ -427,6 +427,26 @@ class ConfigMixin:
             # characters, and switching this on for everybody would make
             # an existing hardware line longer without being asked.
             "hw_gpu_power": False,
+            # ---- which card, and an optional second one (v1.5.1) -------
+            # Empty means "whatever the backend picks first", which is the
+            # card with the most VRAM - the behaviour of every version
+            # before this one. The id itself comes from
+            # HardwareMonitor.list_gpus(): "nvidia:0", "amd:card1", ...
+            "hw_gpu_select": "",
+            "hw_gpu2": False,
+            "hw_gpu2_select": "",
+            # Own line, or appended to the GPU line. Only decides the
+            # generated layout - a custom string places {gpu2_*} itself.
+            "hw_gpu2_mode": GPU2_MODE_LINE,     # line | inline
+            "hw_gpu2_usage": True,
+            "hw_gpu2_temp": True,
+            "hw_gpu2_power": False,
+            "hw_gpu2_name": True,
+            "hw_gpu2_custom": False,
+            "hw_gpu2_custom_name": "",
+            "hw_gpu2_name_style": STYLE_NORMAL,
+            "hw_gpu2_vram_used": False,
+            "hw_gpu2_vram_pct": False,
             "hw_vram_used": True,
             "hw_vram_pct": False,
             "hw_ram_used": True,
@@ -496,9 +516,24 @@ class ConfigMixin:
         styles = [normalize_style(x) for x in styles][:20]
         styles += [STYLE_NORMAL] * (20 - len(styles))
         defaults["status_styles"] = styles
-        for key in ("hw_gpu_name_style", "hw_cpu_name_style",
-                    "media_time_style", "afk_style"):
+        for key in ("hw_gpu_name_style", "hw_gpu2_name_style",
+                    "hw_cpu_name_style", "media_time_style", "afk_style"):
             defaults[key] = normalize_style(defaults.get(key))
+        # ---- GPU selection (v1.5.1) ---------------------------------
+        # The ids are checked against the cards this machine actually has
+        # when the Hardware card fills its dropdowns (see apps_page.py) -
+        # here they are only forced into the right type, because a config
+        # written on another machine is a normal thing to carry around.
+        for key in ("hw_gpu_select", "hw_gpu2_select"):
+            value = defaults.get(key)
+            defaults[key] = value.strip() if isinstance(value, str) else ""
+        defaults["hw_gpu2_mode"] = normalize_gpu2_mode(
+            defaults.get("hw_gpu2_mode"))
+        if defaults["hw_gpu2_select"] and \
+                defaults["hw_gpu2_select"] == defaults["hw_gpu_select"]:
+            # the same card twice is two identical lines, never what was
+            # meant - the second one is dropped, not the first
+            defaults["hw_gpu2_select"] = ""
         # ---- AFK -----------------------------------------------------
         # Absent from every config written before this version, so each
         # one falls back to the default above and an existing setup is

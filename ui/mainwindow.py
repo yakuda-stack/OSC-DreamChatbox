@@ -797,6 +797,26 @@ class MainWindow(ConfigMixin, AppsPageMixin, AdvancedPageMixin,
                              self.cfg.get("hw_cpu_name_style", STYLE_NORMAL))
         self.chk_gpu_temp.setChecked(self.cfg["hw_gpu_temp"])
         self.chk_gpu_power.setChecked(self.cfg["hw_gpu_power"])
+        # ---- second GPU (v1.5.1) ----
+        self.chk_gpu2.setChecked(self.cfg["hw_gpu2"])
+        self.chk_gpu2_usage.setChecked(self.cfg["hw_gpu2_usage"])
+        self.chk_gpu2_temp.setChecked(self.cfg["hw_gpu2_temp"])
+        self.chk_gpu2_power.setChecked(self.cfg["hw_gpu2_power"])
+        self.chk_gpu2_name.setChecked(self.cfg["hw_gpu2_name"])
+        self.chk_gpu2_vram_used.setChecked(self.cfg["hw_gpu2_vram_used"])
+        self.chk_gpu2_vram_pct.setChecked(self.cfg["hw_gpu2_vram_pct"])
+        self.chk_gpu2_custom.setChecked(self.cfg["hw_gpu2_custom"])
+        self.gpu2_custom_input.setText(self.cfg["hw_gpu2_custom_name"])
+        self.set_style_combo(self.gpu2_style_combo,
+                             self.cfg.get("hw_gpu2_name_style", STYLE_NORMAL))
+        idx = self.gpu2_mode_combo.findData(self.cfg["hw_gpu2_mode"])
+        self.gpu2_mode_combo.blockSignals(True)
+        self.gpu2_mode_combo.setCurrentIndex(max(0, idx))
+        self.gpu2_mode_combo.blockSignals(False)
+        # the two card dropdowns, and the selection handed to the backend.
+        # After the checkboxes above, because it reads hw_gpu2 to decide
+        # whether a second card is polled at all.
+        self._fill_gpu_combos()
         self.chk_vram_used.setChecked(self.cfg["hw_vram_used"])
         self.chk_vram_pct.setChecked(self.cfg["hw_vram_pct"])
         self.chk_ram_used.setChecked(self.cfg["hw_ram_used"])

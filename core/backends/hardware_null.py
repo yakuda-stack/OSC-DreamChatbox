@@ -42,6 +42,11 @@ class NullHardwareMonitor:
         self.amd_card = None
         self.cpu_name_auto = "CPU"
         self.gpu_name_auto = "GPU"
+        self.gpu2_name_auto = "GPU"
+        # GPU selection (v1.5.1). Nothing to choose from, so the list is
+        # empty and the Hardware card hides its dropdown by itself.
+        self.sel_gpu = None
+        self.sel_gpu2 = None
         # see hardware_windows.py: lets the UI print a platform-correct
         # label instead of the hardcoded Linux "AMD (sysfs)"
         self.gpu_backend_label = "none detected"
@@ -70,10 +75,25 @@ class NullHardwareMonitor:
         """Would be {'used', 'total', 'pct'} - None means "don't show"."""
         return None
 
-    def gpu(self):
+    def gpu(self, gpu_id=None):
         """Would be {'usage', 'temp', 'vram_used', 'vram_total',
         'vram_pct'} - None means "don't show"."""
         return None
+
+    def gpu2(self):
+        return None
+
+    # ------------------------------------------------------ gpu selection
+    def list_gpus(self):
+        """No card can be read here, so there is nothing to pick from."""
+        return []
+
+    def select_gpus(self, primary=None, second=None):
+        self.sel_gpu = primary or None
+        self.sel_gpu2 = second or None
+
+    def gpu_name_for(self, gpu_id):
+        return "GPU"
 
     def snapshot(self):
         """Same shape as the Linux backend, so poll_hw() needs no
@@ -82,4 +102,5 @@ class NullHardwareMonitor:
                 "cpu_temp": None,
                 "cpu_power": None,
                 "ram": None,
-                "gpu": None}
+                "gpu": None,
+                "gpu2": None}

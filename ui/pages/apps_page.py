@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import (
     QSpinBox, QVBoxLayout, QWidget)
 from core.constants import (
     AFK_PRESET_COUNT, AIO_MAX, DEFAULT_AFK_PARAM, DEFAULT_AFK_TEXTS,
-    DEFAULT_AFK_TIMER_TEXT, ORIGINS, ORIGIN_CHAT,
+    DEFAULT_AFK_TIMER_TEXT, GPU2_MODE_INLINE, GPU2_MODE_LINE, ORIGINS, ORIGIN_CHAT,
     CHATBOX_LIMIT, LYRICS_DIR, MIN_STATUS_CYCLE_SEC, SLIM_SUFFIX, SONGBAR_LEN, TITLE_MAX_LEN)
 from core.lyrics_sources import SOURCES, normalize_sources
 from core.afk import (
@@ -1073,6 +1073,17 @@ class AppsPageMixin:
         (self.chk_gpu_custom, self.gpu_custom_input,
          self.gpu_style_combo) = self._hw_name_row(
             gpu, "gpu", "RX 9060 XT / RTX 5060 Ti / \u2026")
+        # Which card, under the name it belongs to. Always visible and
+        # always filled with what was detected, even on a machine with
+        # one card: a dropdown showing your card by name is how you see
+        # WHICH one the values come from, which is the question this
+        # whole thing exists to answer. Filled in _fill_gpu_combos().
+        (self.gpu_pick_box, self.gpu_select_combo) = self._gpu_pick_row(
+            gpu, "hw_gpu_select",
+            "Which card the GPU values come from.\n\nAutomatic takes the "
+            "one with the most VRAM, which on a Ryzen desktop means the "
+            "discrete card rather than the Radeon inside the CPU. Pick a "
+            "card by hand when that guess is wrong.", auto=True)
         comp.addWidget(gpu_box, 0, 0)
 
         # ----- VRAM -----
@@ -1165,6 +1176,105 @@ class AppsPageMixin:
             hc.addLayout(self._build_wintemp_row(indent=0))
 
         # =============================================================
+        #  Second GPU
+        # =============================================================
+        # The same bordered box as GPU / VRAM / CPU / RAM above, in the
+        # same column width - it is one more component, so it has no
+        # business looking like a different kind of thing.
+        #
+        # Hidden rather than greyed, which is the opposite of every other
+        # dependent row on this card, and on purpose: greying says "this
+        # exists and is currently off", which is right for a setting you
+        # will come back to. A second graphics card is not a setting - on
+        # a machine with one card it is nine controls that will never do
+        # anything, and leaving them on screen makes the card longer for
+        # everybody to serve nobody. The checkbox above stays put, so
+        # there is always the one row that brings them back.
+        hc.addWidget(self._section_header("Second GPU"))
+
+        self.chk_gpu2 = QCheckBox("I have a second GPU")
+        self.chk_gpu2.setToolTip(
+            "Reports a second card next to the first one. Every value "
+            "gets its own placeholder - {gpu2_name}, {gpu2_usage}, "
+            "{gpu2_temp}, {gpu2_power}, {vram2_usage} - so a custom "
+            "string or an All-in-one string can place them anywhere.\n\n"
+            "Two cards are two more values on a 144 character line, which "
+            "is why this is off until you say otherwise.")
+        self.chk_gpu2.toggled.connect(
+            lambda on: self.on_hw_option("hw_gpu2", on))
+        hc.addWidget(self.chk_gpu2)
+
+        self.gpu2_note = self._mode_note(
+            "Only one card was detected, so there is no second one to "
+            "report on. On Windows, per-card readings come from "
+            "nvidia-smi - other cards can be named here but report no "
+            "values.", hc)
+
+        gpu2_row = QHBoxLayout()
+        gpu2_row.setContentsMargins(0, 0, 0, 0)
+        gpu2_row.setSpacing(10)
+        self.gpu2_box, g2 = self._hw_component("GPU 2")
+        (self.chk_gpu2_usage, self.chk_gpu2_temp,
+         self.chk_gpu2_power, self.chk_gpu2_name,
+         self.chk_gpu2_vram_used, self.chk_gpu2_vram_pct) = \
+            self._hw_check_grid(g2, (
+                ("Usage", "hw_gpu2_usage", "The load on the second card."),
+                ("Temp", "hw_gpu2_temp",
+                 "The second card's temperature. Follows the flame setting "
+                 "under Config & formatting like every other temperature."),
+                ("Power draw", "hw_gpu2_power",
+                 "Fills {gpu2_power} / {gpu2_watt}. Same sources as the "
+                 "first card: NVIDIA always reports it, AMD needs that "
+                 "card's own hwmon node."),
+                ("Name", "hw_gpu2_name",
+                 "The detected card name. Off means the line says GPU2."),
+                ("VRAM numbers", "hw_gpu2_vram_used",
+                 "e.g. 3/8GB, as {vram2_usage}."),
+                ("VRAM percent", "hw_gpu2_vram_pct",
+                 "e.g. 38%, as {vram2_pct}."),
+            ))
+        (self.chk_gpu2_custom, self.gpu2_custom_input,
+         self.gpu2_style_combo) = self._hw_name_row(
+            g2, "gpu2", "RX 6600 / RTX 3060 / …", title="GPU 2")
+        (self.gpu2_pick_box, self.gpu2_select_combo) = self._gpu_pick_row(
+            g2, "hw_gpu2_select",
+            "The second card. The one the GPU box above reports on is not "
+            "in this list - the same card twice would be two identical "
+            "lines.")
+
+        g2_mode_box, g2_mode = self._sub_group()
+        mode_lbl = QLabel("Show as")
+        mode_lbl.setObjectName("dim")
+        g2_mode.addWidget(mode_lbl)
+        self.gpu2_mode_combo = QComboBox()
+        self.gpu2_mode_combo.addItem("Own line", GPU2_MODE_LINE)
+        self.gpu2_mode_combo.addItem("All in one with GPU 1",
+                                     GPU2_MODE_INLINE)
+        self.gpu2_mode_combo.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.gpu2_mode_combo.setMinimumWidth(0)
+        self.gpu2_mode_combo.setToolTip(
+            "Where the second card goes in the generated layout:\n\n"
+            "Own line      GPU: 42% 61°C\n"
+            "              GPU2: 7% 44°C\n\n"
+            "All in one    GPU: 42% 61°C | GPU2: 7% 44°C\n\n"
+            "Build my own layout below ignores this - there the "
+            "{gpu2_…} placeholders sit wherever you put them.")
+        self.gpu2_mode_combo.currentIndexChanged.connect(
+            lambda _i, c=self.gpu2_mode_combo:
+                self.on_hw_choice("hw_gpu2_mode", c.currentData()))
+        g2_mode.addWidget(self.gpu2_mode_combo, 1)
+        g2.addWidget(g2_mode_box)
+        # same width as one column of the grid above, so the box lines up
+        # with GPU instead of stretching across the whole card
+        self.gpu2_box.ensurePolished()
+        self.gpu2_box.setMinimumWidth(floor)
+        gpu2_row.addWidget(self.gpu2_box, 1)
+        gpu2_row.addStretch(1)
+        self.gpu2_row_widget = QWidget()
+        self.gpu2_row_widget.setLayout(gpu2_row)
+        hc.addWidget(self.gpu2_row_widget)
+
+        # =============================================================
         #  Custom string   (foldable help)
         # =============================================================
         hc.addWidget(self._section_header("Custom string"))
@@ -1228,6 +1338,11 @@ class AppsPageMixin:
              "{gpu_name} {gpu_usage} {gpu_temp} {gpu_power} {vram_usage} "
              "{cpu_name} {cpu_usage} {cpu_temp} {cpu_power} {ram_usage} "
              "{ram_type} {icon_flame} {temp_icon}"),
+            ("Second GPU",
+             "{gpu2_name} {gpu2_usage} {gpu2_temp} {gpu2_power} "
+             "{vram2_usage} {vram2_pct} - filled once Second GPU above is "
+             "on and a card is picked. Empty otherwise, so a string can "
+             "carry them permanently."),
             ("Line breaks",
              "\\n starts a new line. Values follow the checkboxes above: "
              "unchecked is empty, and a name left unchecked comes out as "
@@ -2287,7 +2402,39 @@ class AppsPageMixin:
         parent_layout.addLayout(grid)
         return made
 
-    def _hw_name_row(self, parent_layout, which, placeholder):
+    def _gpu_pick_row(self, parent_layout, key, tooltip, auto=False,
+                      label="Select GPU"):
+        """Label + dropdown of the cards this machine has.
+
+        Returns (frame, combo). The entries themselves are filled in
+        _fill_gpu_combos(), because they depend on what the backend found
+        and on what the other dropdown is already using - and both of
+        those can change while the window is open.
+
+        `auto` adds the "let the backend decide" entry at the top, which
+        is what the first GPU has always done and what keeps an existing
+        config behaving exactly as before.
+        """
+        box, row = self._sub_group()
+        lbl = QLabel(label)
+        lbl.setObjectName("dim")
+        row.addWidget(lbl)
+        combo = QComboBox()
+        combo.setToolTip(tooltip)
+        combo.setCursor(Qt.CursorShape.PointingHandCursor)
+        # a dropdown of marketing names is long; the box is half a card
+        # wide, so it shrinks instead of pushing the layout sideways
+        combo.setMinimumWidth(0)
+        combo.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        combo.setProperty("gpu_auto", bool(auto))
+        combo.currentIndexChanged.connect(
+            lambda _i, k=key, c=combo: self.on_gpu_select(k, c.currentData()))
+        row.addWidget(combo, 1)
+        parent_layout.addWidget(box)
+        return box, combo
+
+    def _hw_name_row(self, parent_layout, which, placeholder, title=None):
         """The "Custom name" checkbox and, indented under it, the name
         field and its style dropdown on one shared row.
 
@@ -2298,9 +2445,10 @@ class AppsPageMixin:
         _hw_display_name() - so greying it out with the custom name off
         would take away a setting that is still doing something.
         """
+        label = title or which.upper()
         chk = QCheckBox("Custom name")
         chk.setToolTip(
-            f"Use your own text instead of the detected {which.upper()} "
+            f"Use your own text instead of the detected {label} "
             "name. Detection returns marketing names that are long and "
             "sometimes wrong; 30 characters of the 144 is a lot to spend "
             "on one.")
@@ -2321,7 +2469,7 @@ class AppsPageMixin:
         row.addWidget(edit, 1)
 
         combo = self._make_style_combo(
-            f"Renders the {which.upper()} name small to save room on the "
+            f"Renders the {label} name small to save room on the "
             "line. Applies to the detected name and to your custom one.",
             choices=COMPACT_STYLE_CHOICES, width=126)
         combo.currentIndexChanged.connect(
@@ -2702,32 +2850,161 @@ class AppsPageMixin:
     def _sync_hw_dependents(self):
         """Greys out the fields whose parent checkbox is off.
 
-        Three separate rules, because the three things depend on
-        different checkboxes:
+        Four separate rules, because they depend on different checkboxes:
 
         - the custom GPU/CPU name field follows its own "Custom name";
         - the style dropdown does NOT, because _hw_display_name() styles
           the detected name too - it only goes dead when neither a
           detected nor a custom name is going out, and the line would
           say a bare GPU or CPU;
+        - everything under Second GPU follows "I have a second GPU";
         - the custom string editor follows "Build my own layout".
 
         Greyed rather than hidden, on purpose: a row that vanishes takes
         its own explanation with it, and someone who ticks "Custom name"
         should find the field where they last saw it.
         """
-        for which in ("gpu", "cpu"):
+        for which in ("gpu", "gpu2", "cpu"):
             custom_on = getattr(self, f"chk_{which}_custom").isChecked()
             name_on = getattr(self, f"chk_{which}_name").isChecked()
             getattr(self, f"{which}_custom_input").setEnabled(custom_on)
             getattr(self, f"{which}_style_combo").setEnabled(
                 custom_on or name_on)
+        # the second card's box is shown, not greyed - see the comment
+        # where it is built. It needs a second card to exist as well as
+        # the tick, otherwise the note underneath the checkbox takes its
+        # place and says why.
+        on = self.chk_gpu2.isChecked()
+        have_second = self.gpu2_select_combo.count() > 0
+        self.gpu2_row_widget.setVisible(on and have_second)
+        self.gpu2_note.setVisible(on and not have_second)
         self.hw_custom_box.setEnabled(self.chk_hw_custom.isChecked())
+
+    # ---------------------------------------------------- GPU selection
+    def _gpu_list(self):
+        """The cards the backend can report on, or [] if it cannot say.
+
+        Guarded with getattr because a plugin or an older backend may not
+        know about list_gpus() - the Hardware card then behaves the way it
+        did before v1.5.1 instead of failing to build.
+        """
+        lister = getattr(self.hw, "list_gpus", None)
+        if not callable(lister):
+            return []
+        try:
+            return list(lister() or [])
+        except Exception as e:
+            self.log(f"Hardware: could not list the GPUs ({e})")
+            return []
+
+    def _effective_gpu(self, gpus=None):
+        """The id the first GPU box reports on, with Automatic resolved."""
+        gpus = gpus if gpus is not None else self._gpu_list()
+        want = (self.cfg.get("hw_gpu_select") or "").strip()
+        if want and any(g["id"] == want for g in gpus):
+            return want
+        return gpus[0]["id"] if gpus else ""
+
+    def _fill_gpu_combos(self):
+        """Both card dropdowns, and the rows around them.
+
+        Called from load_config_into_ui() and whenever one of the two
+        selections changes, because the second dropdown never offers the
+        card the first one is already using.
+        """
+        gpus = self._gpu_list()
+        combo = self.gpu_select_combo
+        combo.blockSignals(True)
+        combo.clear()
+        combo.addItem("Automatic (most VRAM)", "")
+        for g in gpus:
+            combo.addItem(g.get("label") or g.get("name") or g["id"], g["id"])
+        want = (self.cfg.get("hw_gpu_select") or "").strip()
+        idx = combo.findData(want) if want else 0
+        if idx < 0:
+            # the card in the config is not in this machine - back to
+            # Automatic rather than to an empty line
+            self.cfg["hw_gpu_select"] = ""
+            idx = 0
+        combo.setCurrentIndex(idx)
+        combo.blockSignals(False)
+        # the dropdown stays even with one card: it names the card the
+        # values come from, which is worth a row on its own
+        self.gpu_pick_box.setVisible(bool(gpus))
+        self._fill_gpu2_combo(gpus)
+        # The tick stays clickable with one card. Disabled, it would be a
+        # dead row with no explanation; ticked, the note takes the box's
+        # place and says there is nothing to pick.
+        self._sync_hw_dependents()
+        self._apply_gpu_selection()
+
+    def _fill_gpu2_combo(self, gpus=None):
+        gpus = gpus if gpus is not None else self._gpu_list()
+        taken = self._effective_gpu(gpus)
+        others = [g for g in gpus if g["id"] != taken]
+        combo = self.gpu2_select_combo
+        combo.blockSignals(True)
+        combo.clear()
+        for g in others:
+            combo.addItem(g.get("label") or g.get("name") or g["id"], g["id"])
+        want = (self.cfg.get("hw_gpu2_select") or "").strip()
+        idx = combo.findData(want) if want else -1
+        if idx < 0:
+            idx = 0 if others else -1
+            self.cfg["hw_gpu2_select"] = others[0]["id"] if others else ""
+        combo.setCurrentIndex(idx)
+        combo.blockSignals(False)
+        combo.setEnabled(bool(others))
+
+    def _apply_gpu_selection(self):
+        """Hands the two ids to the backend. The readings follow on the
+        next poll; nothing else in the app has to know about cards."""
+        select = getattr(self.hw, "select_gpus", None)
+        if not callable(select):
+            return
+        second = (self.cfg.get("hw_gpu2_select") or "") \
+            if self.cfg.get("hw_gpu2") else ""
+        try:
+            select((self.cfg.get("hw_gpu_select") or "") or None,
+                   second or None)
+        except Exception as e:
+            self.log(f"Hardware: GPU selection failed ({e})")
+
+    def on_gpu_select(self, key, gpu_id):
+        self.cfg[key] = gpu_id or ""
+        if key == "hw_gpu_select":
+            # the second dropdown loses the entry the first one just took
+            self._fill_gpu2_combo()
+        self.save_config()
+        self._apply_gpu_selection()
+        name = (self.cfg.get(key) or "automatic")
+        self.log(f"Hardware: {'GPU 2' if key.endswith('2_select') else 'GPU'}"
+                 f" = {name}")
+        if self.cfg["hw_active"]:
+            # the values belong to the old card until the next poll, and
+            # waiting up to a minute for a dropdown to take effect reads
+            # as "nothing happened"
+            self.poll_hw()
+        self.update_preview()
+
+    def on_hw_choice(self, key, value):
+        """A dropdown on the Hardware card that is neither a name style
+        nor a card - currently only the second GPU's layout."""
+        if value is None:
+            return
+        self.cfg[key] = value
+        self.save_config()
+        self.update_preview()
 
     def on_hw_option(self, key, on):
         self.cfg[key] = on
         self.save_config()
         self._sync_hw_dependents()
+        if key == "hw_gpu2":
+            # the backend only polls a second card while this is on
+            self._apply_gpu_selection()
+            if self.cfg["hw_active"]:
+                self.poll_hw()
         self.update_preview()
 
     def on_hw_text(self, key, text):
@@ -3034,6 +3311,12 @@ class AppsPageMixin:
          "other sensor here. "
          "With {temp_icon} in the string the temperatures drop their unit, "
          "because the icon already carries it."),
+        ("Second GPU", "{gpu2_name}  {gpu2_usage}  {gpu2_temp}  "
+                       "{gpu2_power}  {vram2_usage}  {vram2_pct}",
+         "The same values for a second card. Switch “Second GPU” "
+         "on in the Hardware card and pick which one it is; until then "
+         "these stay empty and collapse like every other empty "
+         "placeholder."),
         ("Formatting", "{sup}text{/sup}   {sub}text{/sub}   "
                        "{super/\"word\"}   {sub/\"word\"}",
          "Superscript and subscript. The tag pair styles a whole stretch "
@@ -3341,11 +3624,7 @@ class AppsPageMixin:
         if self.cfg["hw_active"] and self.hw_info:
             hw = self._hw_values(self.hw_info)
             if re.search(r"\{\s*temp_icon\s*\}", probe or "", re.IGNORECASE):
-                gpu = self.hw_info.get("gpu") or {}
-                if self.cfg["hw_gpu_temp"] and gpu.get("temp") is not None:
-                    hw["gpu_temp"] = f"{gpu['temp']:.0f}"
-                if self.cfg["hw_cpu_temp"] and self.hw_info.get("cpu_temp") is not None:
-                    hw["cpu_temp"] = f"{self.hw_info['cpu_temp']:.0f}"
+                self._bare_temps(hw, self.hw_info)
             vals.update(hw)
         vals["temp_icon"] = "\U0001F525" if self.cfg["hw_flame"] else "\u00b0C"
         vals.setdefault("icon_flame", "\U0001F525")
@@ -3978,15 +4257,16 @@ class AppsPageMixin:
             self.wintemp_btn.setEnabled(True)
 
     def _hw_display_name(self, which):
-        """GPU/CPU name as it goes out: custom > detected > generic, with
-        the small-letter style applied. One place for both the plain
+        """GPU/GPU2/CPU name as it goes out: custom > detected > generic,
+        with the small-letter style applied. One place for the plain
         lines and the custom string, so they can never drift apart."""
         c = self.cfg
         if c[f"hw_{which}_custom"] and c[f"hw_{which}_custom_name"].strip():
             name = c[f"hw_{which}_custom_name"].strip()
         elif c[f"hw_{which}_name"]:
-            name = (self.hw.gpu_name_auto if which == "gpu"
-                    else self.hw.cpu_name_auto)
+            name = {"gpu": self.hw.gpu_name_auto,
+                    "gpu2": getattr(self.hw, "gpu2_name_auto", "GPU"),
+                    "cpu": self.hw.cpu_name_auto}.get(which, which.upper())
         else:
             name = which.upper()
         return apply_style(name, c.get(f"hw_{which}_name_style",
@@ -4053,7 +4333,88 @@ class AppsPageMixin:
             "ram_pct": (f"{ram['pct']:.0f}%" if c["hw_ram_pct"] and ram else None),
             "ram_type": c["hw_ram_type"].strip() or None,
             "icon_flame": "\U0001F525",
+            **self._gpu2_values(info),
         }
+
+    def _gpu2_values(self, info):
+        """The {gpu2_*} / {vram2_*} half of _hw_values().
+
+        Its own method because the keys have to exist even with the
+        second GPU switched off: a string carrying {gpu2_temp} then
+        collapses it like any other empty placeholder instead of printing
+        the name of one.
+        """
+        c = self.cfg
+        gpu = (info.get("gpu2") or {}) if c.get("hw_gpu2") else {}
+        vram = []
+        if c.get("hw_gpu2_vram_used") and gpu.get("vram_used") is not None \
+                and gpu.get("vram_total"):
+            vram.append(f"{gpu['vram_used']:.0f}/{gpu['vram_total']:.0f}GB")
+        if c.get("hw_gpu2_vram_pct") and gpu.get("vram_pct") is not None:
+            vram.append(f"{gpu['vram_pct']:.0f}%")
+        power = gpu.get("power") if c.get("hw_gpu2_power") else None
+        return {
+            "gpu2_name": self._hw_display_name("gpu2") if gpu else None,
+            "gpu2_usage": (f"{gpu['usage']:.0f}%"
+                           if c.get("hw_gpu2_usage")
+                           and gpu.get("usage") is not None else None),
+            "gpu2_temp": (self._temp_str(gpu.get("temp"))
+                          if c.get("hw_gpu2_temp") else None),
+            "gpu2_power": (self._watt_str(power) if power is not None
+                           else None),
+            "vram2_usage": " ".join(vram) or None,
+            "vram2_pct": (f"{gpu['vram_pct']:.0f}%"
+                          if c.get("hw_gpu2_vram_pct")
+                          and gpu.get("vram_pct") is not None else None),
+        }
+
+    def _bare_temps(self, vals, info):
+        """Temperatures without their unit, for a string that carries
+        {temp_icon} and therefore places the unit itself.
+
+        One helper for all three temperatures, because the second GPU
+        needs exactly the same treatment and the rule "a template with
+        {temp_icon} gets bare numbers" must not hold for two of them and
+        not the third.
+        """
+        gpu = info.get("gpu") or {}
+        gpu2 = (info.get("gpu2") or {}) if self.cfg.get("hw_gpu2") else {}
+        if self.cfg["hw_gpu_temp"] and gpu.get("temp") is not None:
+            vals["gpu_temp"] = f"{gpu['temp']:.0f}"
+        if self.cfg.get("hw_gpu2_temp") and gpu2.get("temp") is not None:
+            vals["gpu2_temp"] = f"{gpu2['temp']:.0f}"
+        if self.cfg["hw_cpu_temp"] and info.get("cpu_temp") is not None:
+            vals["cpu_temp"] = f"{info['cpu_temp']:.0f}"
+
+    def _gpu2_line(self, info):
+        """"GPU2: 7% 44°C | VRAM 1/8GB" for the generated layout, or ""
+        when the second card is off, unpicked or reports nothing."""
+        if not self.cfg.get("hw_gpu2"):
+            return ""
+        gpu = info.get("gpu2") or {}
+        if not gpu:
+            return ""
+        vals = []
+        if self.cfg.get("hw_gpu2_usage") and gpu.get("usage") is not None:
+            vals.append(f"{gpu['usage']:.0f}%")
+        if self.cfg.get("hw_gpu2_temp") and gpu.get("temp") is not None:
+            vals.append(self._temp_str(gpu["temp"]))
+        if self.cfg.get("hw_gpu2_power") and gpu.get("power") is not None:
+            vals.append(self._watt_str(gpu["power"]))
+        vram = []
+        if self.cfg.get("hw_gpu2_vram_used") \
+                and gpu.get("vram_used") is not None and gpu.get("vram_total"):
+            vram.append(f"{gpu['vram_used']:.0f}/{gpu['vram_total']:.0f}GB")
+        if self.cfg.get("hw_gpu2_vram_pct") and gpu.get("vram_pct") is not None:
+            vram.append(f"{gpu['vram_pct']:.0f}%")
+        if not vals and not vram:
+            return ""
+        line = self._hw_display_name("gpu2")
+        if vals:
+            line += ": " + " ".join(vals)
+        if vram:
+            line += " | VRAM " + " ".join(vram)
+        return line
 
     def build_hw_lines(self):
         info = self.hw_info
@@ -4067,11 +4428,7 @@ class AppsPageMixin:
             # If the template uses it, the temps become bare numbers so
             # you can format/replace the unit yourself.
             if re.search(r"\{\s*temp_icon\s*\}", tpl, re.IGNORECASE):
-                gpu = info.get("gpu") or {}
-                if self.cfg["hw_gpu_temp"] and gpu.get("temp") is not None:
-                    vals["gpu_temp"] = f"{gpu['temp']:.0f}"
-                if self.cfg["hw_cpu_temp"] and info.get("cpu_temp") is not None:
-                    vals["cpu_temp"] = f"{info['cpu_temp']:.0f}"
+                self._bare_temps(vals, info)
             vals["temp_icon"] = "\U0001F525" if self.cfg["hw_flame"] else "\u00b0C"
             text = apply_template(tpl, vals)
             return text.split("\n") if text else []
@@ -4097,8 +4454,17 @@ class AppsPageMixin:
             line += ": " + " ".join(vals)
         if vram:
             line += " | VRAM " + " ".join(vram)
+        gpu2_line = self._gpu2_line(info)
+        if gpu2_line and self.cfg.get("hw_gpu2_mode") == GPU2_MODE_INLINE \
+                and (vals or vram):
+            # all in one line: the second card is appended to the first
+            # one's line instead of getting one of its own
+            line += " | " + gpu2_line
+            gpu2_line = ""
         if vals or vram:
             lines.append(line)
+        if gpu2_line:
+            lines.append(gpu2_line)
         # ---------- CPU line ----------
         cname = self._hw_display_name("cpu")
         cvals = []

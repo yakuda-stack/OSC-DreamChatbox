@@ -123,6 +123,16 @@ NODE_DEFS = {
                               "Active for these to fill in; Watts needs the "
                               "power draw tick on that card.",
     },
+    "hw_gpu2": {
+        "title": "GPU 2", "cat": "Sources", "accent": "#5b8dc9",
+        "inputs": [],
+        "outputs": [("usage", "Load"), ("temp", "Temp"), ("power", "Watts"),
+                    ("vram", "VRAM"), ("name", "Name")],
+        "fields": [], "note": "The second card. Needs \"Second GPU\" "
+                              "switched on in the Hardware app, with a "
+                              "card picked - otherwise these outputs stay "
+                              "empty and collapse like any other hole.",
+    },
     "hw_cpu": {
         "title": "CPU", "cat": "Sources", "accent": "#5b8dc9",
         "inputs": [],
@@ -427,7 +437,7 @@ PALETTE_TREE = [
     ("Sources", [
         ("", ["text", "placeholder", "clock", "custom_box"]),
         ("Personal Status", ["status", "status_single"]),
-        ("Hardware", ["hw_gpu", "hw_cpu", "hw_sys"]),
+        ("Hardware", ["hw_gpu", "hw_gpu2", "hw_cpu", "hw_sys"]),
         ("Media", ["media"]),
         ("Chat", ["chat"]),
     ]),

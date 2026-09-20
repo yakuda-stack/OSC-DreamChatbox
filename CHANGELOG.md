@@ -6,6 +6,85 @@ All notable changes to OSC-DreamChatbox are documented here.
 
 🟢 Linux Support: Complete & Stable (v1.2.6)
 
+## [v1.5.1] – 2026-09-20
+
+**The Hardware card stops guessing which graphics card you meant, and
+can report on two of them.**
+
+### Added
+
+**Pick the card the GPU values come from**
+
+- Every GPU the machine has is enumerated now instead of one being
+  guessed: on Linux each `/sys/class/drm/card*` with a
+  `gpu_busy_percent` plus every index `nvidia-smi` lists, on Windows
+  every index `nvidia-smi` lists plus the display-adapter registry.
+- A **Select GPU** dropdown sits in the GPU box, under the name it
+  belongs to, and lists what was detected — on a one-card machine too,
+  because seeing your card named there is how you know which one the
+  values come from. *Automatic* — the card with the most VRAM — stays
+  the default, so an existing config behaves exactly as before.
+- This is the fix for the case a desktop Ryzen creates by itself: the
+  Radeon inside the CPU and the discrete card are both `amdgpu`, both
+  have a `cardN` and the numbering follows the boot order. The VRAM
+  guess is usually right; when it is not, it was not correctable.
+- The card names come from the card's own PCI address matched against
+  `lspci`, so two AMD cards are told apart by name rather than by
+  number. The first one still prefers the exact Mesa name from
+  `glxinfo` where that is installed.
+
+**A second GPU, with its own values and placeholders**
+
+- New *Second GPU* section on the Hardware card, above *Build my own
+  layout*: switch it on, pick the second card, and it brings its own
+  Usage / Temp / Power draw / Name / VRAM ticks, its own custom name and
+  its own size style — everything the first card has.
+- It is a **GPU 2 box in the same style and column width** as GPU, VRAM,
+  CPU and RAM, and it is *hidden* until the tick is set rather than
+  greyed out like every other dependent row here. On a machine with one
+  card those nine controls would never do anything, and a settings card
+  should not be longer than the settings it has.
+- New placeholders: `{gpu2_name}` `{gpu2_usage}` `{gpu2_temp}`
+  `{gpu2_power}` `{vram2_usage}` `{vram2_pct}`, with the spellings
+  people actually type folded onto them (`{gpu_2_temp}`, `{gpu2_watt}`,
+  `{vram2}`). They exist even while the feature is off and are empty
+  then, so a string can carry them permanently and they collapse with
+  their separators like every other empty placeholder.
+- They work everywhere a hardware placeholder works: the Hardware
+  custom string, All in one, a Custom Box middle text, and the node
+  canvas, which gets a **GPU 2** source block next to GPU.
+- *Show as* decides the generated layout: **Own line** puts the second
+  card under the first (`GPU: 42% 61°C` / `GPU2: 7% 44°C`), **All in one
+  line** appends it (`GPU: 42% 61°C | GPU2: 7% 44°C`). A custom string
+  ignores the setting — there the placeholders sit where you put them.
+- The two dropdowns never offer the same card twice: whichever card the
+  GPU box uses is missing from the second one's list.
+
+### Fixed
+
+- `nvidia-smi --loop` prints one line per card and the reader kept only
+  the one starting with `0,`. A second NVIDIA card was therefore
+  unreadable although its values were already in the pipe — every index
+  is kept now, and a line is only accepted for the card that asked for
+  it.
+- The `amdgpu` hwmon lookup was cached under one key for "the" card, so
+  temperature and watts for a second AMD card would have come from the
+  first one's sensors. The cache is per card now, and the global
+  "any node called amdgpu" fallback is only used for the default card —
+  for a specifically chosen one it would be a coin flip between two
+  identical names.
+- Windows: the display-adapter registry scan kept only the adapter with
+  the most VRAM and is a list now, de-duplicated by name.
+
+### Notes
+
+- Per-card readings on Windows come from `nvidia-smi`. The performance
+  counters Windows offers are machine-wide rather than per adapter, so a
+  second non-NVIDIA card can be named and picked but reports no values —
+  the dropdown says so on the entry itself.
+- Intel GPUs expose no usage counter in sysfs on Linux; they are listed
+  as a name only, exactly as before.
+
 ## [v1.5.0] – 2026-09-19
 
 **Emoji have a font to be drawn with, on every distro and without one

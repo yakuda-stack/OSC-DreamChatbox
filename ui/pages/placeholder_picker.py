@@ -83,6 +83,14 @@ HARDWARE_GROUPS = (
         ("{vram_usage}", "VRAM used / total"),
         ("{vram_pct}", "VRAM in %"),
     )),
+    ("GPU 2", (
+        ("{gpu2_name}", "name of the second card"),
+        ("{gpu2_usage}", "load in %"),
+        ("{gpu2_temp}", "temperature"),
+        ("{gpu2_power}", "power draw in watts - needs the GPU 2 watt tick"),
+        ("{vram2_usage}", "VRAM used / total"),
+        ("{vram2_pct}", "VRAM in %"),
+    )),
     ("CPU", (
         ("{cpu_name}", "name"),
         ("{cpu_usage}", "load in %"),
