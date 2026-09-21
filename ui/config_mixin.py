@@ -273,6 +273,31 @@ class ConfigMixin:
             # hosted LibreTranslate: "" = the preset public instance
             "stt_libre_online_url": "",
             "stt_libre_online_key": "",
+            # the "Custom server" entry is picked (URL may still be empty)
+            "stt_libre_online_custom": False,
+            # "Custom" translation service (core/custom_translator.py)
+            "stt_custom_snippet": "",
+            "stt_custom_file": "",
+            # two-way translation (ui/pages/twoway_page.py): what to
+            # listen to, what the others speak, and what to translate
+            # them into ("" = follow stt_language)
+            "stt_twoway_source": "",
+            "stt_twoway_language": "en-US",
+            "stt_twoway_target": "",
+            # its own sensitivity - game audio is not a voice in a room
+            "stt_twoway_energy_auto": True,
+            "stt_twoway_energy_threshold": 400,
+            "stt_twoway_pause_sec": 0.7,
+            "stt_twoway_min_phrase_sec": 0.3,
+            "stt_twoway_phrase_limit": 8,
+            # Two-way into the chatbox: off by default, and when on the
+            # Variables route ({2wayin}/{2wayout}) so nothing is overwritten
+            "stt_twoway_send": False,
+            "stt_twoway_send_mode": "vars",
+            # which programs Two-way records (Linux): off | only | except
+            "stt_twoway_filter_mode": "off",
+            "stt_twoway_filter_only": "VRChat",
+            "stt_twoway_filter_except": "Spotify, YouTube Music",
             "stt_block_saved": [],
             # Block apps, extended (see ui/pages/textbox_page.py). Both
             # default ON: "block everything" is what the toggle already
@@ -661,7 +686,11 @@ class ConfigMixin:
         defaults["media_lyrics_prefix"] = prefix[:4]
         defaults["media_lyrics_prefix_on"] = bool(
             defaults.get("media_lyrics_prefix_on", True))
-        for key in ("stt_libre_online_url", "stt_libre_online_key"):
+        defaults["stt_libre_online_custom"] = bool(
+            defaults.get("stt_libre_online_custom", False))
+        for key in ("stt_libre_online_url", "stt_libre_online_key",
+                    "stt_twoway_source", "stt_twoway_target",
+                    "stt_custom_file"):
             val = defaults.get(key, "")
             defaults[key] = val.strip() if isinstance(val, str) else ""
         defaults["osc_instant_send"] = bool(

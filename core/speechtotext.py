@@ -618,6 +618,9 @@ class SpeechWorker:
         self.libre_online_url = ""   # "" = the preset public instance
         self.libre_online_key = ""   # optional, some instances need one
         self.google_key = ""  # optional Google Cloud Translation key
+        # the "Custom" service: a pasted command or a file
+        self.custom_snippet = ""
+        self.custom_file = ""
         self.mic_index = -1   # -1 = system default microphone
         # sound-server source to point the helper at ("" = the default).
         # Separate from mic_index on purpose: the index says WHICH DOOR
@@ -934,6 +937,8 @@ class SpeechWorker:
                 google_key=self.google_key,
                 libre_online_url=self.libre_online_url,
                 libre_online_key=self.libre_online_key,
+                custom_snippet=self.custom_snippet,
+                custom_file=self.custom_file,
                 log=lambda m: emit("status", m))
             if tr:
                 emit("status", f'\"{text}\" \u2192 \"{tr}\"')

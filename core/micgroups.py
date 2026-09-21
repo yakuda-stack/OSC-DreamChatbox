@@ -322,7 +322,15 @@ def group_for_id(eid):
     return classify_portaudio(eid[3:])
 
 
-def pick_server(devices):
+#: for a MONITOR the pulse plugin goes first: PULSE_SOURCE understands
+#: "<sink>.monitor" everywhere (PulseAudio and pipewire-pulse), whereas
+#: pipewire-alsa has no node by that name and quietly records the
+#: default microphone instead - which is what made Two-way translation
+#: "not work" in v1.5.2 builds: it was transcribing the user.
+_MONITOR_SERVER_PREFERENCE = ("pulse", "pipewire", "default", "sysdefault")
+
+
+def pick_server(devices, monitor=False):
     """(name, index) of the PortAudio device that IS the sound server.
 
     This is the door every pactl source is opened through, so when there
@@ -331,7 +339,8 @@ def pick_server(devices):
     by_base = {}
     for name, idx in devices:
         by_base.setdefault(_base_name(name), (name, idx))
-    for wanted in _SERVER_PREFERENCE:
+    order = _MONITOR_SERVER_PREFERENCE if monitor else _SERVER_PREFERENCE
+    for wanted in order:
         if wanted in by_base:
             return by_base[wanted]
     return None
@@ -366,7 +375,7 @@ def resolve(eid, devices, sources=None, log=None):
                 f"not in the audio graph any more. If you just left VR, "
                 f"its virtual microphone went with it \u2013 pick another "
                 f"source or press \u27F3 Refresh.")
-        server = pick_server(devices)
+        server = pick_server(devices, monitor=node.endswith(".monitor"))
         if server is None:
             return None, "", (
                 "There is no \u201cpipewire\u201d or \u201cpulse\u201d "

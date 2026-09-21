@@ -15,7 +15,7 @@ from core.osinfo import (  # noqa: F401  (IS_WINDOWS/OS_NAME re-exported)
     IS_WINDOWS, OS_NAME, config_dir, legacy_config_dir, resource_root)
 
 APP_NAME = "OSC-DreamChatbox"
-VERSION = "v1.5.1"
+VERSION = "v1.5.2"
 
 #: how many All-in-one strings there can be. Raised from 5 in v1.4.0;
 #: every list that is "one entry per AIO string" is sized from here.
@@ -164,5 +164,9 @@ ORIGIN_CHAT = "chat"
 ORIGIN_STT = "stt"
 ORIGIN_TTT = "ttt"
 ORIGINS = (ORIGIN_CHAT, ORIGIN_STT, ORIGIN_TTT)
+#: Two-way translation (what the OTHERS said). Deliberately NOT in
+#: ORIGINS: it has a parked slot of its own, so a translated sentence from
+#: somebody else never replaces your own message or {text_output}.
+ORIGIN_TWOWAY = "twoway"
 ORIGIN_LABELS = {ORIGIN_CHAT: "Chat", ORIGIN_STT: "Speech to Text",
-                 ORIGIN_TTT: "Text to Text"}
+                 ORIGIN_TTT: "Text to Text", ORIGIN_TWOWAY: "Two-way"}

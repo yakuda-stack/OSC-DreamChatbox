@@ -180,6 +180,12 @@ PLACEHOLDER_ALIASES = {
     "tttinput": "ttt_input", "ttt_in": "ttt_input", "typed": "ttt_input",
     "tttoutput": "ttt_output", "ttt_out": "ttt_output",
     "textinput": "text_input", "textoutput": "text_output",
+    # Two-way translation: what the others said / its translation
+    "2wayin": "twoway_input", "2wayout": "twoway_output",
+    "2way_in": "twoway_input", "2way_out": "twoway_output",
+    "2way_input": "twoway_input", "2way_output": "twoway_output",
+    "twowayin": "twoway_input", "twowayout": "twoway_output",
+    "twoway_in": "twoway_input", "twoway_out": "twoway_output",
     # Custom Box frame lines (core/boxstyle.py). {box_start} is the line
     # above everything, {box_stop} the one below it.
     "box_top": "box_start", "box_open": "box_start", "boxstart": "box_start",

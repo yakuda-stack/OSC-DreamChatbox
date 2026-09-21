@@ -6,6 +6,83 @@ All notable changes to OSC-DreamChatbox are documented here.
 
 🟢 Linux Support: Complete & Stable (v1.2.6)
 
+## [v1.5.2] – 2026-09-21
+
+**Two-way translation, a Custom translation service, and fixes from the
+v1.5.1 feedback.**
+
+### Added
+
+**Two-way translation (hear others)** – new block at the end of the
+*To Text* card.
+
+- A second, independent listener records what VRChat PLAYS (a
+  *Monitor* source on Linux, *Stereo Mix* / a virtual cable on
+  Windows), transcribes the other players and shows the translation in
+  your language, inside the app. Nothing goes to the chatbox, the apps
+  keep running, and your own Speech to Text is untouched.
+- *They speak* / *Translate into* (default: your Speech to Text input
+  language). Service, keys and servers are shared with the translation
+  settings above and apply live.
+- **Source test & sensitivity**, like the microphone block: level bar,
+  Test button, automatic/manual threshold with *Measure*, pause, minimum
+  and maximum phrase length – with own defaults for game audio (automatic
+  sensitivity on, 8 s cap).
+- Shows which source is REALLY being recorded, and warns when a monitor
+  was chosen but a microphone got attached.
+- A text field underneath translates pasted/typed text from someone
+  else (language auto-detected).
+- **App filter (Linux):** *Only these apps* (e.g. VRChat) or
+  *Everything except these apps* (e.g. Spotify, YouTube Music), so
+  background music is not transcribed. On **PipeWire** the chosen
+  programs get an extra `pw-link` to a virtual output that is recorded –
+  your headphones keep their direct path, nothing is moved, **no added
+  latency**. Plain PulseAudio falls back to moving the streams plus a
+  loopback (~30 ms, the UI says so). Re-checked every 2 s; leftovers of
+  a crash are removed on the next start. *➕ Running app* lists what is
+  playing right now. Windows: hint to route VRChat to a virtual cable.
+- **Send to chatbox** (off by default) with its own *Send as*:
+  Standard, Line (position/hold time shared with To Text) or Variables.
+  New placeholders **`{2wayin}`** (what they said) and **`{2wayout}`**
+  (the translation) – a slot of their own, so it never replaces your own
+  message or `{text_output}`.
+
+**Custom translation service** – for translators the app does not know.
+
+- Paste a **curl command** (sent by the app itself, no shell – works on
+  Windows too), a **command line** of an installed CLI translator, or
+  choose a **file** (`.txt`/`.sh` with the command, or `.py` with
+  `translate(text, source, target)`).
+- Placeholders `{text}` `{source}` `{target}`. A pasted doc example
+  without placeholders works too: `q`/`text`, `source`, `target` in a
+  JSON body are filled in. The answer is found in the usual fields;
+  `# response: field.path` names it explicitly.
+- *LibreTranslate example* button fills in a ready snippet.
+
+**LibreTranslate (local): Installation button** – opens the official
+installation guide (docs.libretranslate.com).
+
+### Fixed
+
+- **Two-way recorded the microphone instead of the game.** A monitor
+  was opened through pipewire-alsa with `PIPEWIRE_NODE=<sink>.monitor`,
+  a node PipeWire does not have – so it silently fell back to the
+  default microphone. Monitors now go through the pulse PCM, and
+  pipewire-alsa gets the sink plus `stream.capture.sink`.
+- **GPU name on NVIDIA + AMD machines:** the AMD entry showed the
+  GeForce's name (`AMD card2 · RTX 3060 (16GB)`). The AMD card now only
+  takes a Mesa name that really is AMD, falling back to the bracketed
+  lspci name. The `cardN` node is only shown when there are several AMD
+  cards.
+- **LibreTranslate Online:** `de.libretranslate.com` now requires an API
+  key – the list says so, and the hint points to *Custom server* or a
+  local instance for keyless use.
+- **"Custom server …" could not be selected:** picking it with an empty
+  URL snapped the dropdown straight back to the preset. Custom is now a
+  state of its own.
+- **Chinese via LibreTranslate:** newer servers want `zh-Hans`/`zh-Hant`
+  instead of `zh`; both are sent now, with `zh` as fallback.
+
 ## [v1.5.1] – 2026-09-20
 
 **The Hardware card stops guessing which graphics card you meant, and

@@ -17,7 +17,7 @@ Four selectable methods, all behind ONE unified interface:
    (install manually: pip install libretranslate).
 3b. LibreOnlineTranslator (optional/hosted) – the SAME LibreTranslate
    API, but on somebody else's server. Nothing to install: either the
-   preset public instance (https://de.libretranslate.com) or any URL
+   preset instance (https://de.libretranslate.com, needs a key) or any URL
    the user pastes in, with an optional API key for instances that
    require one. Open source end to end, unlike Google/DeepL.
 4. DeepLTranslator   (optional/power user) – official DeepL API via
@@ -55,6 +55,7 @@ METHOD_GOOGLE = "google"
 METHOD_LIBRE = "libre"
 METHOD_LIBRE_ONLINE = "libre_online"
 METHOD_DEEPL = "deepl"
+METHOD_CUSTOM = "custom"
 
 METHODS = [
     ("Lingva Translate (anonymous proxy, no key)", METHOD_LINGVA),
@@ -63,6 +64,7 @@ METHODS = [
     ("LibreTranslate Online (hosted server, no install)",
      METHOD_LIBRE_ONLINE),
     ("DeepL API (best quality, own API key)", METHOD_DEEPL),
+    ("Custom (own API / installed translator)", METHOD_CUSTOM),
 ]
 
 DEFAULT_LINGVA_URL = "https://lingva.adminforge.de"
@@ -71,22 +73,43 @@ DEFAULT_LIBRE_URL = "http://127.0.0.1:5000"
 # hosted LibreTranslate instances offered in the dropdown. The empty
 # string is what an untouched config carries, so index 0 IS the preset.
 # Anything the user types instead is kept verbatim (see SERVER_CUSTOM).
+#: The hosted default. de.libretranslate.com was keyless up to v1.5.1
+#: and has switched to keyRequired=true since, so without an API key a
+#: request there fails (and the chain falls back to Lingva). There is no
+#: reliable keyless public instance to preset instead - "Custom server"
+#: or a local instance are the keyless options.
 DEFAULT_LIBRE_ONLINE_URL = "https://de.libretranslate.com"
 #: marker value of the "Custom server …" entry - never a real URL
 LIBRE_ONLINE_CUSTOM = "__custom__"
 LIBRE_ONLINE_SERVERS = [
-    (f"{DEFAULT_LIBRE_ONLINE_URL}  (preset)", ""),
+    (f"{DEFAULT_LIBRE_ONLINE_URL}  (preset, API key required)", ""),
     ("https://libretranslate.com  (official, API key required)",
      "https://libretranslate.com"),
     ("Custom server \u2026", LIBRE_ONLINE_CUSTOM),
 ]
 
 _TIMEOUT = 8
+_LIBRE_UA = ("Mozilla/5.0 (X11; Linux x86_64) OSC-DreamChatbox "
+             "(+https://github.com/yakuda-stack/OSC-DreamChatbox)")
 
 
 def _lang_base(code: str) -> str:
     """'zh-CN' -> 'zh', 'en-US' -> 'en' (Lingva/Libre use base codes)."""
     return (code or "").split("-")[0].lower()
+
+
+#: LibreTranslate >= 1.6 names the two Chinese scripts instead of "zh",
+#: and keeps Brazilian Portuguese apart. Older servers only know "zh"/
+#: "pt" - LibreTranslator retries with the base code for those.
+_LIBRE_CODES = {"zh": "zh-Hans", "zh-cn": "zh-Hans", "zh-sg": "zh-Hans",
+                "zh-hans": "zh-Hans", "zh-tw": "zh-Hant",
+                "zh-hk": "zh-Hant", "zh-hant": "zh-Hant",
+                "pt-br": "pt-BR"}
+
+
+def _libre_code(code: str) -> str:
+    low = (code or "").strip().lower()
+    return _LIBRE_CODES.get(low) or _lang_base(low)
 
 
 # ----------------------------------------------------------------------------
@@ -250,6 +273,9 @@ class LibreTranslator(Translator):
     default_url = DEFAULT_LIBRE_URL
     default_scheme = "http"
 
+    #: HTTP status of the last failure (0 = network / other)
+    last_status = 0
+
     def __init__(self, url: str = "", api_key: str = ""):
         url = (url or self.default_url).strip().rstrip("/")
         if url and "://" not in url:
@@ -266,8 +292,11 @@ class LibreTranslator(Translator):
         req = urllib.request.Request(
             f"{self.url}/translate",
             data=json.dumps(payload).encode("utf-8"),
+            # a browser-style UA: some reverse proxies / bot filters
+            # answer 403 to anything that does not look like one
             headers={"Content-Type": "application/json",
-                     "User-Agent": "OSC-DreamChatbox"})
+                     "Accept": "application/json",
+                     "User-Agent": _LIBRE_UA})
         with urllib.request.urlopen(req, timeout=_TIMEOUT) as r:
             data = json.loads(r.read().decode("utf-8"))
         return (data.get("translatedText") or "").strip() or None
@@ -285,35 +314,41 @@ class LibreTranslator(Translator):
 
     def translate(self, text, source_lang, target_lang):
         self.last_error = ""
-        tgt = _lang_base(target_lang)
+        self.last_status = 0
+        tgt = _libre_code(target_lang)
         if not tgt:
             return None
-        src = _lang_base(source_lang) or "auto"
-        try:
-            return self._request(text, src, tgt)
-        except urllib.error.HTTPError as e:
-            msg = self._http_error_text(e)
-            # explicit source rejected (language pack missing etc.)
-            # -> one retry with auto-detect, like the web UI does
-            if e.code == 400 and src != "auto":
-                try:
-                    out = self._request(text, "auto", tgt)
-                    if out is not None:
-                        return out
-                except urllib.error.HTTPError as e2:
-                    msg = self._http_error_text(e2)
-                except Exception as e2:
-                    msg = str(e2)
-            self.last_error = f"LibreTranslate: {msg}"
-            return None
-        except urllib.error.URLError as e:
-            self.last_error = (f"LibreTranslate not reachable at "
-                               f"{self.url} ({e.reason}) – is the local "
-                               "instance running?")
-            return None
-        except Exception as e:
-            self.last_error = f"LibreTranslate: {e}"
-            return None
+        src = _libre_code(source_lang) or "auto"
+        # what to try, in order: exact codes; auto-detected source (a
+        # missing language pack); plain base codes (servers older than
+        # the zh-Hans/zh-Hant split)
+        attempts = [(src, tgt)]
+        if src != "auto":
+            attempts.append(("auto", tgt))
+        base_tgt = _lang_base(tgt)
+        if base_tgt != tgt:
+            attempts.append(("auto", base_tgt))
+        msg = ""
+        for a_src, a_tgt in attempts:
+            try:
+                return self._request(text, a_src, a_tgt)
+            except urllib.error.HTTPError as e:
+                msg = self._http_error_text(e)
+                self.last_status = e.code
+                if e.code != 400:
+                    break       # auth / rate limit / blocked: no retry helps
+            except urllib.error.URLError as e:
+                self.last_status = 0
+                self.last_error = (f"LibreTranslate not reachable at "
+                                   f"{self.url} ({e.reason}) – is the "
+                                   "local instance running?")
+                return None
+            except Exception as e:
+                self.last_status = 0
+                msg = str(e)
+                break
+        self.last_error = f"LibreTranslate: {msg}"
+        return None
 
 
 # ----------------------------------------------------------------------------
@@ -332,7 +367,6 @@ class LibreOnlineTranslator(LibreTranslator):
     name = "LibreTranslate Online"
     default_url = DEFAULT_LIBRE_ONLINE_URL
     default_scheme = "https"
-
     def translate(self, text, source_lang, target_lang):
         out = super().translate(text, source_lang, target_lang)
         if out is None and self.last_error:
@@ -454,6 +488,34 @@ class DeepLTranslator(Translator):
 
 
 # ----------------------------------------------------------------------------
+# 5) Custom – the user's own API call / command / Python file
+# ----------------------------------------------------------------------------
+class CustomTranslator(Translator):
+    """See core/custom_translator.py for what the snippet may be."""
+
+    name = "Custom"
+
+    def __init__(self, snippet: str = "", file_path: str = ""):
+        self.snippet = snippet or ""
+        self.file_path = file_path or ""
+
+    def translate(self, text, source_lang, target_lang):
+        self.last_error = ""
+        from core import custom_translator as ct
+        tgt = _lang_base(target_lang)
+        if not tgt:
+            return None
+        src = _lang_base(source_lang) or "auto"
+        try:
+            return ct.translate(self.snippet, self.file_path, text, src, tgt)
+        except ct.CustomError as e:
+            self.last_error = f"Custom: {e}"
+        except Exception as e:      # noqa: BLE001 - user code
+            self.last_error = f"Custom: {type(e).__name__}: {e}"
+        return None
+
+
+# ----------------------------------------------------------------------------
 # factory + fallback chain
 # ----------------------------------------------------------------------------
 def get_translator(method: str, deepl_key: str = "",
@@ -462,8 +524,12 @@ def get_translator(method: str, deepl_key: str = "",
                    google_endpoint: str = "",
                    google_key: str = "",
                    libre_online_url: str = "",
-                   libre_online_key: str = "") -> Translator:
+                   libre_online_key: str = "",
+                   custom_snippet: str = "",
+                   custom_file: str = "") -> Translator:
     """Builds the translator for the configured method."""
+    if method == METHOD_CUSTOM:
+        return CustomTranslator(custom_snippet, custom_file)
     if method == METHOD_DEEPL:
         return DeepLTranslator(deepl_key)
     if method == METHOD_LIBRE:
@@ -479,6 +545,7 @@ def translate_with_fallback(method, text, source_lang, target_lang,
                             deepl_key="", libre_url="", lingva_url="",
                             google_endpoint="", google_key="",
                             libre_online_url="", libre_online_key="",
+                            custom_snippet="", custom_file="",
                             log=lambda s: None):
     """Translates with the chosen method; on ANY failure the chain
     automatically continues with Lingva (primary fallback) and then
@@ -487,7 +554,8 @@ def translate_with_fallback(method, text, source_lang, target_lang,
     failed – never raises."""
     chain = [get_translator(method, deepl_key, libre_url, lingva_url,
                             google_endpoint, google_key,
-                            libre_online_url, libre_online_key)]
+                            libre_online_url, libre_online_key,
+                            custom_snippet, custom_file)]
     if method != METHOD_LINGVA:
         chain.append(LingvaTranslator(lingva_url or DEFAULT_LINGVA_URL))
     if method != METHOD_GOOGLE:

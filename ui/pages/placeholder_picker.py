@@ -144,6 +144,10 @@ CHAT_GROUPS = (
         ("{chat_input}", "what you typed into the Chat field"),
         ("{chat_output}", "what went out"),
     )),
+    ("Two-way translation (the others)", (
+        ("{2wayin}", "what someone else said"),
+        ("{2wayout}", "its translation"),
+    )),
 )
 
 #: how many hits the flat result list shows before it stops and says how

@@ -42,13 +42,14 @@ from ui.pages.advanced_page import AdvancedPageMixin
 from ui.pages.apps_page import AppsPageMixin
 from ui.pages.custom_box import CustomBoxMixin
 from ui.pages.textbox_page import TextboxPageMixin
+from ui.pages.twoway_page import TwoWayMixin
 from ui.pages.options_page import OptionsPageMixin
 from ui.pages.placeholder_picker import PlaceholderPickerMixin
 from ui.pages.plugins_page import PluginsPageMixin
 
 
 class MainWindow(ConfigMixin, AppsPageMixin, AdvancedPageMixin,
-                 CustomBoxMixin, TextboxPageMixin, OptionsPageMixin,
+                 CustomBoxMixin, TextboxPageMixin, TwoWayMixin, OptionsPageMixin,
                  PluginsPageMixin, PlaceholderPickerMixin, QMainWindow):
     # Sidebar / QStackedWidget indices. Named because two places have to
     # agree on them and a bare 1 in "go to the node editor" is the kind
@@ -114,6 +115,10 @@ class MainWindow(ConfigMixin, AppsPageMixin, AdvancedPageMixin,
         # whether {chat_*}, {stt_*} or {ttt_*} answers
         self.chat_text_origin = ORIGIN_CHAT
         self.chat_text_until = 0.0
+        # Two-way translation's own parked slot ({2wayin} / {2wayout})
+        self.twoway_msg_input = ""
+        self.twoway_msg_output = ""
+        self.twoway_msg_until = 0.0
         # OSC rate limiting (see _osc_send_delay): timestamps of the
         # sends inside the current window, and the payload that is
         # actually on screen in VRChat right now.
@@ -744,6 +749,14 @@ class MainWindow(ConfigMixin, AppsPageMixin, AdvancedPageMixin,
             self.cfg.get("stt_libre_online_key", ""))
         self.libre_online_key_input.blockSignals(False)
         self._sync_libre_online_ui()
+        self.custom_snippet_edit.blockSignals(True)
+        self.custom_snippet_edit.setPlainText(
+            self.cfg.get("stt_custom_snippet", ""))
+        self.custom_snippet_edit.blockSignals(False)
+        self.custom_file_input.blockSignals(True)
+        self.custom_file_input.setText(self.cfg.get("stt_custom_file", ""))
+        self.custom_file_input.blockSignals(False)
+        self.load_twoway_config()
         # The dropdown is filled from a worker thread (PortAudio blocks),
         # so this only repaints what we already know and lets the scan
         # that build_textbox_page() kicked off fill in the rest.
@@ -1072,12 +1085,22 @@ class MainWindow(ConfigMixin, AppsPageMixin, AdvancedPageMixin,
         # the expiry needs no timer of its own
         if self.chat_text_expired():
             self.clear_chat_text(quiet=True)
+        if self.twoway_text_expired():
+            self.clear_twoway_text()
         self.plugins.invalidate()
         # plugin lines grouped by the app they are anchored above; each
         # group is already in the order set on the Plugins page
         anchored = self.plugins.lines_by_anchor()
         # the Chat card's own line, when "Send as: Line" parked one
         chat_anchor, chat_lines = self.chat_payload_lines()
+        # Two-way "Send as: Line" joins the same position, after it
+        tw_anchor, tw_lines = self.twoway_payload_lines()
+        if tw_lines:
+            if tw_anchor == chat_anchor:
+                chat_lines = list(chat_lines) + tw_lines
+            else:
+                anchored[tw_anchor] = (list(anchored.get(tw_anchor, []))
+                                       + tw_lines)
         if chat_lines:
             anchored[chat_anchor] = (list(anchored.get(chat_anchor, []))
                                      + chat_lines)
@@ -1411,6 +1434,11 @@ class MainWindow(ConfigMixin, AppsPageMixin, AdvancedPageMixin,
                 # would leave the microphone helper running for a window
                 # that is already gone (core/mic_host.py)
                 ("stt.shutdown", self.stt.shutdown),
+                # the Two-way listener has a helper process of its own
+                ("stt_twoway.shutdown", self.stt_twoway.shutdown),
+                ("twoway_test.stop", self.twoway_test.stop),
+                # puts every moved program back on its real output
+                ("twoway_router.shutdown", self.twoway_router.shutdown),
                 # same reason: a level helper that outlives the window
                 # keeps the microphone busy for a process nobody can see
                 ("mic_test.stop", self.mic_test.stop),

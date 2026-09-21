@@ -364,19 +364,27 @@ class HardwareMonitor:
             except OSError:
                 slot = ""
             if slot:
-                name = _clean_gpu_name(pci.get(slot, ""))
+                raw = pci.get(slot, "")
+                # "Navi 32 [Radeon RX 7700 XT / 7800 XT]" -> bracket part
+                br = re.findall(r"\[([^\]]+)\]", raw)
+                name = _clean_gpu_name(br[-1] if br else raw)
             # the card with the most VRAM is the one glxinfo describes
             # (it reports the renderer the desktop is running on), and a
             # Mesa name is exact where lspci often lists every variant
-            # sharing one PCI id
+            # sharing one PCI id. Only a renderer that really IS an AMD
+            # card counts: on an NVIDIA + AMD machine the generic
+            # _detect_gpu_name() asks nvidia-smi first and handed the AMD
+            # card the GeForce's name (v1.5.1: "AMD card2 · RTX 3060").
             if pos == 0:
-                name = self._detect_gpu_name() or name
+                name = self._detect_mesa_amd_name() or name
             if not name:
                 name = f"GPU {card}"
             gb = vram / GB if vram else 0
+            # the sysfs node name only helps telling two AMD cards apart
+            tag = f"AMD {card}" if len(self.amd_cards) > 1 else "AMD"
             gpus.append({"id": f"amd:{card}", "name": name, "vendor": "AMD",
                          "path": dev,
-                         "label": f"AMD {card} · {name}"
+                         "label": f"{tag} · {name}"
                                   + (f" ({gb:.0f}GB)" if gb >= 1 else "")})
         if not gpus:
             # Intel, or a driver with no counters: nothing to read, but
@@ -428,6 +436,27 @@ class HardwareMonitor:
         txt = _read("/proc/cpuinfo") or ""
         m = re.search(r"model name\s*:\s*(.+)", txt)
         return _clean_cpu_name(m.group(1)) if m else "CPU"
+
+    def _detect_mesa_amd_name(self):
+        """Marketing name of the AMD card Mesa renders on, or "".
+
+        Never consults nvidia-smi, and ignores a glxinfo renderer that is
+        not AMD (PRIME setups where the desktop runs on another card)."""
+        if not shutil.which("glxinfo"):
+            return ""
+        try:
+            out = subprocess.run(["glxinfo", "-B"], capture_output=True,
+                                 text=True, timeout=5).stdout
+        except Exception:
+            return ""
+        m = re.search(r"^\s*Device:\s*(.+)$", out, re.MULTILINE)
+        if not m:
+            return ""
+        raw = m.group(1)
+        if not re.search(r"\b(AMD|ATI|Radeon|radeonsi)\b", raw, re.I):
+            return ""
+        name = re.sub(r"\s*\(.*\)\s*$", "", raw).strip()
+        return _clean_gpu_name(name) if name else ""
 
     def _detect_gpu_name(self):
         if self.has_nvidia:

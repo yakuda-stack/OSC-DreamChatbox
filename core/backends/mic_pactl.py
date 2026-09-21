@@ -412,7 +412,15 @@ def env_for(name):
     """
     if not name:
         return {}
-    return {"PULSE_SOURCE": str(name), "PIPEWIRE_NODE": str(name)}
+    name = str(name)
+    if name.endswith(".monitor"):
+        # PipeWire has no node called "<sink>.monitor" - a monitor is
+        # the SINK captured with stream.capture.sink. pipewire-alsa reads
+        # both from the environment; pulse keeps using the full name.
+        return {"PULSE_SOURCE": name,
+                "PIPEWIRE_NODE": name[:-len(".monitor")],
+                "PIPEWIRE_PROPS": "{ stream.capture.sink = true }"}
+    return {"PULSE_SOURCE": name, "PIPEWIRE_NODE": name}
 
 
 def clean_env(base=None):
@@ -424,6 +432,7 @@ def clean_env(base=None):
     env = dict(os.environ if base is None else base)
     env.pop("PULSE_SOURCE", None)
     env.pop("PIPEWIRE_NODE", None)
+    env.pop("PIPEWIRE_PROPS", None)
     return env
 
 

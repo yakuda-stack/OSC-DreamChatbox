@@ -3,6 +3,13 @@
 The short version of every release — what you will actually notice.
 The full details are in the changelog.
 
+## v1.5.2 – 2026-09-21
+
+- **Two-way translation.** The app listens to the other players and shows what they say in your language — only VRChat if you like (music stays out, Linux), optionally into the chatbox via `{2wayin}` / `{2wayout}`.
+- **Custom translation service.** Paste the API call (curl) or command of any translator you run, or pick a file.
+- **LibreTranslate:** *Custom server* can be picked again, and *Installation* opens the setup guide.
+- **Correct GPU name** on PCs with an NVIDIA and an AMD card.
+
 ## v1.5.1 – 2026-09-20
 
 - **Pick your graphics card.** Have more than one? The Hardware card now lists them, so it stops reporting on the Radeon inside your CPU when you meant the real one.

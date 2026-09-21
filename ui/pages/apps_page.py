@@ -3338,7 +3338,10 @@ class AppsPageMixin:
          "source, so speech can go somewhere else than typing; exactly "
          "one of the three is ever filled. They fill in every send mode; "
          "set \u201cSend as\u201d to Variables on the Textbox page if "
-         "the message should show up ONLY where you place it here."),
+         "the message should show up ONLY where you place it here. "
+         "{2wayin}/{2wayout} carry what someone ELSE said and its "
+         "translation (Two-way translation, \u201cSend to chatbox\u201d "
+         "on) - a slot of their own."),
         ("Live info", "{player_in_world}  {group_world}  {realtime}  "
                       "{instance_type}",
          "Read from the VRChat log by the bundled world_stats plugin."),
@@ -3646,6 +3649,12 @@ class AppsPageMixin:
             hit = origin == getattr(self, "chat_text_origin", ORIGIN_CHAT)
             vals[f"{origin}_input"] = msg_in if hit else None
             vals[f"{origin}_output"] = msg_out if hit else None
+        # Two-way translation has a slot of its own ({2wayin}/{2wayout}),
+        # so what somebody else said never replaces your own message
+        vals["twoway_input"] = (getattr(self, "twoway_msg_input", "")
+                                or "").strip() or None
+        vals["twoway_output"] = (getattr(self, "twoway_msg_output", "")
+                                 or "").strip() or None
         # {<plugin_id>} and {<plugin_id>_<key>} of every active plugin,
         # plus any unprefixed name a plugin claimed (never overwriting
         # a value one of the apps above already produced)

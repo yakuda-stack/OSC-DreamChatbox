@@ -6,12 +6,13 @@ window class stays small. All `self.*` refer to the MainWindow instance.
 """
 
 import time
-from PyQt6.QtCore import QTimer, Qt
+from PyQt6.QtCore import QTimer, Qt, QUrl
+from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (
-    QCheckBox, QComboBox, QDoubleSpinBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QSlider, QSpinBox, QVBoxLayout, QWidget)
+    QFileDialog, QPlainTextEdit, QCheckBox, QComboBox, QDoubleSpinBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QSlider, QSpinBox, QVBoxLayout, QWidget)
 from core.constants import (
     CHATBOX_INPUT, CHATBOX_LIMIT, CHAT_MODE_DIRECT, CHAT_MODE_LINE,
-    CHAT_MODE_VARS, DEFAULT_TRANSLATE_NOTICE, ORIGIN_CHAT, ORIGIN_LABELS, ORIGIN_STT, ORIGIN_TTT,
+    CHAT_MODE_VARS, DEFAULT_TRANSLATE_NOTICE, ORIGIN_CHAT, ORIGIN_LABELS, ORIGIN_STT, ORIGIN_TTT, ORIGIN_TWOWAY,
     SLIM_SUFFIX)
 from core import audiolevel, micgroups
 from core.osinfo import IS_WINDOWS
@@ -27,7 +28,7 @@ from core.plugins import ANCHOR_LABELS
 from core import pyextras
 from core.constants import EXTRAS_DIR
 from core.translators import (
-    DEFAULT_LIBRE_ONLINE_URL, DEFAULT_LIBRE_URL, LIBRE_ONLINE_CUSTOM, LIBRE_ONLINE_SERVERS, METHODS as TR_METHODS, METHOD_DEEPL, METHOD_GOOGLE, METHOD_LIBRE, METHOD_LIBRE_ONLINE, METHOD_LINGVA, get_translator, libretranslate_installed, translate_with_fallback)
+    DEFAULT_LIBRE_ONLINE_URL, DEFAULT_LIBRE_URL, LIBRE_ONLINE_CUSTOM, LIBRE_ONLINE_SERVERS, METHODS as TR_METHODS, METHOD_DEEPL, METHOD_GOOGLE, METHOD_LIBRE, METHOD_LIBRE_ONLINE, METHOD_LINGVA, METHOD_CUSTOM, get_translator, libretranslate_installed, translate_with_fallback)
 from ui.ui_main import DragHandle, ToggleLabel, ToggleSwitch
 
 
@@ -36,6 +37,7 @@ from ui.ui_main import DragHandle, ToggleLabel, ToggleSwitch
 #: third-party account pages, not app identity.
 GOOGLE_KEYS_URL = "https://console.cloud.google.com/apis/credentials"
 DEEPL_KEYS_URL = "https://www.deepl.com/your-account/keys"
+LIBRE_INSTALL_URL = "https://docs.libretranslate.com/guides/installation/"
 
 #: The three ways a message can reach the chatbox. Applies to everything
 #: that produces text here - the Chat field, the Presets, Speech to Text
@@ -777,7 +779,73 @@ class TextboxPageMixin:
             Qt.CursorShape.PointingHandCursor)
         self.libre_install_btn.clicked.connect(self.on_libre_btn)
         lr.addWidget(self.libre_install_btn)
+        # the official install guide, always there: Docker, pip, Windows
+        self.libre_docs_btn = QPushButton("\U0001F4D6  Installation")
+        self.libre_docs_btn.setObjectName("linkbtn")
+        self.libre_docs_btn.setFixedHeight(30)
+        self.libre_docs_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.libre_docs_btn.setToolTip(
+            f"Opens the LibreTranslate installation guide\n{LIBRE_INSTALL_URL}")
+        self.libre_docs_btn.clicked.connect(
+            lambda _=False: QDesktopServices.openUrl(QUrl(LIBRE_INSTALL_URL)))
+        lr.addWidget(self.libre_docs_btn)
         sc.addWidget(self.libre_row)
+
+        # method 5: Custom - an own API call, an installed CLI translator
+        # or a Python file (core/custom_translator.py)
+        self.custom_row = QWidget()
+        cr = QVBoxLayout(self.custom_row)
+        cr.setContentsMargins(0, 0, 0, 0)
+        cr.setSpacing(4)
+        cr_head = QHBoxLayout()
+        cr_head.setContentsMargins(0, 0, 0, 0)
+        cr_head.addWidget(QLabel("Command / API call:"))
+        cr_head.addStretch()
+        ex_btn = QPushButton("LibreTranslate example")
+        ex_btn.setObjectName("linkbtn")
+        ex_btn.setFixedHeight(28)
+        ex_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        ex_btn.clicked.connect(lambda _=False: self.on_custom_example())
+        cr_head.addWidget(ex_btn)
+        cr.addLayout(cr_head)
+        self.custom_snippet_edit = QPlainTextEdit()
+        self.custom_snippet_edit.setFixedHeight(110)
+        self.custom_snippet_edit.setPlaceholderText(
+            "curl -X POST -H \"Content-Type: application/json\" -d "
+            "'{\"q\": \"{text}\", \"source\": \"{source}\", "
+            "\"target\": \"{target}\"}' http://localhost:5000/translate"
+            "\n\n\u2026 or a command:  argos-translate --from {source} "
+            "--to {target} {text}")
+        self.custom_snippet_edit.textChanged.connect(self.on_custom_snippet)
+        cr.addWidget(self.custom_snippet_edit)
+        cf_row = QHBoxLayout()
+        cf_row.setContentsMargins(0, 0, 0, 0)
+        cf_row.addWidget(QLabel("or file:"))
+        self.custom_file_input = QLineEdit()
+        self.custom_file_input.setPlaceholderText(
+            "(none) \u2013 .txt/.sh with the command, or .py with "
+            "translate(text, source, target)")
+        self.custom_file_input.textChanged.connect(self.on_custom_file)
+        cf_row.addWidget(self.custom_file_input, 1)
+        cf_btn = QPushButton("\U0001F4C2  Choose \u2026")
+        cf_btn.setObjectName("linkbtn")
+        cf_btn.setFixedHeight(28)
+        cf_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        cf_btn.clicked.connect(lambda _=False: self.on_custom_choose())
+        cf_row.addWidget(cf_btn)
+        cr.addLayout(cf_row)
+        cr_hint = QLabel(
+            "Placeholders: {text} {source} {target}. A curl command is "
+            "sent by the app itself (works on Windows too); anything else "
+            "is run as a program and its output is the translation. A "
+            "file, when set, wins over the text field. Pasted doc "
+            "examples without placeholders work too \u2013 q/text, "
+            "source and target in a JSON body are filled in. If the "
+            "answer is not found, add  # response: field.path")
+        cr_hint.setObjectName("dim")
+        cr_hint.setWordWrap(True)
+        cr.addWidget(cr_hint)
+        sc.addWidget(self.custom_row)
 
         # method 3b: hosted LibreTranslate. Server picker (preset or a
         # URL you paste yourself) plus an optional API key, because most
@@ -803,7 +871,7 @@ class TextboxPageMixin:
         lo_url.addWidget(QLabel("URL:"))
         self.libre_online_url_input = QLineEdit()
         self.libre_online_url_input.setPlaceholderText(
-            DEFAULT_LIBRE_ONLINE_URL)
+            "https://your-server.tld")
         self.libre_online_url_input.setToolTip(
             "Any LibreTranslate server, e.g. https://your-instance.tld "
             "\u2013 https:// is added automatically if you leave it out.")
@@ -896,6 +964,9 @@ class TextboxPageMixin:
         self.stt_install_btn.clicked.connect(self.on_install_speech)
         self.stt_install_btn.setVisible(False)
         sc.addWidget(self.stt_install_btn)
+        # two-way translation: the other players, translated for you
+        # (ui/pages/twoway_page.py)
+        self.build_twoway_section(sc)
         self._sync_stt_availability()
         # ----- presets -----
         pcard = QFrame()
@@ -1166,6 +1237,7 @@ class TextboxPageMixin:
         self.google_row.setVisible(method == METHOD_GOOGLE)
         self.libre_row.setVisible(method == METHOD_LIBRE)
         self.libre_online_row.setVisible(method == METHOD_LIBRE_ONLINE)
+        self.custom_row.setVisible(method == METHOD_CUSTOM)
         if method == METHOD_LIBRE_ONLINE:
             self._sync_libre_online_ui()
         if method == METHOD_GOOGLE:
@@ -1200,25 +1272,29 @@ class TextboxPageMixin:
                 "\u2013 no API key, no direct Google tracking."),
             METHOD_LIBRE: (
                 "Local LibreTranslate instance \u2013 100% offline on "
-                "your own PC. Install it yourself once: "
-                "pip install libretranslate \u2013 afterwards the "
-                "Start/Stop button appears here (default "
+                "your own PC. Install it yourself once (\u201cInstallation\u201d "
+                "opens the guide), e.g.  pip install libretranslate "
+                "\u2013 afterwards the Start/Stop button appears here (default "
                 "http://127.0.0.1:5000). If it is not reachable, "
                 "Lingva is used as fallback."),
             METHOD_LIBRE_ONLINE: (
                 "LibreTranslate on somebody else's server \u2013 nothing "
-                "to install, works on Windows and Linux alike. Preset is "
-                f"{DEFAULT_LIBRE_ONLINE_URL}; pick \u201cCustom "
-                "server\u201d to point it at any other instance. Public "
-                "servers rate-limit keyless requests, so add an API key "
-                "if you have one. If the server is unreachable, Lingva "
-                "is used as fallback."),
+                "to install, works on Windows and Linux alike. The preset "
+                "(de.libretranslate.com) and libretranslate.com need an "
+                "API key; pick \u201cCustom server\u201d for any other "
+                "instance. If the server fails, Lingva is used as "
+                "fallback."),
             METHOD_DEEPL: (
                 "Official DeepL API \u2013 free key at deepl.com (API "
                 "Free plan, 500k chars/month); keys ending in ':fx' are "
                 "detected as free-plan keys automatically. If DeepL "
                 "fails (e.g. monthly limit reached), Lingva is used as "
                 "fallback."),
+            METHOD_CUSTOM: (
+                "Your own translator: paste the API call from its "
+                "documentation (curl), a command of an installed CLI "
+                "translator, or pick a file. Press Test to check it. If it "
+                "fails, Lingva is used as fallback."),
         }
         self.tr_method_hint.setText(hints.get(method, ""))
 
@@ -1339,6 +1415,9 @@ class TextboxPageMixin:
         pos = self.mic_combo.findData(want)
         self.mic_combo.setCurrentIndex(pos if pos >= 0 else 0)
         self.mic_combo.blockSignals(False)
+        # the Two-way source dropdown lists the very same entries
+        if hasattr(self, "apply_twoway_devices"):
+            self.apply_twoway_devices(entries)
 
     def _update_mic_raw_hint(self, entries):
         """Says what the hidden half of the list is, and whether the
@@ -1692,7 +1771,9 @@ class TextboxPageMixin:
                 libre_url=self.cfg["stt_libre_url"],
                 google_key=self.cfg.get("stt_google_key", ""),
                 libre_online_url=self.cfg.get("stt_libre_online_url", ""),
-                libre_online_key=self.cfg.get("stt_libre_online_key", ""))
+                libre_online_key=self.cfg.get("stt_libre_online_key", ""),
+                custom_snippet=self.cfg.get("stt_custom_snippet", ""),
+                custom_file=self.cfg.get("stt_custom_file", ""))
             out = tr.translate("wie geht es dir", "de", "en")
             return (tr.name, out, tr.last_error)
         self.run_async(work, self._poll_tr_test, interval=300)
@@ -1802,8 +1883,14 @@ class TextboxPageMixin:
         url = (self.cfg.get("stt_libre_online_url") or "").strip()
         known = [v for _lbl, v in LIBRE_ONLINE_SERVERS
                  if v != LIBRE_ONLINE_CUSTOM]
-        idx = (known.index(url) if url in known
-               else self.libre_online_combo.count() - 1)
+        # "Custom" is its own state: an empty custom URL is NOT the
+        # preset. Deriving it from the URL alone snapped the dropdown back
+        # to the preset the moment Custom was picked (v1.5.1/1.5.2 bug).
+        custom_mode = bool(self.cfg.get("stt_libre_online_custom", False))
+        if custom_mode or url not in known:
+            idx = self.libre_online_combo.findData(LIBRE_ONLINE_CUSTOM)
+        else:
+            idx = known.index(url)
         self.libre_online_combo.blockSignals(True)
         self.libre_online_combo.setCurrentIndex(idx)
         self.libre_online_combo.blockSignals(False)
@@ -1819,16 +1906,20 @@ class TextboxPageMixin:
         if val == LIBRE_ONLINE_CUSTOM:
             # keep whatever is typed in the field; empty is fine, the
             # translator falls back to the preset until something is
+            self.cfg["stt_libre_online_custom"] = True
             self.cfg["stt_libre_online_url"] = \
                 self.libre_online_url_input.text().strip()
         else:
+            self.cfg["stt_libre_online_custom"] = False
             self.cfg["stt_libre_online_url"] = val or ""
         self.save_config()
         self.stt.libre_online_url = self.cfg["stt_libre_online_url"]
         self._sync_libre_online_ui()
         self.log("LibreTranslate Online: server = "
                  + (self.cfg["stt_libre_online_url"]
-                    or f"{DEFAULT_LIBRE_ONLINE_URL} (preset)"))
+                    or "community preset (mirrors, automatic)"))
+        if val == LIBRE_ONLINE_CUSTOM:
+            self.libre_online_url_input.setFocus()
 
     def on_libre_online_url(self, text):
         self.cfg["stt_libre_online_url"] = text.strip()
@@ -1839,6 +1930,37 @@ class TextboxPageMixin:
         self.cfg["stt_libre_online_key"] = text.strip()
         self.save_config_later()
         self.stt.libre_online_key = text.strip()  # applies live
+
+    # ------------------------------------------------ custom translator
+    def on_custom_snippet(self):
+        text = self.custom_snippet_edit.toPlainText()
+        self.cfg["stt_custom_snippet"] = text
+        self.save_config_later()
+        self.stt.custom_snippet = text   # applies live
+
+    def on_custom_file(self, text):
+        self.cfg["stt_custom_file"] = text.strip()
+        self.save_config_later()
+        self.stt.custom_file = text.strip()
+
+    def on_custom_choose(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Custom translator: command or Python file", "",
+            "Command or script (*.txt *.sh *.cmd *.bat *.py *.curl);;"
+            "All files (*)")
+        if path:
+            self.custom_file_input.setText(path)
+
+    def on_custom_example(self):
+        from core.custom_translator import LIBRE_EXAMPLE
+        if self.custom_snippet_edit.toPlainText().strip():
+            ok = QMessageBox.question(
+                self, "Custom translator",
+                "Replace the current command with the LibreTranslate "
+                "example?")
+            if ok != QMessageBox.StandardButton.Yes:
+                return
+        self.custom_snippet_edit.setPlainText(LIBRE_EXAMPLE)
 
     def on_libre_url(self, text):
         self.cfg["stt_libre_url"] = text.strip()
@@ -2071,6 +2193,8 @@ class TextboxPageMixin:
         # completely different bugs, and this line is what tells them
         # apart afterwards.
         self.log(f"Speech to Text: microphone runs {microphone_mode()}")
+        self.stt.custom_snippet = self.cfg.get("stt_custom_snippet", "")
+        self.stt.custom_file = self.cfg.get("stt_custom_file", "")
         self.stt.start(
             self.cfg["stt_language"], self.cfg["stt_output"],
             self.cfg["stt_method"],
@@ -2182,7 +2306,9 @@ class TextboxPageMixin:
                 libre_url=self.cfg["stt_libre_url"],
                 google_key=self.cfg.get("stt_google_key", ""),
                 libre_online_url=self.cfg.get("stt_libre_online_url", ""),
-                libre_online_key=self.cfg.get("stt_libre_online_key", ""))
+                libre_online_key=self.cfg.get("stt_libre_online_key", ""),
+                custom_snippet=self.cfg.get("stt_custom_snippet", ""),
+                custom_file=self.cfg.get("stt_custom_file", ""))
             return (text, tr)
         self.run_async(work, self._poll_ttt, interval=200)
 
@@ -2362,6 +2488,14 @@ class TextboxPageMixin:
         # typed-to-text can be routed somewhere else
         mode = CHAT_MODE_DIRECT if origin == ORIGIN_CHAT else \
             self.cfg.get("stt_send_mode", CHAT_MODE_DIRECT)
+        if origin == ORIGIN_TWOWAY:
+            # own "Send as" and own slot - see ui/pages/twoway_page.py
+            mode = self.cfg.get("stt_twoway_send_mode", CHAT_MODE_VARS)
+            if mode != CHAT_MODE_DIRECT:
+                self.park_twoway_text(
+                    source_text if source_text is not None else text, text)
+                self.log(f"Two-way ({mode}): \"{text}\"")
+                return
         if mode != CHAT_MODE_DIRECT:
             # Line / Variables: the message joins the normal payload
             # instead of replacing it, so it goes through the ordinary

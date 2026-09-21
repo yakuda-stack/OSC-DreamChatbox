@@ -59,6 +59,7 @@ CHAT_SOURCES = {
     "chat": "chat_output",
     "stt": "stt_output",
     "ttt": "ttt_output",
+    "twoway": "twoway_output",
     "any": "text_output",
 }
 
