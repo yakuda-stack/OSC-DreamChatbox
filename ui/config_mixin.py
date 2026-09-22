@@ -145,10 +145,14 @@ def _split_legacy_graph(graph):
 
 
 class ConfigMixin:
-    def load_config(self):
+    def load_config(self, raw=None):
+        """The config, normalised. `raw` is a dict to use instead of the
+        file on disk - a profile being switched in (core/profiles.py) goes
+        through exactly the same defaults and migrations as a start."""
         # first start = no config anywhere. Only then are the default
         # prompts seeded; an existing config always wins.
-        first_run = not CONFIG_FILE.exists() and not OLD_CONFIG_FILE.exists()
+        first_run = (raw is None and not CONFIG_FILE.exists()
+                     and not OLD_CONFIG_FILE.exists())
         seed = FIRST_RUN_STATUS_TEXTS if first_run else []
         defaults = {
             "status_text": "",
@@ -494,6 +498,8 @@ class ConfigMixin:
             "osc_ip": "127.0.0.1",
             "osc_port": 9000,
             "debug": False,
+            # name of the active profile (core/profiles.py), "" = none
+            "profile_active": "",
         }
         # what the file on disk actually contained. Kept separate from
         # `defaults` because a default value is indistinguishable from a
@@ -502,7 +508,9 @@ class ConfigMixin:
         # it to the same number the default happens to be".
         stored = {}
         try:
-            if CONFIG_FILE.exists():
+            if raw is not None:
+                stored = dict(raw)
+            elif CONFIG_FILE.exists():
                 stored = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
             elif OLD_CONFIG_FILE.exists():
                 # migrate settings from the old location

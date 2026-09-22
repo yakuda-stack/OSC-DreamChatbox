@@ -6,6 +6,40 @@ All notable changes to OSC-DreamChatbox are documented here.
 
 🟢 Linux Support: Complete & Stable (v1.2.6)
 
+## [v1.5.3] – 2026-09-22
+
+**Profiles and a one-click layout for talking in two languages** – both
+from Discord feedback.
+
+### Added
+
+**Profiles** – a switcher at the bottom of the sidebar.
+
+- *⋯ → Save current setup as new profile* stores everything as a named
+  setup; the dropdown switches between them.
+- A profile is a setup you are IN: whatever you change while it is
+  active is saved into it when you switch away (or via *⋯ → Save into*).
+- Shared by all profiles and never switched: OSC target/ports, OSCQuery,
+  OSC input, hotkeys, send interval, SendToVRChat, theme and debug.
+  Plugins keep their own settings.
+- Switching stops a running recording and Two-way listening, since the
+  new profile may use another microphone or language.
+- *Rename*, *Delete* and *Open profiles folder* in the ⋯ menu. Files live
+  in `~/.config/OSC-DreamChatbox/profiles/<name>.json`.
+
+**Two-way: "Set up chatbox: my speech + their speech"** – a button at
+the top of the Two-way block.
+
+- Puts both directions into ONE chatbox message:
+  your sentence translated, a `────────` line, what the other person
+  said, and its translation.
+- Sets the three things this needs, which live on three different cards:
+  To Text *Send as* → Variables, Two-way *Send to chatbox* → on
+  (Variables), and All in one on with
+  `{stt_output} \n ──────── \n {2wayin} \n {2wayout}`.
+- Uses an EMPTY All-in-one template slot (named "Conversation"), so your
+  existing strings are untouched; asks before doing anything.
+
 ## [v1.5.2] – 2026-09-21
 
 **Two-way translation, a Custom translation service, and fixes from the

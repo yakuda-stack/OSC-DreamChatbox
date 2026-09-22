@@ -28,7 +28,8 @@ import time
 
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import (QComboBox, QDoubleSpinBox, QHBoxLayout,
-                             QLabel, QLineEdit, QMenu, QPlainTextEdit,
+                             QLabel, QLineEdit, QMenu, QMessageBox,
+                             QPlainTextEdit,
                              QPushButton,
                              QSlider, QSpinBox, QVBoxLayout, QWidget)
 
@@ -89,6 +90,17 @@ TWOWAY_MAX_LINES = 200
 #: config value of "my language" = follow the Speech to Text input
 TWOWAY_FOLLOW = ""
 
+#: the line between your message and theirs in the conversation layout
+CONVERSATION_SEPARATOR = "\u2500" * 8
+
+#: All-in-one string of the conversation layout (\\n = new chatbox line)
+CONVERSATION_TEMPLATE = (
+    "{stt_output} \\n " + CONVERSATION_SEPARATOR
+    + " \\n {2wayin} \\n {2wayout}")
+
+#: name given to the All-in-one template it lands in
+CONVERSATION_SET_NAME = "Conversation"
+
 
 class TwoWayMixin:
     # ------------------------------------------------------------ build
@@ -124,6 +136,28 @@ class TwoWayMixin:
         intro.setObjectName("dim")
         intro.setWordWrap(True)
         tw.addWidget(intro)
+
+        # one click for "my speech AND theirs in the chatbox" - it needs
+        # settings on three different cards, which nobody finds alone
+        conv_row = QHBoxLayout()
+        self.twoway_conv_btn = QPushButton(
+            "\u2728  Set up chatbox: my speech + their speech")
+        self.twoway_conv_btn.setObjectName("sendbtn")
+        self.twoway_conv_btn.setFixedHeight(30)
+        self.twoway_conv_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.twoway_conv_btn.setToolTip(
+            "Shows both directions in the chatbox at once:\n\n"
+            "  what you said, translated\n"
+            f"  {CONVERSATION_SEPARATOR}\n"
+            "  what they said\n"
+            "  its translation\n\n"
+            "Switches the needed settings on and puts the layout into a "
+            "free All-in-one template.")
+        self.twoway_conv_btn.clicked.connect(
+            lambda _=False: self.setup_conversation_layout())
+        conv_row.addWidget(self.twoway_conv_btn)
+        conv_row.addStretch()
+        tw.addLayout(conv_row)
 
         src_row = QHBoxLayout()
         src_row.addWidget(QLabel("Listen to:"))
@@ -1038,6 +1072,94 @@ class TwoWayMixin:
         self.twoway_log.appendPlainText(line)
         sb = self.twoway_log.verticalScrollBar()
         sb.setValue(sb.maximum())
+
+    # ------------------------------------------- conversation layout
+    def _conversation_set_index(self):
+        """The All-in-one template the layout goes into: the active one
+        when it is empty, otherwise the first empty one, otherwise None."""
+        sets = self.cfg["aio_sets"]
+        active = min(len(sets) - 1, max(0, self.cfg["aio_set_active"]))
+
+        def empty(i):
+            st = sets[i]
+            return (not any(str(t).strip() for t in st.get("templates", []))
+                    and not any((g or {}).get("nodes")
+                                for g in st.get("graphs") or []))
+        if empty(active):
+            return active
+        return next((i for i in range(len(sets)) if empty(i)), None)
+
+    def setup_conversation_layout(self):
+        """Speech to Text + Two-way into ONE chatbox message:
+
+            your sentence, translated
+            ────────
+            what they said
+            its translation
+
+        Needs three things on three cards: To Text "Send as" Variables
+        (or your own message takes the chatbox over on its own), Two-way
+        "Send to chatbox" on as Variables, and an All-in-one string that
+        places both. Your existing All-in-one strings are left alone -
+        the layout goes into a free template slot."""
+        sets = self.cfg["aio_sets"]
+        idx = self._conversation_set_index()
+        if idx is None:
+            idx = min(len(sets) - 1, max(0, self.cfg["aio_set_active"]))
+            where = (f"All 10 All-in-one templates are in use \u2013 "
+                     f"template {idx + 1} (the active one) will be "
+                     f"REPLACED.")
+        else:
+            where = (f"The layout goes into All-in-one template {idx + 1}, "
+                     f"which is empty. Your other templates stay as they "
+                     f"are.")
+        preview = CONVERSATION_TEMPLATE.replace(" \\n ", "\n    ")
+        if QMessageBox.question(
+                self, "Chatbox: my speech + their speech",
+                "This changes:\n\n"
+                "\u2022 To Text \u2192 Send as: Variables\n"
+                "\u2022 Two-way \u2192 Send to chatbox: on (Variables)\n"
+                "\u2022 All in one: on, with this string:\n\n"
+                f"    {preview}\n\n"
+                f"{where}\n\n"
+                "Tip: save your current setup as a profile first "
+                "(sidebar \u2192 Profile \u2192 \u22EF), then you can "
+                "switch back with one click.\n\nContinue?") \
+                != QMessageBox.StandardButton.Yes:
+            return
+
+        # 1) your own speech: into {stt_output} instead of taking over
+        pos = self.stt_mode_combo.findData(CHAT_MODE_VARS)
+        if pos >= 0:
+            self.stt_mode_combo.setCurrentIndex(pos)
+        # 2) the others: into {2wayin} / {2wayout}
+        self.twoway_send_toggle.setChecked(True)
+        pos = self.twoway_mode_combo.findData(CHAT_MODE_VARS)
+        if pos >= 0:
+            self.twoway_mode_combo.setCurrentIndex(pos)
+        # 3) the All-in-one string that places both
+        sets[idx]["name"] = CONVERSATION_SET_NAME
+        sets[idx]["templates"] = [CONVERSATION_TEMPLATE] + [""] * (
+            len(sets[idx].get("templates") or [""]) - 1)
+        sets[idx]["count"] = 1
+        n = len(sets[idx]["templates"])
+        sets[idx]["custom_time"] = [False] * n
+        sets[idx]["custom_sec"] = [10] * n
+        sets[idx]["graphs"] = [{"nodes": [], "edges": []} for _ in range(n)]
+        if self.cfg.get("aio_mode") != "normal":
+            self.on_aio_mode("normal")
+        self.aio_set_buttons[idx].setChecked(True)
+        self.on_aio_set(idx)
+        if not self.toggle_aio.isChecked():
+            self.toggle_aio.setChecked(True)
+        self.save_config()
+        self.update_preview()
+        self.twoway_status_lbl.setText(
+            "\u2705 Chatbox layout ready (All-in-one template "
+            f"{idx + 1}). Start recording above and \u201cStart "
+            "listening\u201d here.")
+        self.log(f"Two-way: conversation layout set up in AIO template "
+                 f"{idx + 1}")
 
     # --------------------------------------------------- typed text
     def on_twoway_text(self):

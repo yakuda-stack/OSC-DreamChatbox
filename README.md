@@ -372,6 +372,8 @@ Type it or speak it — either way it goes to VRChat, optionally translated on t
 - **"Say when a translation is running"** — the gap between speaking and the translation arriving says `Translate …` instead of leaving the previous message up
 - **Send as**: Standard (message takes over, apps pause), or routed into your own placeholders — `{stt_input}` / `{stt_output}` carry a spoken message, `{ttt_input}` / `{ttt_output}` a typed one, `{text_input}` / `{text_output}` whichever sent last
 - **"Block apps"** toggle that pauses every automatic sender while you talk, with per-app exceptions
+- **Two-way translation** 👂 — listens to what VRChat plays and translates the other players for you; `{2wayin}` / `{2wayout}` put it in the chatbox
+- **"Set up chatbox: my speech + their speech"** — one click for a single message with your translated sentence, a separator, and what the other person said plus its translation
 - All cards freely **drag & drop reorderable** — card order = line order in VRChat
 
 </details>
@@ -440,6 +442,7 @@ Pick a theme, then recolour anything you like — or drop an image behind the wi
 - **8 UI themes** shown as colour swatches — Default, Carbon, Nebula, Embers, Grass, Ocean, Rose, Mono
 - Recolour **any** part of the active theme with a colour picker (accent, window, cards, inner boxes, borders, text …); overrides are kept per theme
 - **Background images** — import your own, switch between them, and adjust how solid the cards sit on top
+- **Profiles** — save complete setups (Gaming, Music, Translation …) and switch in the sidebar with one click; changes are kept in the active profile, OSC target and theme stay shared
 
 </details>
 
@@ -518,6 +521,7 @@ OSC-DreamChatbox/
 │   ├── afk.py            #   AFK rules (parameter reading, text, timer)
 │   ├── lyrics_sources.py #   the five extra lyrics services + TTML/LRC
 │   ├── translators.py    #   translation backends (Lingva/Google/Libre/DeepL)
+│   ├── profiles.py       #   named setups (config/profiles/*.json)
 │   ├── mediafetch.py     #   picks the media backend for this OS
 │   ├── hardware.py       #   picks the hardware backend for this OS
 │   ├── speechtotext.py   #   speech recognition + translation
@@ -545,6 +549,7 @@ OSC-DreamChatbox/
 │   │   ├── custom_box.py
 │   │   ├── textbox_page.py
 │   │   ├── plugins_page.py
+│   │   ├── profiles_panel.py #   profile switcher (sidebar)
 │   │   └── options_page.py
 │   └── ui_main.py
 ├── assets/               # icons & screenshots

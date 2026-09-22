@@ -46,11 +46,13 @@ from ui.pages.twoway_page import TwoWayMixin
 from ui.pages.options_page import OptionsPageMixin
 from ui.pages.placeholder_picker import PlaceholderPickerMixin
 from ui.pages.plugins_page import PluginsPageMixin
+from ui.pages.profiles_panel import ProfilesMixin
 
 
 class MainWindow(ConfigMixin, AppsPageMixin, AdvancedPageMixin,
                  CustomBoxMixin, TextboxPageMixin, TwoWayMixin, OptionsPageMixin,
-                 PluginsPageMixin, PlaceholderPickerMixin, QMainWindow):
+                 PluginsPageMixin, PlaceholderPickerMixin, ProfilesMixin,
+                 QMainWindow):
     # Sidebar / QStackedWidget indices. Named because two places have to
     # agree on them and a bare 1 in "go to the node editor" is the kind
     # of thing that silently points at the wrong page the next time a
@@ -386,6 +388,9 @@ class MainWindow(ConfigMixin, AppsPageMixin, AdvancedPageMixin,
             sb_layout.addWidget(b)
         self.btn_apps.setChecked(True)
         sb_layout.addStretch()
+        # profile switcher (ui/pages/profiles_panel.py) - at the bottom,
+        # always in reach whatever page is open
+        sb_layout.addWidget(self.build_profiles_panel())
 
         # ===================== middle (pages) =====================
         self.pages = QStackedWidget()

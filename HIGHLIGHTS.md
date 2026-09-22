@@ -3,6 +3,11 @@
 The short version of every release — what you will actually notice.
 The full details are in the changelog.
 
+## v1.5.3 – 2026-09-22
+
+- **Profiles.** Save complete setups (Gaming, Music, Translation …) and switch between them in the sidebar with one click.
+- **One-click conversation layout.** In Two-way translation: your translated sentence, a separator, and what the others said plus its translation – together in one chatbox message.
+
 ## v1.5.2 – 2026-09-21
 
 - **Two-way translation.** The app listens to the other players and shows what they say in your language — only VRChat if you like (music stays out, Linux), optionally into the chatbox via `{2wayin}` / `{2wayout}`.
