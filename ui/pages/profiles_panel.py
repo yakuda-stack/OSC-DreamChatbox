@@ -4,8 +4,9 @@ sidebar (see core/profiles.py for what a profile is).
 
 It sits in the sidebar rather than on the Options page because it is a
 thing you use while playing - "switch to my translation setup" - not a
-setting you configure once. One dropdown to switch, one ⋯ menu for
-save / rename / delete.
+setting you configure once. One dropdown does both: its first entry
+saves the current setup as a new profile, the rest switch. Rename,
+delete and the profiles folder are on Options -> General.
 
 Switching stores the live settings into the profile that is active right
 now first, so nothing you changed is lost by switching away and back.
@@ -16,16 +17,82 @@ Mixin for MainWindow; all `self.*` refer to the MainWindow instance.
 # Copyright (C) 2026 yakuda
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-from PyQt6.QtCore import Qt, QUrl
+from PyQt6.QtCore import QEvent, QObject, QSize, Qt, QTimer, QUrl
 from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (QComboBox, QHBoxLayout, QInputDialog, QLabel,
-                             QMenu, QMessageBox, QPushButton, QVBoxLayout,
-                             QWidget)
+                             QMessageBox, QPushButton, QSizePolicy,
+                             QStyledItemDelegate, QVBoxLayout, QWidget)
 
 from core import profiles
 
 #: dropdown entry for "no profile active"
 NO_PROFILE_LABEL = "\u2014 no profile \u2014"
+
+#: first dropdown entry - not a profile, an action
+SAVE_NEW_LABEL = "\U0001F4BE  Save as new profile \u2026"
+SAVE_NEW_DATA = "\x00save-new"
+
+#: the bin drawn at the right end of every profile row in the dropdown
+BIN = "\U0001F5D1"
+BIN_WIDTH = 28
+
+
+def _is_profile(data):
+    """True for a row that is a real profile (not an action / "none")."""
+    return bool(data) and data != SAVE_NEW_DATA
+
+
+class _ProfileRowDelegate(QStyledItemDelegate):
+    """Paints a small bin at the right end of each profile row."""
+
+    def paint(self, painter, option, index):
+        super().paint(painter, option, index)
+        if not _is_profile(index.data(Qt.ItemDataRole.UserRole)):
+            return
+        rect = option.rect.adjusted(option.rect.width() - BIN_WIDTH, 0,
+                                    -4, 0)
+        painter.save()
+        painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, BIN)
+        painter.restore()
+
+    def sizeHint(self, option, index):
+        size = super().sizeHint(option, index)
+        return QSize(size.width() + BIN_WIDTH, max(size.height(), 26))
+
+
+class _BinClickFilter(QObject):
+    """Catches clicks on the bin inside the open dropdown. The click is
+    swallowed (press AND release - the release is what would select the
+    row) and handed to `on_delete(name)` once the popup is closed."""
+
+    def __init__(self, combo, on_delete):
+        super().__init__(combo)
+        self.combo = combo
+        self.on_delete = on_delete
+
+    def _bin_hit(self, pos):
+        view = self.combo.view()
+        index = view.indexAt(pos)
+        if not index.isValid():
+            return None
+        name = index.data(Qt.ItemDataRole.UserRole)
+        if not _is_profile(name):
+            return None
+        rect = view.visualRect(index)
+        return name if pos.x() >= rect.right() - BIN_WIDTH else None
+
+    def eventFilter(self, obj, ev):
+        kind = ev.type()
+        if kind in (QEvent.Type.MouseButtonPress,
+                    QEvent.Type.MouseButtonRelease,
+                    QEvent.Type.MouseButtonDblClick):
+            name = self._bin_hit(ev.position().toPoint())
+            if name:
+                if kind == QEvent.Type.MouseButtonRelease:
+                    self.combo.hidePopup()
+                    QTimer.singleShot(0, lambda n=name: self.on_delete(n))
+                return True
+        return False
 
 
 class ProfilesMixin:
@@ -43,28 +110,70 @@ class ProfilesMixin:
             "click \u2013 e.g. \u201cGaming\u201d, \u201cMusic\u201d, "
             "\u201cTranslation\u201d.\n\nWhatever you change while a "
             "profile is active is kept in that profile. OSC target, theme "
-            "and plugin settings are shared by all profiles.")
+            "and plugin settings are shared by all profiles.\n\n"
+            "Rename, delete and the profiles folder: Options \u203a "
+            "General \u203a Profiles.")
         lay.addWidget(head)
 
-        row = QHBoxLayout()
-        row.setSpacing(4)
         self.profile_combo = QComboBox()
         self.profile_combo.setToolTip(head.toolTip())
+        self.profile_combo.setCursor(Qt.CursorShape.PointingHandCursor)
         # activated, not currentIndexChanged: only a choice the USER made
         # switches anything - refilling the list must never load a profile
         self.profile_combo.activated.connect(self.on_profile_chosen)
+        # 🗑 at the end of each profile row in the open list
+        self.profile_combo.setItemDelegate(
+            _ProfileRowDelegate(self.profile_combo))
+        view = self.profile_combo.view()
+        self._profile_bin_filter = _BinClickFilter(
+            self.profile_combo, self.on_profile_delete)
+        view.viewport().installEventFilter(self._profile_bin_filter)
+
+        # 💾 next to the dropdown: saves the current setup into the active
+        # profile right now (or asks for a name when none is active).
+        # Switching profiles saves too - this is for "I'm done, keep it".
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(4)
+        self.profile_combo.setSizePolicy(QSizePolicy.Policy.Expanding,
+                                         QSizePolicy.Policy.Fixed)
         row.addWidget(self.profile_combo, 1)
-        self.profile_menu_btn = QPushButton("\u22EF")
-        self.profile_menu_btn.setObjectName("linkbtn")
-        self.profile_menu_btn.setFixedSize(30, 28)
-        self.profile_menu_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.profile_menu_btn.setToolTip("Save, rename or delete profiles")
-        self.profile_menu_btn.clicked.connect(
-            lambda _=False: self.on_profile_menu())
-        row.addWidget(self.profile_menu_btn)
+        self.profile_save_btn = QPushButton("\U0001F4BE")
+        self.profile_save_btn.setObjectName("iconbtn")   # padding 0
+        self.profile_save_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.profile_save_btn.setFixedSize(
+            34, max(28, self.profile_combo.sizeHint().height()))
+        self.profile_save_btn.setToolTip(
+            "Save the current settings into the active profile.\n"
+            "No profile active: save them as a new one.")
+        self.profile_save_btn.clicked.connect(self.on_profile_save_button)
+        row.addWidget(self.profile_save_btn)
         lay.addLayout(row)
         self.refresh_profile_combo()
         return box
+
+    def on_profile_save_button(self):
+        """The 💾 in the sidebar. Flashes a check mark when it worked -
+        a save you cannot see happen gets clicked five times."""
+        if not self.active_profile():
+            self.on_profile_save_new()
+            return
+        active = self.active_profile()
+        if not self._save_active_profile():
+            return          # _save_active_profile already warned
+        self.log(f"Profile \u201c{active}\u201d saved")
+        btn = self.profile_save_btn
+        btn.setText("\u2713")
+        btn.setToolTip(f"Saved into \u201c{active}\u201d")
+        def restore():
+            try:
+                btn.setText("\U0001F4BE")
+                btn.setToolTip(
+                    "Save the current settings into the active profile.\n"
+                    "No profile active: save them as a new one.")
+            except RuntimeError:
+                pass        # window closed in the meantime
+        QTimer.singleShot(1500, restore)
 
     def active_profile(self):
         name = self.cfg.get(profiles.ACTIVE_KEY, "") or ""
@@ -76,32 +185,15 @@ class ProfilesMixin:
         active = self.active_profile()
         combo.blockSignals(True)
         combo.clear()
+        combo.addItem(SAVE_NEW_LABEL, SAVE_NEW_DATA)
         combo.addItem(NO_PROFILE_LABEL, "")
         for name in profiles.list_profiles():
             combo.addItem(name, name)
         pos = combo.findData(active)
-        combo.setCurrentIndex(pos if pos >= 0 else 0)
+        combo.setCurrentIndex(pos if pos >= 1 else 1)
         combo.blockSignals(False)
 
-    # --------------------------------------------------------- menu
-    def on_profile_menu(self):
-        active = self.active_profile()
-        menu = QMenu(self)
-        menu.addAction("\U0001F4BE  Save current setup as new profile \u2026",
-                       self.on_profile_save_new)
-        if active:
-            menu.addAction(f"\u2B07  Save into \u201c{active}\u201d now",
-                           self.on_profile_save_active)
-            menu.addAction(f"\u270F\uFE0F  Rename \u201c{active}\u201d \u2026",
-                           self.on_profile_rename)
-            menu.addAction(f"\U0001F5D1  Delete \u201c{active}\u201d \u2026",
-                           self.on_profile_delete)
-        menu.addSeparator()
-        menu.addAction("\U0001F4C2  Open profiles folder",
-                       self.on_profile_open_folder)
-        menu.exec(self.profile_menu_btn.mapToGlobal(
-            self.profile_menu_btn.rect().bottomLeft()))
-
+    # ------------------------------------------------------ actions
     def _ask_profile_name(self, title, text, preset=""):
         name, ok = QInputDialog.getText(self, title, text, text=preset)
         if not ok:
@@ -140,8 +232,16 @@ class ProfilesMixin:
         if active and self._save_active_profile():
             self.log(f"Profile \u201c{active}\u201d saved")
 
+    def _need_active_profile(self, title):
+        name = self.active_profile()
+        if not name:
+            QMessageBox.information(
+                self, title, "No profile is active. Pick one in the "
+                "Profile dropdown at the bottom of the sidebar first.")
+        return name
+
     def on_profile_rename(self):
-        old = self.active_profile()
+        old = self._need_active_profile("Rename profile")
         if not old:
             return
         new = self._ask_profile_name("Rename profile", "New name:", old)
@@ -157,8 +257,11 @@ class ProfilesMixin:
         self.refresh_profile_combo()
         self.log(f"Profile renamed: \u201c{old}\u201d \u2192 \u201c{new}\u201d")
 
-    def on_profile_delete(self):
-        name = self.active_profile()
+    def on_profile_delete(self, name=None):
+        """Deletes `name`, or the active profile when none is given (the
+        Options button). The bin in the dropdown passes its row's name."""
+        if not isinstance(name, str) or not name:
+            name = self._need_active_profile("Delete profile")
         if not name:
             return
         if QMessageBox.question(
@@ -168,7 +271,8 @@ class ProfilesMixin:
                 "is removed.") != QMessageBox.StandardButton.Yes:
             return
         profiles.delete_profile(name)
-        self.cfg[profiles.ACTIVE_KEY] = ""
+        if name == self.cfg.get(profiles.ACTIVE_KEY):
+            self.cfg[profiles.ACTIVE_KEY] = ""
         self.save_config()
         self.refresh_profile_combo()
         self.log(f"Profile \u201c{name}\u201d deleted")
@@ -203,6 +307,10 @@ class ProfilesMixin:
 
     def on_profile_chosen(self, idx):
         name = self.profile_combo.itemData(idx) or ""
+        if name == SAVE_NEW_DATA:
+            self.on_profile_save_new()
+            self.refresh_profile_combo()    # never leave the action selected
+            return
         if name == self.active_profile():
             return
         if not self.switch_profile(name):

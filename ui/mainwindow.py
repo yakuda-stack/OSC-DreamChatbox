@@ -229,6 +229,50 @@ class MainWindow(ConfigMixin, AppsPageMixin, AdvancedPageMixin,
         self.update_osc_input()
         self.update_hotkey_input()
         self.update_timers()
+        self._begin_warmup()
+
+    #: longest the first message waits for hardware/media (see below)
+    WARMUP_MAX_SEC = 5
+
+    def _begin_warmup(self):
+        """Asks hardware and media right away and holds the first send
+        until they answered (at most WARMUP_MAX_SEC).
+
+        Without this, the pollers only ran after their first timer
+        interval - hw_poll_sec / media_poll_sec, easily 10-15 s - and the
+        first messages went out with empty values: "🎮 °C" instead of
+        "🎮 RX 9070 XT 14% | 36 °C". Everything else about sending is
+        unchanged; a manual message is never held."""
+        self._warmup = set()
+        if self.cfg.get("hw_active"):
+            self._warmup.add("hw")
+            self.poll_hw()
+        if self.cfg.get("media_active"):
+            self._warmup.add("media")
+            self.poll_media()
+        if self._warmup:
+            QTimer.singleShot(self.WARMUP_MAX_SEC * 1000, self._end_warmup)
+
+    def _warm_done(self, what):
+        """A poller delivered its first result."""
+        warm = getattr(self, "_warmup", None)
+        if not warm or what not in warm:
+            return
+        warm.discard(what)
+        if not warm:
+            self._end_warmup()
+
+    def _end_warmup(self):
+        if getattr(self, "_warmup", None) is None:
+            return
+        held = bool(self._warmup)
+        self._warmup = None
+        if held:
+            self.log("Start-up: sending without "
+                     "hardware/media values - they did not answer in "
+                     f"{self.WARMUP_MAX_SEC} s")
+        # the message that was held back goes out now, with real values
+        self.update_preview()
 
     def _clean_stale_fps_layer(self):
         """Remove a Vulkan layer manifest whose library is gone.
@@ -1290,6 +1334,8 @@ class MainWindow(ConfigMixin, AppsPageMixin, AdvancedPageMixin,
         # is a manual action and has its own path.
         if not self.cfg.get("send_to_vrchat"):
             return
+        if getattr(self, "_warmup", None):
+            return  # first values still on their way - see _begin_warmup
         if self.stt_recording:
             return  # speech to text is recording - sending is blocked
         if time.time() < self.manual_pause_until:
@@ -1309,6 +1355,8 @@ class MainWindow(ConfigMixin, AppsPageMixin, AdvancedPageMixin,
         text = self.build_payload(commit=True)
         if not text or self.osc_client is None:
             return
+        # kept for the preview below: `text` gets cut for the slim suffix
+        built = text
         if self.cfg["slim_chatbox"]:
             # the slim suffix ALWAYS stays at the end - if the text is too
             # long, the text itself gets trimmed instead of dropping the
@@ -1326,19 +1374,38 @@ class MainWindow(ConfigMixin, AppsPageMixin, AdvancedPageMixin,
             slim = " [+SLIM]" if payload != text else ""
             self.log(f"-> OSC {CHATBOX_INPUT} {text.count(chr(10)) + 1} line(s), "
                      f"{len(payload)} chars{slim} "
-                     f"to {self.cfg['osc_ip']}:{self.cfg['osc_port']}\n{text}")
+                     # where it REALLY went: with OSCQuery that is
+                     # VRChat's discovered port, not the fallback in cfg
+                     f"to {getattr(self.osc_client, '_address', None) or self.cfg['osc_ip']}"
+                     f":{getattr(self.osc_client, '_port', None) or self.cfg['osc_port']}"
+                     f"\n{text}")
         except Exception as e:
             self.log(f"ERROR while sending: {e}")
         # the committed switch has to reach the preview as well, otherwise
-        # the two drift apart in the other direction
-        self.update_preview()
+        # the two drift apart in the other direction. The text was just
+        # built - handing it over saves a second build_payload(), and
+        # with it a second round of every plugin hook (see update_preview)
+        self._render_preview(built)
 
     def update_preview(self):
+        """Rebuilds the payload and shows it. Safe to connect to any
+        signal - it takes no argument, so a signal's own value (a
+        textChanged string, say) can never end up as the chatbox text."""
+        self._render_preview(None)
+
+    def _render_preview(self, text):
+        """``text``: the payload send_now() has just built for this very
+        moment, or None to build it here.
+
+        Building is cheap for the app itself (~0.1 ms) but runs every
+        plugin's on_tick()/get_values() - which is why a send no longer
+        builds the same frame twice. A plugin doing something slow there
+        used to pay for it on every copy."""
         paused = (time.time() < self.manual_pause_until
                   and bool(self.last_manual_text))
         if paused:
             text = self.last_manual_text
-        else:
+        elif text is None:
             text = self.build_payload()
         self.preview_label.setText(text if text else "[Status Text goes here]")
         # the card's own two-line preview follows the same values, so a

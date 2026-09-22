@@ -18,6 +18,7 @@ Two things it is careful about:
 # Copyright (C) 2026 yakuda
 # SPDX-License-Identifier: GPL-3.0-or-later
 
+import os
 import shlex
 import shutil
 import subprocess
@@ -30,7 +31,12 @@ IS_WINDOWS = sys.platform.startswith("win")
 TERMINALS = [
     ("konsole", ["konsole", "-e"]),
     ("gnome-terminal", ["gnome-terminal", "--"]),
-    ("xfce4-terminal", ["xfce4-terminal", "-e"]),
+    # -x, not -e: xfce4-terminal's -e takes ONE string, so a command
+    # with arguments after it was cut off at the first one
+    ("xfce4-terminal", ["xfce4-terminal", "-x"]),
+    ("ptyxis", ["ptyxis", "--"]),
+    ("tilix", ["tilix", "-e"]),
+    ("terminator", ["terminator", "-x"]),
     ("alacritty", ["alacritty", "-e"]),
     ("kitty", ["kitty"]),
     ("foot", ["foot"]),
@@ -39,9 +45,26 @@ TERMINALS = [
 ]
 
 
+def _preferred():
+    """The user's own choice from $TERMINAL, as (binary, prefix) - with
+    the known "run this" argument when it is one of ours, "-e" (the
+    xterm convention most others follow) otherwise."""
+    name = os.environ.get("TERMINAL", "").strip()
+    if not name or not shutil.which(name):
+        return None
+    base = os.path.basename(name)
+    for binary, prefix in TERMINALS:
+        if binary == base:
+            return base, [name] + prefix[1:]
+    return base, [name, "-e"]
+
+
 def find_terminal():
-    """The first installed terminal, as the prefix to put a command
-    behind, or None when there is none."""
+    """The terminal to use ($TERMINAL first, then the first installed
+    one), as the prefix to put a command behind, or None."""
+    pref = _preferred()
+    if pref is not None:
+        return pref[1]
     for binary, prefix in TERMINALS:
         if shutil.which(binary):
             return prefix
@@ -49,6 +72,9 @@ def find_terminal():
 
 
 def terminal_name():
+    pref = _preferred()
+    if pref is not None:
+        return pref[0]
     for binary, _prefix in TERMINALS:
         if shutil.which(binary):
             return binary

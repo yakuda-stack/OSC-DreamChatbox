@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-OSC-DreamChatbox v1.5.3
+OSC-DreamChatbox v1.5.4
 A clean VRChat OSC chatbox sender.
 
 Entry point only – the actual code lives in:
@@ -90,6 +90,13 @@ def main():
         from core import stt_child
         pos = sys.argv.index(mic_host.HELPER_FLAG)
         sys.exit(stt_child.main(sys.argv[pos + 1:]))
+    # Terminal mode: same check-before-Qt reasoning as the helper above.
+    # It swaps QtWidgets/QtGui for stand-ins, which only works while
+    # nothing has imported them yet - see core/headless.py.
+    from core import headless
+    if headless.wants_headless(sys.argv[1:]):
+        sys.exit(headless.main(sys.argv[1:],
+                               set_process_name=_set_process_name))
     _set_process_name()
     _set_windows_app_id()
     from PyQt6.QtGui import QIcon
@@ -135,6 +142,23 @@ def main():
     # machine whose fontconfig did not fall back for us. ui_font() puts
     # the installed emoji families behind it - see core/emojifont.py.
     app.setFont(emojifont.ui_font("Sans", 10))
+    # One sender at a time (core/instancelock.py). Asked, not refused:
+    # the window is where you go when something is wrong, so it must
+    # always be possible to open it.
+    from core import instancelock
+    if not instancelock.acquire("window"):
+        from PyQt6.QtWidgets import QMessageBox
+        answer = QMessageBox.question(
+            None, APP_NAME,
+            f"{APP_NAME} is already running – "
+            f"{instancelock.describe_holder()}.\n\n"
+            "Two copies would both write into the same chatbox. "
+            "In terminal mode, type DCB-UI to switch to the window "
+            "instead.\n\nOpen the window anyway?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No)
+        if answer != QMessageBox.StandardButton.Yes:
+            sys.exit(0)
     win = MainWindow()
     if icon_path.exists():
         win.setWindowIcon(QIcon(str(icon_path)))

@@ -433,6 +433,46 @@ class OptionsPageMixin:
         com.addLayout(com_row)
         general_lay.addWidget(com_card)
 
+        # 2b ---- Profiles (switching lives in the sidebar dropdown)
+        prof_card, prof = self._opt_card(
+            "Profiles",
+            "Switch profiles and save new ones in the Profile dropdown at "
+            "the bottom of the sidebar. Rename or delete the ACTIVE "
+            "profile here.")
+        prof_row = QHBoxLayout()
+        prof_row.setSpacing(8)
+        prof_row.addWidget(self._opt_button(
+            "\U0001F4C2  Open profiles folder", "linkbtn",
+            self.on_profile_open_folder,
+            "Each profile is one .json file in this folder \u2013 copy "
+            "them to back up a setup or share it."))
+        prof_row.addWidget(self._opt_button(
+            "\u270F\uFE0F  Rename active", "linkbtn",
+            self.on_profile_rename))
+        prof_row.addWidget(self._opt_button(
+            "\U0001F5D1  Delete active", "linkbtn",
+            self.on_profile_delete))
+        prof_row.addStretch()
+        prof.addLayout(prof_row)
+        general_lay.addWidget(prof_card)
+
+        # ---- Terminal mode (core/headless.py)
+        term_card, term = self._opt_card(
+            "Terminal mode",
+            "Runs the chatbox without this window – same settings, "
+            "same plugins, less than half the memory. The window closes "
+            "and a terminal opens; type DCB-UI there to come back.")
+        term_row = QHBoxLayout()
+        term_row.setSpacing(8)
+        term_row.addWidget(self._opt_button(
+            "⌨️  Start in terminal mode", "linkbtn",
+            self.on_start_terminal_mode,
+            "Closes the window and continues in a terminal "
+            "(osc-dreamchatbox --headless). Commands: DCB-help."))
+        term_row.addStretch()
+        term.addLayout(term_row)
+        general_lay.addWidget(term_card)
+
         # 3 ---- Fixes
         # Both buttons fix problems that only exist on Linux:
         #   App Tray Fix        writes a freedesktop .desktop entry so
@@ -525,6 +565,32 @@ class OptionsPageMixin:
             btn.setToolTip(tooltip)
         btn.clicked.connect(on_click)
         return btn
+
+    def on_start_terminal_mode(self):
+        """Hands over to terminal mode: opens a terminal running this
+        app with --headless, then closes the window.
+
+        The new copy waits for the instance lock (core/instancelock.py).
+        It is released right after close() - config saved, chatbox
+        cleared, plugins stopped - and NOT at process exit, which a
+        plugin thread can delay for a long time. That delay is what made
+        the first version say "already running" here."""
+        from core import instancelock, selflaunch
+        cmd = selflaunch.self_command(
+            ["--headless", f"--wait-pid={os.getpid()}"])
+        ok, msg = selflaunch.open_in_terminal(cmd)
+        if not ok:
+            QMessageBox.warning(
+                self, "Terminal mode",
+                f"Could not open a terminal:\n{msg}\n\n"
+                "You can start it by hand:\n"
+                "osc-dreamchatbox --headless")
+            return
+        self.log("Switching to terminal mode ...")
+        self.close()                # runs closeEvent: the whole tidy-up
+        instancelock.release()      # -> the terminal may start now
+        from PyQt6.QtWidgets import QApplication
+        QApplication.quit()
 
     def on_options_tab(self, idx):
         """Show one Options tab (0 General, 1 OSC, 2 Design)."""

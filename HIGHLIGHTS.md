@@ -3,6 +3,12 @@
 The short version of every release — what you will actually notice.
 The full details are in the changelog.
 
+## v1.5.4 – 2026-09-22
+
+- **Terminal mode.** Run the chatbox without the window at less than half the memory – *Options › General › Start in terminal mode*. Commands for profiles, plugins, Speech to Text and Two-way; `DCB-help` lists them.
+- **Profiles:** 💾 next to the dropdown saves right away, 🗑 in the list deletes; *Save as new profile …* is the first entry.
+- **Smaller AppImage updates** (only the changed parts are downloaded), the first message already carries your hardware values, and menus are no longer see-through on the AUR build under KDE.
+
 ## v1.5.3 – 2026-09-22
 
 - **Profiles.** Save complete setups (Gaming, Music, Translation …) and switch between them in the sidebar with one click.

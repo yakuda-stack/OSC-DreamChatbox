@@ -239,6 +239,18 @@ QComboBox QAbstractItemView {
     background: #191c24; color: #e5e9ef; border: 1px solid #333947;
     selection-background-color: #2a2f3a;
 }
+/* Context menus (profile, placeholders, running apps). Without an own
+   background they inherit the SYSTEM style - with KDE Breeze/Kvantum on
+   the AUR build (system Qt) that is a translucent menu, and the text
+   ended up floating over the window behind it. */
+QMenu {
+    background: #191c24; color: #e5e9ef; border: 1px solid #333947;
+    padding: 4px;
+}
+QMenu::item { padding: 6px 18px 6px 10px; background: transparent; }
+QMenu::item:selected { background: #2a2f3a; }
+QMenu::item:disabled { color: #7a8290; }
+QMenu::separator { height: 1px; background: #333947; margin: 4px 6px; }
 QCheckBox { spacing: 8px; }
 QCheckBox::indicator {
     width: 16px; height: 16px; border: 1px solid #444c5c;

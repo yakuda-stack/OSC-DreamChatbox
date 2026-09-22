@@ -3983,6 +3983,7 @@ class AppsPageMixin:
                 f"No media player detected. {reason}".strip()
                 if reason else "No media player detected.")
         self.update_preview()
+        self._warm_done("media")       # see MainWindow._begin_warmup
 
     def _media_values(self, info):
         """Placeholder values for the custom string. They automatically
@@ -4140,6 +4141,7 @@ class AppsPageMixin:
         if IS_WINDOWS:
             self.refresh_wintemp_status()
         self.update_preview()
+        self._warm_done("hw")          # see MainWindow._begin_warmup
 
     def _temp_str(self, t):
         if t is None:

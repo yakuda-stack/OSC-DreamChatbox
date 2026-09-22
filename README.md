@@ -54,6 +54,7 @@ Status rotation, now-playing, hardware stats, speech-to-text, live translation, 
 | 🧩 **Plugins** | Own page with store, install from GitHub in one click |
 | 🎨 **Themes** | 8 themes, full recolouring, background images |
 | 📡 **OSCQuery** | Native, dynamic port, VRChat auto-discovery |
+| ⌨️ **Terminal mode** | Run without a window — less than half the RAM |
 
 ---
 
@@ -74,6 +75,7 @@ Status rotation, now-playing, hardware stats, speech-to-text, live translation, 
 - [Textbox, Speech to Text & translation](#-textbox-speech-to-text--translation)
 - [Plugins](#-plugins)
 - [Options — OSCQuery, slim chatbox, OSC target](#-options--oscquery-slim-chatbox-osc-target)
+- [Terminal mode](#️-terminal-mode)
 - [Themes & customization](#-themes--customization)
 - [Platform support](#-platform-support)
 - [Optional features](#optional-features)
@@ -102,6 +104,10 @@ curl -sL https://raw.githubusercontent.com/yakuda-stack/OSC-DreamChatbox/main/in
 ```
 
 Then launch **OSC DreamChatbox** from your app menu or run `osc-dreamchatbox`.
+
+**AppImage (any distro)**
+
+Grab `OSC-DreamChatbox-<version>-x86_64.AppImage` from the **[releases page](https://github.com/yakuda-stack/OSC-DreamChatbox/releases)**, `chmod +x` it, run it. It carries **update information (zsync)**: AppImageUpdate, AppImageLauncher, Gear Lever, AM or AppManager update it by downloading **only the changed parts** — often just a few MB instead of the full ~120 MB.
 
 <details>
 <summary>Without an AUR helper (plain <code>makepkg</code>)</summary>
@@ -430,6 +436,56 @@ Own **Plugins** page with two tabs: **Installed** and **Store**.
 
 ---
 
+## ⌨️ Terminal mode
+
+Set everything up in the window, then click **Options → General → Start in terminal mode** — or start it yourself:
+
+```bash
+osc-dreamchatbox --headless              # or: --terminal
+./OSC-DreamChatbox-*.AppImage --headless
+```
+
+It sends exactly what the window would send — same apps, plugins, profiles, Custom Box, Advanced mode and rate limit — with **less than half the RAM** (about 50–70 MB instead of 120+ MB) and noticeably less CPU. It waits until hardware, media and VRChat are detected before the first message goes out.
+
+| Command | |
+|---|---|
+| `DCB-help` | list all commands |
+| `DCB-sendvrc` | Send to VRChat on/off |
+| `DCB-profil` | list profiles, pick one by number |
+| `DCB-plugin-status` | which plugins are on or off |
+| `DCB-plugin-off` / `DCB-plugin-on` | list plugins, switch one by number |
+| `DCB-show` | what is being sent right now |
+| `DCB-log` | open the log in a second window |
+| `DCB-UI` | back to the normal window |
+| `DCB-quit` | exit (Ctrl+C works too) |
+| *any other text* | sent as a chat message |
+| **Speech to Text** | |
+| `DCB-stt` | start/stop recording |
+| `DCB-mic` / `DCB-lang` / `DCB-translate` | microphone, your language, translate into … |
+| `DCB-ttt` | translate typed text too |
+| **Two-way** | |
+| `DCB-2way` | start/stop listening to the others |
+| `DCB-2way-source` / `DCB-2way-lang` / `DCB-2way-translate` | audio source, their language, translate into … |
+| `DCB-2way-inline` / `DCB-2way-window` | show what they say here or in a second window |
+| `DCB-2way-chatbox` | also send it into the chatbox |
+
+<details>
+<summary><b>Details</b></summary>
+
+**Quiet terminal:** the log goes to `terminal.log` next to your config instead of the terminal, so typing commands isn't interrupted. `DCB-log` follows it live; `--verbose` prints it in the terminal as well.
+
+**Settings:** the window is the place to change settings. Terminal mode only saves what a command changes on purpose (Send to VRChat, profile, plugins, microphone/source, languages).
+
+**One copy at a time:** window and terminal mode never run side by side (both would write into the same chatbox) — the window asks, the terminal refuses. `--force` skips that check.
+
+**Plugins** that only send to the chatbox work as usual; their settings panels are in the window.
+
+**Windows:** opens its own console window. **AppImage / AUR / venv:** `DCB-UI` and the Options button start the same install again.
+
+</details>
+
+---
+
 ## 🎨 Themes & customization
 
 Pick a theme, then recolour anything you like — or drop an image behind the window.
@@ -442,7 +498,7 @@ Pick a theme, then recolour anything you like — or drop an image behind the wi
 - **8 UI themes** shown as colour swatches — Default, Carbon, Nebula, Embers, Grass, Ocean, Rose, Mono
 - Recolour **any** part of the active theme with a colour picker (accent, window, cards, inner boxes, borders, text …); overrides are kept per theme
 - **Background images** — import your own, switch between them, and adjust how solid the cards sit on top
-- **Profiles** — save complete setups (Gaming, Music, Translation …) and switch in the sidebar with one click; changes are kept in the active profile, OSC target and theme stay shared
+- **Profiles** — save complete setups (Gaming, Music, Translation …) via *Save as new profile …* in the sidebar dropdown and switch with one click; changes are kept in the active profile, **💾 next to the dropdown saves right away**. OSC target and theme stay shared. Rename, delete and the profiles folder: *Options › General › Profiles*
 
 </details>
 
@@ -505,7 +561,7 @@ Default target is `127.0.0.1:9000`. VRChat's chatbox limit is 144 characters (th
 
 ```
 OSC-DreamChatbox/
-├── osc_dreamchatbox.py   # entry point (GUI starter)
+├── osc_dreamchatbox.py   # entry point (GUI starter, --headless)
 ├── core/                 # backend logic
 │   ├── osinfo.py         #   THE platform switch - the only place that
 │   │                     #   asks which OS this is, plus config paths
@@ -528,6 +584,10 @@ OSC-DreamChatbox/
 │   ├── plugins.py        #   plugin discovery, loading, settings
 │   ├── plugin_store.py   #   store: GitHub catalogue, install, updates
 │   ├── theming.py        #   UI themes, colours, background images
+│   ├── headless.py       #   terminal mode (--headless, DCB- commands)
+│   ├── selflaunch.py     #   restart this app (AppImage/exe/source), terminals
+│   ├── instancelock.py   #   one running copy at a time (lock file)
+│   ├── qtstub.py         #   no-op QtWidgets/QtGui for terminal mode
 │   └── backends/         #   one implementation per platform
 │       ├── hardware_linux.py     /proc, /sys, nvidia-smi
 │       ├── hardware_windows.py   Win32 API, PDH counters, nvidia-smi, RTSS

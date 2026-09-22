@@ -6,6 +6,89 @@ All notable changes to OSC-DreamChatbox are documented here.
 
 🟢 Linux Support: Complete & Stable (v1.2.6)
 
+## [v1.5.4] – 2026-09-22
+
+**Terminal mode** – the chatbox without a window, at less than half the
+memory – plus smaller AppImage updates.
+
+### Added
+
+**Terminal mode** (`osc-dreamchatbox --headless`, or *Options › General ›
+Start in terminal mode*).
+
+- Runs the same send logic as the window – apps, plugins, profiles,
+  Custom Box, All in one, Advanced mode, rate limit – without the window:
+  ~50–70 MB instead of 120+ MB of RAM and noticeably less CPU.
+- Waits until hardware, media and VRChat (OSCQuery) answered before the
+  first message goes out.
+- The log goes to `terminal.log` next to the config instead of the
+  terminal, so typing is not interrupted; `--verbose` prints it too.
+- Commands (`DCB-help` lists them): `DCB-sendvrc`, `DCB-show`,
+  `DCB-profil`, `DCB-plugin-status` / `-on` / `-off`, `DCB-log` (log in a
+  second window), `DCB-UI` (back to the window), `DCB-quit`. Any other
+  text is sent as a chat message.
+- Speech to Text: `DCB-stt`, `DCB-mic`, `DCB-lang`, `DCB-translate`,
+  `DCB-ttt` (translate typed text too).
+- Two-way: `DCB-2way`, `DCB-2way-source`, `DCB-2way-lang`,
+  `DCB-2way-translate`, `DCB-2way-chatbox`; what the others say shows up
+  in the terminal (`DCB-2way-inline`) or in a second window
+  (`DCB-2way-window`).
+- Settings stay the window's job. Terminal mode only saves what a command
+  changes on purpose (Send to VRChat, profile, plugins, microphone,
+  source, languages).
+- Works from the AppImage, AUR, a venv and the Windows build (own
+  console window); `DCB-UI` and the Options button restart the same
+  install.
+
+**One copy at a time.** Window and terminal mode never send side by side
+any more: terminal mode refuses to start next to a running copy, the
+window asks first. Done with a lock file (`instance.lock`) that the OS
+drops when the process ends, so a crash cannot leave it stuck.
+
+**💾 next to the profile dropdown** saves the current settings into the
+active profile right away (no profile active: saves a new one).
+
+**AppImage delta updates (zsync).** The AppImage carries update
+information and every release ships a `.zsync` file, so AppImageUpdate,
+AppImageLauncher, Gear Lever, AM and AppManager only download the
+changed parts – often a few MB instead of ~120 MB.
+
+### Changed
+
+- **The first message after start waits for real values** (at most 5 s).
+  Hardware and media are asked right away instead of after their first
+  poll interval, so it no longer goes out as `🎮 °C`.
+- **One payload build per send.** The preview reuses the text the send
+  just built, so plugin hooks (`on_tick`, `get_values`) run once per
+  frame instead of two or three times.
+- **Profile switcher:** the ⋯ button next to the dropdown is gone. The
+  dropdown's first entry is now *💾 Save as new profile …*; below it
+  *— no profile —* and your profiles. Every profile in the open list has
+  a small 🗑 at its right end that deletes that
+  profile – asks first, and clicking it does not switch to it.
+- **Options › General › Profiles** (new card): *Open profiles folder*,
+  *Rename active*, *Delete active*.
+- AppImage build uses the current `appimagetool` (AppImage/appimagetool),
+  which brings `zsyncmake` along.
+- README: profile section updated; terminal mode and AppImage updates
+  added.
+
+### Fixed
+
+- **Transparent context menus on the AUR build.** Menus (profile,
+  placeholder picker, *➕ Running app*) had no background of their own
+  and took the system style – with system Qt + KDE Breeze/Kvantum that
+  is a translucent menu, so the text floated over the window. The
+  pip/venv start (`./start.sh`) uses PyQt6's own Qt and never showed it.
+  Menus now have a themed background, border and hover colour.
+- **The send log named the wrong port.** With OSCQuery it said
+  `to 127.0.0.1:<manual port>` while the message really went to the port
+  VRChat announced. Sending was right, the log line was not.
+- **zeroconf traceback at start** (`NotRunningException` in the OSCQuery
+  thread) when VRChat was found while zeroconf was still starting.
+- **xfce4-terminal cut commands off** after the first argument when a
+  canvas program was started with *Debug*.
+
 ## [v1.5.3] – 2026-09-22
 
 **Profiles and a one-click layout for talking in two languages** – both

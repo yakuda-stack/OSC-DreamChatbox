@@ -123,6 +123,12 @@ hiddenimports = [
     # the top of main(), behind an argv check the analysis cannot follow.
     "core.mic_host",
     "core.stt_child",
+    # terminal mode (--headless): same story, reached only behind an
+    # argv check at the top of main()
+    "core.headless",
+    "core.qtstub",
+    "core.selflaunch",
+    "core.instancelock",
     # The microphone list and level meter (v1.4.2). mic_pactl is a no-op
     # on Windows but is imported unconditionally by mic_host/micgroups,
     # and audiolevel is only reached from inside the helper - both are

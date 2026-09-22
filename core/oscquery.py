@@ -276,7 +276,14 @@ if HAS_ZEROCONF:
             self.svc = svc
 
         def _handle(self, zc, type_, name):
-            info = zc.get_service_info(type_, name, timeout=2000)
+            # zeroconf raises NotRunningException when the service is
+            # found while zeroconf itself is still starting (or already
+            # stopping). An exception here would only print a traceback
+            # into the terminal - the next announcement finds it again.
+            try:
+                info = zc.get_service_info(type_, name, timeout=2000)
+            except Exception:       # noqa: BLE001
+                return
             if info is None or not info.addresses:
                 return
             ip = socket.inet_ntoa(info.addresses[0])

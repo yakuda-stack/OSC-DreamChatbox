@@ -55,15 +55,31 @@ rm -rf "$OUT_DIR"
 rm -rf "$(pwd)/AppDir"          # Überbleibsel vom alten Build-Ort im Projekt-Root
 mkdir -p "$OUT_DIR"
 
-# 1. appimagetool prüfen
-if ! command -v appimagetool &>/dev/null; then
-    echo "[Info] appimagetool nicht gefunden — lade herunter..."
-    wget -q "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage" \
-        -O /tmp/appimagetool
-    chmod +x /tmp/appimagetool
-    APPIMAGETOOL="/tmp/appimagetool"
-else
-    APPIMAGETOOL="appimagetool"
+# 1. appimagetool besorgen
+#
+# Immer das aktuelle aus github.com/AppImage/appimagetool — NICHT das alte
+# aus AppImageKit (wird nicht mehr gepflegt) und nicht ein zufällig
+# installiertes: das aktuelle bringt zsyncmake selbst mit, erzeugt also
+# die .zsync-Datei für Delta-Updates (siehe Schritt 6) ohne dass zsync auf
+# dem System installiert sein muss. Wird einmal nach /tmp geladen.
+# Eigenes Tool erzwingen: APPIMAGETOOL=/pfad/zum/appimagetool bash ...
+if [ -z "${APPIMAGETOOL:-}" ]; then
+    APPIMAGETOOL="/tmp/appimagetool-new-${ARCH}"
+    if [ ! -s "$APPIMAGETOOL" ]; then
+        echo "[Info] Lade appimagetool (github.com/AppImage/appimagetool)..."
+        wget -q "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-${ARCH}.AppImage" \
+            -O "$APPIMAGETOOL" || {
+            echo "FEHLER: appimagetool konnte nicht geladen werden."
+            rm -f "$APPIMAGETOOL"
+            exit 1
+        }
+    fi
+    if ! head -c 4 "$APPIMAGETOOL" | grep -q "ELF"; then
+        echo "FEHLER: $APPIMAGETOOL ist keine ELF-Datei — Download kaputt."
+        rm -f "$APPIMAGETOOL"
+        exit 1
+    fi
+    chmod +x "$APPIMAGETOOL"
 fi
 
 # FUSE-Workaround: appimagetool selbst ohne FUSE ausführen
@@ -236,8 +252,27 @@ APPRUN
 chmod +x "$BUILD_DIR/AppRun"
 
 # 6. AppImage bauen (mit der statischen Runtime von oben)
+#
+# Update-Information für Delta-Updates (zsync). Sie wird IN die AppImage
+# geschrieben und sagt Update-Tools (AppImageUpdate, AppImageLauncher,
+# AM, AppManager, Gear Lever ...), wo die neue Version liegt:
+#   gh-releases-zsync | Benutzer | Repo | latest | Dateimuster
+# "latest" = das neueste GitHub-Release, das KEIN Pre-release ist.
+# Daneben entsteht OSC-DreamChatbox-<version>-x86_64.AppImage.zsync: die
+# Prüfsummen der Blöcke. Ein Tool vergleicht sie mit der alten AppImage
+# und lädt nur die Blöcke, die sich geändert haben.
+# BEIDE Dateien gehören ins GitHub-Release.
+# Ohne zsync bauen: DCB_NO_ZSYNC=1 bash scripts/build_appimage.sh
+UPDATE_INFO="gh-releases-zsync|yakuda-stack|OSC-DreamChatbox|latest|OSC-DreamChatbox-*${ARCH}.AppImage.zsync"
+UPDATE_ARGS=()
+if [ -z "${DCB_NO_ZSYNC:-}" ]; then
+    UPDATE_ARGS=(-u "$UPDATE_INFO")
+fi
 echo "[5/5] Baue AppImage..."
-ARCH="$ARCH" "$APPIMAGETOOL" --runtime-file "$RUNTIME" "$BUILD_DIR" "$OUT"
+# im build/-Ordner aufrufen: appimagetool legt die .zsync im AKTUELLEN
+# Ordner ab, nicht neben der AppImage
+(cd "$OUT_DIR" && ARCH="$ARCH" "$APPIMAGETOOL" --runtime-file "$RUNTIME" \
+    "${UPDATE_ARGS[@]}" "$BUILD_DIR" "$OUT")
 
 # 7. Gegenprobe: die fertige Datei darf libfuse.so.2 nicht mehr brauchen.
 # Ohne diesen Check merkt man den Rückfall auf die alte Runtime erst,
@@ -251,9 +286,32 @@ else
     echo "✔ Runtime ist statisch (läuft mit fuse2 UND fuse3)"
 fi
 
-# 8. AppDir wegräumen — in build/ bleibt nur die AppImage
+# 7b. Delta-Updates: .zsync da, Update-Info wirklich in der Datei?
+if [ -z "${DCB_NO_ZSYNC:-}" ]; then
+    # ohne APPIMAGE_EXTRACT_AND_RUN: damit würde die Runtime auspacken und
+    # die App mit diesem Argument starten, statt es selbst zu beantworten
+    EMBEDDED="$(env -u APPIMAGE_EXTRACT_AND_RUN "$OUT" \
+        --appimage-updateinformation 2>/dev/null || true)"
+    if [ "$EMBEDDED" = "$UPDATE_INFO" ]; then
+        echo "✔ Update-Info eingebettet: $EMBEDDED"
+    else
+        echo "WARNUNG: Update-Info fehlt in der AppImage (gelesen: '$EMBEDDED')."
+    fi
+    if [ -s "$OUT.zsync" ]; then
+        echo "✔ Delta-Update-Datei: build/$(basename "$OUT").zsync"
+    else
+        echo "WARNUNG: keine .zsync erzeugt — Delta-Updates gehen so nicht."
+        echo "         Eigenes appimagetool benutzt? Dann zsync installieren"
+        echo "         (pacman -S zsync) oder APPIMAGETOOL leer lassen."
+    fi
+fi
+
+# 8. AppDir wegräumen — in build/ bleiben die AppImage und ihre .zsync
 rm -rf "$BUILD_DIR"
 
 echo "✔ Fertig: build/$(basename "$OUT")"
+if [ -s "$OUT.zsync" ]; then
+    echo "   Ins GitHub-Release: $(basename "$OUT") UND $(basename "$OUT").zsync"
+fi
 echo "   Zum Starten: chmod +x \"$OUT\" && \"$OUT\""
 echo "   Ohne FUSE testen: APPIMAGE_EXTRACT_AND_RUN=1 \"$OUT\""
