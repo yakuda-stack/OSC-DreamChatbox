@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-OSC-DreamChatbox v1.5.4
+OSC-DreamChatbox v1.5.5
 A clean VRChat OSC chatbox sender.
 
 Entry point only – the actual code lives in:
@@ -162,6 +162,18 @@ def main():
     win = MainWindow()
     if icon_path.exists():
         win.setWindowIcon(QIcon(str(icon_path)))
+    # --profile="name": switch before the event loop runs, so the very
+    # first message already comes from that profile. Without it, the
+    # profile that was active last time is used (it is in config.json).
+    from core import profiles
+    start_profile_error = ""
+    wanted = profiles.profile_from_argv(sys.argv[1:])
+    if wanted is not None:
+        ok, msg = win.apply_start_profile(wanted)
+        win.log(msg)
+        if not ok:
+            print(msg, file=sys.stderr)
+            start_profile_error = msg
     # the other half of the probe armed above
     perfprobe.install(win)
     # log what we ended up on + whether a config was moved, so a bug
@@ -181,6 +193,9 @@ def main():
     # after show(), so the dialog has a window to sit on top of instead
     # of appearing over an empty desktop
     warn_if_no_emoji_font(win)
+    if start_profile_error:
+        from PyQt6.QtWidgets import QMessageBox
+        QMessageBox.warning(win, "Profiles", start_profile_error)
     sys.exit(app.exec())
 
 

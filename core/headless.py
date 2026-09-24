@@ -73,9 +73,11 @@ LINE = "-" * 62
 
 USAGE = f"""{APP_NAME} {VERSION} - terminal mode
 
-Usage: osc-dreamchatbox --headless [--verbose] [--force]
+Usage: osc-dreamchatbox --headless [--profile="name"] [--verbose] [--force]
 
   --headless, --terminal   run without a window (uses your saved settings)
+  --profile="name"         start with this profile (works for the window too;
+                           without it, the profile you used last is loaded)
   --verbose                also print the log (normally only in the log file)
   --force                  start even if another copy seems to be running
   --help                   show this help
@@ -300,6 +302,14 @@ def main(argv, set_process_name=None):
     say("Loading - please wait until everything is ready ...")
     window_cls = _make_window_class()
     win = window_cls(verbose="--verbose" in argv)
+    # --profile="name" - before begin_loading(), so hardware/media are
+    # asked for what THIS profile shows and nothing is sent before it
+    from core import profiles
+    wanted = profiles.profile_from_argv(argv)
+    if wanted is not None:
+        _ok, msg = win.apply_start_profile(wanted)
+        win.log(msg)
+        say(msg)
     win.begin_loading()
 
     # --- Ctrl+C / kill -------------------------------------------------
@@ -462,6 +472,18 @@ def _make_window_class():
 
         def _save_active_profile(self):
             return True
+
+        def apply_start_profile(self, wanted):
+            """--profile: like the window, plus storing the switch -
+            save_config() does nothing here, and the next start without
+            --profile should come up with this profile too."""
+            before = self.active_profile()
+            result = super().apply_start_profile(wanted)
+            if self.active_profile() != before:
+                cfg = self.cfg
+                self._patch_config(
+                    lambda raw: (raw.clear(), raw.update(cfg)))
+            return result
 
         def _patch_config(self, change):
             """Reads config.json as it is on disk, lets ``change(raw)``

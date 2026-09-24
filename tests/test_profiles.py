@@ -81,3 +81,24 @@ def test_conversation_template_renders():
         "twoway_output": "How are you?"})
     assert out.split("\n") == ["Hola amigo", CONVERSATION_SEPARATOR,
                                "¿Qué tal?", "How are you?"]
+
+
+def test_find_profile_ignores_case(tmp_path):
+    profiles.save_profile("Gaming", {}, tmp_path)
+    assert profiles.find_profile("gaming", tmp_path) == "Gaming"
+    assert profiles.find_profile(" GAMING ", tmp_path) == "Gaming"
+    assert profiles.find_profile("Music", tmp_path) == ""
+    assert profiles.find_profile("", tmp_path) == ""
+
+
+@pytest.mark.parametrize("argv, expected", [
+    ([], None),
+    (["--headless"], None),
+    (["--profile=my profile"], "my profile"),
+    (["--headless", "--profile", "my profile"], "my profile"),
+    (["--profile"], ""),
+    (["--profile", "--headless"], ""),
+    (["--profile="], ""),
+])
+def test_profile_from_argv(argv, expected):
+    assert profiles.profile_from_argv(argv) == expected

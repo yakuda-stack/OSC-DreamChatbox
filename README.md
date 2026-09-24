@@ -443,6 +443,7 @@ Set everything up in the window, then click **Options → General → Start in t
 ```bash
 osc-dreamchatbox --headless              # or: --terminal
 ./OSC-DreamChatbox-*.AppImage --headless
+osc-dreamchatbox --headless --profile="Gaming"   # start with a profile
 ```
 
 It sends exactly what the window would send — same apps, plugins, profiles, Custom Box, Advanced mode and rate limit — with **less than half the RAM** (about 50–70 MB instead of 120+ MB) and noticeably less CPU. It waits until hardware, media and VRChat are detected before the first message goes out.
@@ -498,7 +499,7 @@ Pick a theme, then recolour anything you like — or drop an image behind the wi
 - **8 UI themes** shown as colour swatches — Default, Carbon, Nebula, Embers, Grass, Ocean, Rose, Mono
 - Recolour **any** part of the active theme with a colour picker (accent, window, cards, inner boxes, borders, text …); overrides are kept per theme
 - **Background images** — import your own, switch between them, and adjust how solid the cards sit on top
-- **Profiles** — save complete setups (Gaming, Music, Translation …) via *Save as new profile …* in the sidebar dropdown and switch with one click; changes are kept in the active profile, **💾 next to the dropdown saves right away**. OSC target and theme stay shared. Rename, delete and the profiles folder: *Options › General › Profiles*
+- **Profiles** — save complete setups (Gaming, Music, Translation …) via *Save as new profile …* in the sidebar dropdown and switch with one click; changes are kept in the active profile, **💾 next to the dropdown saves right away**. OSC target and theme stay shared. Rename, delete and the profiles folder: *Options › General › Profiles*. **Start with a profile:** `osc-dreamchatbox --profile="Gaming"` (window and `--headless`, AppImage/AUR/Windows too) — without it, the profile you used last is loaded
 
 </details>
 
@@ -624,12 +625,15 @@ OSC-DreamChatbox/
 │       └── README-BUILD.md         full build guide
 ├── install.sh            # one-line installer (Linux)
 ├── scripts/              # build scripts (AppImage)
+├── tests/                # pytest tests + smoke.py (starts the real app once)
 ├── start.sh              # run from a local venv (Linux)
 ├── requirements.txt          # Linux
 ├── requirements-windows.txt  # Windows
 ├── LICENSE               # GPL-3.0
 └── THIRD_PARTY_NOTICES.md   # dependency & service attribution
 ```
+
+**Tests:** `python3 -m pytest` for the unit tests, `python3 tests/smoke.py` starts the real app once per mode (terminal, window, `--profile`) with a throw-away config – your settings are never touched, nothing is sent to VRChat.
 
 </details>
 

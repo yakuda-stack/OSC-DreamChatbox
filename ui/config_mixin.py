@@ -262,8 +262,9 @@ class ConfigMixin:
                                 "What are you up to? \U0001F440",
                                 "What's up? status: chilling \u2728",
                                 "BRB / AFK for a moment! \u2615",
-                                "ERP please ?"] + [""] * 15,
-            "textbox_preset_count": 5,
+                                "Cuddles please? \U0001F97A",
+                                "PEANUTBUTTER"] + [""] * 14,
+            "textbox_preset_count": 6,
             "textbox_pause_sec": 10,
             "textbox_order": ["chat", "stt", "presets"],
             "stt_language": "de-DE",
@@ -665,6 +666,10 @@ class ConfigMixin:
         if not isinstance(presets, list):
             presets = [""] * 20
         presets = [str(p) for p in presets][:20]
+        # replace the old, not age-appropriate default preset in existing
+        # configs (only the untouched default text, never user edits)
+        presets = ["Cuddles please? \U0001F97A" if p == "ERP please ?" else p
+                   for p in presets]
         defaults["textbox_presets"] = presets + [""] * (20 - len(presets))
         defaults["textbox_preset_count"] = min(20, max(1, int(
             defaults.get("textbox_preset_count", 5))))

@@ -305,6 +305,29 @@ class ProfilesMixin:
                 f"Could not save the profile \u201c{active}\u201d:\n{e}")
             return False
 
+    def apply_start_profile(self, wanted):
+        """``--profile=NAME`` on the command line: switch to that profile
+        before anything is sent. Without --profile nothing happens here -
+        config.json already holds the profile that was active last time.
+        Returns (ok, message); ok=False leaves the last profile active."""
+        if not wanted:
+            return False, ("--profile needs a name, e.g. "
+                           "--profile=\"my profile\"")
+        name = profiles.find_profile(wanted)
+        if not name:
+            names = profiles.list_profiles()
+            current = self.active_profile() or "no profile"
+            return False, (
+                f"Profile “{wanted}” not found – starting "
+                f"with “{current}”. Available: "
+                + (", ".join(names) if names else "none yet"))
+        if name == self.active_profile():
+            return True, f"Profile “{name}” (--profile)"
+        if not self.switch_profile(name):
+            return False, (f"Could not load profile “{name}” "
+                           "– starting with the last one.")
+        return True, f"Profile “{name}” loaded (--profile)"
+
     def on_profile_chosen(self, idx):
         name = self.profile_combo.itemData(idx) or ""
         if name == SAVE_NEW_DATA:

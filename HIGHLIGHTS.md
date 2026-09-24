@@ -3,6 +3,11 @@
 The short version of every release — what you will actually notice.
 The full details are in the changelog.
 
+## v1.5.5 – 2026-09-24
+
+- **Start with a profile:** `osc-dreamchatbox --profile="Gaming"` – works for the window and `--headless`. Without it, your last profile is loaded.
+- **New preset example:** "ERP please ?" is now "Cuddles please? 🥺" – existing configs are updated too, unless you changed that preset yourself.
+
 ## v1.5.4 – 2026-09-22
 
 - **Terminal mode.** Run the chatbox without the window at less than half the memory – *Options › General › Start in terminal mode*. Commands for profiles, plugins, Speech to Text and Two-way; `DCB-help` lists them.

@@ -6,6 +6,28 @@ All notable changes to OSC-DreamChatbox are documented here.
 
 🟢 Linux Support: Complete & Stable (v1.2.6)
 
+## [v1.5.5] – 2026-09-24
+
+### Added
+
+- **Start with a profile:** `--profile="my profile"` (also
+  `--profile "my profile"`) loads that profile before the first message
+  is sent – in the window and in terminal mode (`--headless`), for
+  AppImage, AUR, install.sh and Windows alike. Upper/lower case does not
+  matter. An unknown name keeps the last profile and says which ones
+  exist.
+- Without `--profile`, the profile you used last is loaded, as before –
+  including one picked with `--profile` last time.
+- `tests/smoke.py`: starts the real app once per mode (terminal, window
+  offscreen, `--profile`) with a throw-away config and checks it comes up
+  and closes cleanly. `python3 tests/smoke.py`, ~10 s.
+
+### Changed
+
+- Chatbox preset example "ERP please ?" replaced with "Cuddles please? 🥺"
+  – also in existing configs, as long as the text was never edited.
+- New sixth preset example for fresh installs: "PEANUTBUTTER".
+
 ## [v1.5.4] – 2026-09-22
 
 **Terminal mode** – the chatbox without a window, at less than half the

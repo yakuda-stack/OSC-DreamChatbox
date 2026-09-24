@@ -117,6 +117,39 @@ def merge_for_load(current_cfg, stored):
     return merged
 
 
+def find_profile(name, folder=None):
+    """The stored name of profile `name`, ignoring upper/lower case, so
+    ``--profile=gaming`` finds "Gaming". "" when there is no such profile."""
+    wanted = clean_name(name).lower()
+    if not wanted:
+        return ""
+    for stored in list_profiles(folder):
+        if stored.lower() == wanted:
+            return stored
+    return ""
+
+
+#: command line option that starts the app with a profile
+CLI_FLAG = "--profile"
+
+
+def profile_from_argv(argv):
+    """The profile asked for on the command line, or None when there is
+    no --profile at all. Both spellings work:
+
+        --profile="my profile"      --profile "my profile"
+
+    A --profile without a name gives "" (the caller reports that)."""
+    argv = list(argv)
+    for i, arg in enumerate(argv):
+        if arg.startswith(CLI_FLAG + "="):
+            return arg.split("=", 1)[1].strip()
+        if arg == CLI_FLAG:
+            nxt = argv[i + 1] if i + 1 < len(argv) else ""
+            return "" if nxt.startswith("--") else nxt.strip()
+    return None
+
+
 def delete_profile(name, folder=None):
     """Removes profile `name`. Missing is not an error."""
     try:
