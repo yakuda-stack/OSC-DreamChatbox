@@ -58,9 +58,6 @@ Status rotation, now-playing, hardware stats, speech-to-text, live translation, 
 
 ---
 
-> 🤖 **Transparency Note:** This project and its documentation are proudly developed and optimized with the support of AI coding assistants (**Claude by Anthropic** & **Gemini**).
-
----
 
 ## 📑 Contents
 
@@ -721,3 +718,8 @@ GPL-3.0-or-later — see [LICENSE](LICENSE).
 Copyright (C) 2026 yakuda.
 
 This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version. It is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+
+---
+
+<p align="center"><sub>🤖 <b>Transparency note:</b> This project and its documentation are developed with the support of AI coding assistants (<b>Claude by Anthropic</b>). <b>Idea, architecture &amp; UX/UI design:</b> by me. The controls code comes from Yakuda Connect.</sub></p>
+<p align="center"><sub>Licensed under GPL-3.0</sub></p>
