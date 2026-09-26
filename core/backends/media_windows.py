@@ -393,6 +393,7 @@ class WindowsMediaFetcher:
             props = None
         title = (getattr(props, "title", "") or "") if props else ""
         artist = (getattr(props, "artist", "") or "") if props else ""
+        album = (getattr(props, "album_title", "") or "") if props else ""
         if not title and not artist:
             # a session with no metadata is not worth showing - same rule
             # the MPRIS backend applies
@@ -429,6 +430,7 @@ class WindowsMediaFetcher:
             "playing": status == _STATUS_PLAYING,
             "artist": str(artist),
             "title": str(title),
+            "album": str(album),
             "position": float(position),
             "length": float(length),
             "_updated": updated,

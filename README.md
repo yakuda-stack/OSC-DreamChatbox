@@ -259,7 +259,7 @@ Shows what you are listening to — **Spotify, Apple Music, YT Music, browsers, 
   | 6 | `▓▓▓▓▓▓▓▓░░░░░░░░░░░░` (classic) |
   | 7 | **Custom** — brackets, filled/empty chars, optional travelling knob, live preview |
 
-- Custom string with placeholders: `{artist} {title} {time} {time_status} {time_end} {position} {length} {bar} {lyrics} {player} {icon_sound}`
+- Custom string with placeholders: `{artist} {title} {album} {time} {time_status} {time_end} {remaining} {progress_percent} {position} {length} {bar} {lyrics} {player} {icon_sound}`
 - **Idle symbol**: shows `⏸` (editable) when nothing is playing instead of the line silently disappearing — or switch it off. Works in **All in one** too; `{media_idle}` places it by hand
 
 </details>
@@ -399,14 +399,14 @@ Own **Plugins** page with two tabs: **Installed** and **Store**.
 <summary><b>Details</b></summary>
 
 - A plugin is one folder with a `plugin.json` and a python file in `~/.config/OSC-DreamChatbox/plugins/` — install from a `.zip` or straight from the store
-- **Store**: a grid of tiles with preview image, version and author; click one for the full description and a single Install button. Updates are detected and applied with one click, and your settings survive them
+- **Store**: a grid of tiles with preview image, version and author; click one for the full description and a single Install button. Updates are detected and applied with one click, and your settings survive them. **Search** by name or description, or filter by **tag** (dropdown, `#tag` in the search, or click a tag on a tile) — tags come from each plugin's `plugin.json`
 - **One-click update in the Installed list** — a plugin with a newer version on GitHub gets an **Update to vX** button right in its row, plus **"Update all (n)"** above the list when more than one is waiting
 - The catalogue is a list of GitHub links in `config/plugins.json`; **Refresh pulls the current list from GitHub**, so new plugins appear without updating the app
 - Every plugin is usable as `{plugin_id}` in status texts, in the Apps custom strings and in All in one — with its own custom string, if you set one
 - **Per-plugin settings** declared in `plugin.json` (text, switch, number, slider, dropdown, path, secret, action button, collapsible groups) are rendered automatically — a plugin author gets a settings UI without writing any Qt
 - `is_linux` / `is_windows` flags mark what a plugin can run on; anything incompatible is greyed out rather than hidden. `"headless": false` marks a plugin that does not work in terminal mode — it is simply not loaded there (default: true). Each row has a 🗑 button to uninstall it
 - Crash-safe by design: a broken plugin logs a traceback to the debug console and is skipped, it can never take the chatbox down
-- In the store: **World Stats** (players in your instance, world name, local clock, headset/controller battery), **OSCLeash** (runs ZenithVal's OSCLeash, which ships inside the plugin — nothing to install), **VR Autostart**, **Social Media** and **Stream Stats**
+- In the store: **World Stats** (players, world, region, capacity, headset/controller battery, FPS), **Life Stats** (clock, countdown, weather, heart rate, text from files), **Stream Stats**, **Social Media**, **OSC Parameter Profiles**, **OSCLeash** (runs ZenithVal's OSCLeash, which ships inside the plugin — nothing to install), **VR Autostart** and **Linux Extras** (from Bluscream's VRCOSC modules, Linux only)
 - [**example_template**](https://github.com/yakuda-stack/Dream-Chatbox-Plugins/tree/main/template/example_template) to start your own: a plugin that actually runs, with every setting type next to every hook. Copy the folder, rename it, delete what you don't need
 
 </details>

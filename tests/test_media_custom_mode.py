@@ -192,3 +192,22 @@ def test_lyrics_max_is_clamped():
     assert make_page(media_lyrics_max=1)._lyrics_max() == 10
     assert make_page(media_lyrics_max=9999)._lyrics_max() == CHATBOX_LIMIT
     assert make_page(media_lyrics_max="junk")._lyrics_max() == CHATBOX_LIMIT
+
+
+# ---- v1.5.8: {album} {remaining} {progress_percent} ------------------
+def test_album_remaining_percent():
+    page = make_page()
+    page.media_info["album"] = "Neon Hours"
+    vals = values(page)
+    assert vals["album"] == "Neon Hours"
+    assert vals["remaining"] == "2:29"          # 227 - 78 = 149 s
+    assert vals["progress_percent"] == "34%"    # 78 / 227
+
+
+def test_no_album_no_length_means_empty():
+    page = make_page()
+    page.media_info.update(length=0.0, position=12.0)
+    vals = values(page)
+    assert vals["album"] is None
+    assert vals["remaining"] is None
+    assert vals["progress_percent"] is None

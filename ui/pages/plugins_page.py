@@ -18,7 +18,8 @@ from PyQt6.QtWidgets import (
     QButtonGroup, QCheckBox, QComboBox, QFileDialog, QFrame, QGraphicsColorizeEffect, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QSlider, QSpinBox, QStackedWidget, QTextBrowser, QVBoxLayout, QWidget)
 from core.constants import (
     PLUGIN_TEMPLATE_URL, PLUGINS_DIR, PLUGINS_REPO_URL)
-from core.plugin_store import PluginStore, StoreError, compare_versions
+from core.plugin_store import (PluginStore, StoreError, all_tags,
+                               compare_versions, matches)
 from core.plugins import (
     ACTION_TYPE, ANCHOR_LABELS, PLUGIN_API_VERSION, UNSUPPORTED_TYPE,
     PluginError, PluginExistsError)
@@ -1289,6 +1290,26 @@ class PluginsPageMixin:
         btns.addStretch()
         c.addLayout(btns)
 
+        # search + tag filter (v1.5.8) - tags come from each plugin's
+        # own plugin.json ("tags": [...])
+        find = QHBoxLayout()
+        find.setSpacing(8)
+        self.store_search = QLineEdit()
+        self.store_search.setPlaceholderText(
+            "\U0001F50D  Search plugins \u2026   (#tag searches the tags)")
+        self.store_search.setClearButtonEnabled(True)
+        self.store_search.textChanged.connect(
+            lambda _t: self.refresh_store_grid())
+        find.addWidget(self.store_search, 1)
+        self.store_tag_combo = QComboBox()
+        self.store_tag_combo.setMinimumWidth(160)
+        self.store_tag_combo.setToolTip("Only show plugins with this tag")
+        self.store_tag_combo.addItem("All tags", "")
+        self.store_tag_combo.currentIndexChanged.connect(
+            lambda _i: self.refresh_store_grid())
+        find.addWidget(self.store_tag_combo)
+        c.addLayout(find)
+
         hint = QLabel(
             "Catalogue from <span style='font-family:Consolas, monospace'>plugins.json</span>"
             " next to the app \u2013 paste a GitHub link to a plugin folder and it "
@@ -1366,6 +1387,18 @@ class PluginsPageMixin:
         meta.setObjectName("dim")
         v.addWidget(meta)
 
+        if entry.tags:
+            # each tag a link: a click filters the store by it
+            tags = QLabel(" ".join(
+                f"<a href='{t}' style='color:#7f93b5;"
+                f"text-decoration:none'>#{t}</a>" for t in entry.tags[:4]))
+            tags.setTextFormat(Qt.TextFormat.RichText)
+            tags.setStyleSheet("font-size: 11px;")
+            tags.setWordWrap(True)
+            tags.setToolTip(" ".join(f"#{t}" for t in entry.tags))
+            tags.linkActivated.connect(self.store_filter_tag)
+            v.addWidget(tags)
+
         if not entry.supported:
             state = QLabel(f"\u26D4 {entry.platform_note}")
             state.setStyleSheet("color: #8a8f99; font-size: 12px;")
@@ -1403,10 +1436,21 @@ class PluginsPageMixin:
                 w.setParent(None)
                 w.deleteLater()
         entries = self.store.entries
+        self._sync_store_tags(entries)
+        text = self.store_search.text() if hasattr(self, "store_search") \
+            else ""
+        tag = (self.store_tag_combo.currentData() or "") \
+            if hasattr(self, "store_tag_combo") else ""
+        shown = [e for e in entries if matches(e, text, tag)]
         per_row = self.store_tiles_per_row
-        for i, entry in enumerate(entries):
+        for i, entry in enumerate(shown):
             self.store_grid.addWidget(self._build_store_tile(entry),
                                       i // per_row, i % per_row)
+        if entries and not shown:
+            none = QLabel("No plugin matches \u2013 try another word or "
+                          "\u201cAll tags\u201d.")
+            none.setObjectName("dim")
+            self.store_grid.addWidget(none, 0, 0, 1, per_row)
         # keep the tiles left-aligned instead of stretched apart
         self.store_grid.setColumnStretch(per_row, 1)
         updates = len(self.pending_updates())
@@ -1415,12 +1459,38 @@ class PluginsPageMixin:
         if self.store.last_error:
             self.store_status.setText(self.store.last_error)
         else:
-            bits = [f"{len(entries)} plugin(s)"]
+            bits = [f"{len(shown)} of {len(entries)} plugin(s)"
+                    if len(shown) != len(entries)
+                    else f"{len(entries)} plugin(s)"]
             if updates:
                 bits.append(f"{updates} update(s)")
             if self.store.catalogue_version not in ("", "0"):
                 bits.append(f"list v{self.store.catalogue_version}")
             self.store_status.setText(", ".join(bits))
+
+    def _sync_store_tags(self, entries):
+        """Fills the tag dropdown from the catalogue, keeping the pick."""
+        combo = getattr(self, "store_tag_combo", None)
+        if combo is None:
+            return
+        tags = all_tags(entries)
+        current = combo.currentData() or ""
+        if [combo.itemData(i) for i in range(1, combo.count())] == tags:
+            return
+        combo.blockSignals(True)
+        combo.clear()
+        combo.addItem("All tags", "")
+        for tag in tags:
+            combo.addItem(f"#{tag}", tag)
+        pos = combo.findData(current)
+        combo.setCurrentIndex(pos if pos >= 0 else 0)
+        combo.blockSignals(False)
+
+    def store_filter_tag(self, tag):
+        """Clicking a tag on a tile filters the store by it."""
+        pos = self.store_tag_combo.findData(tag)
+        if pos >= 0:
+            self.store_tag_combo.setCurrentIndex(pos)
 
     # ------------------------------------------------------- detail view
     def _build_store_detail(self):
@@ -1526,6 +1596,8 @@ class PluginsPageMixin:
         bits = [f"v{entry.version.lstrip('v')}", f"by {entry.author}"]
         if entry.installed:
             bits.append(f"installed: v{entry.installed_version.lstrip('v')}")
+        if entry.tags:
+            bits.append(" ".join(f"#{t}" for t in entry.tags))
         self.detail_meta.setText("  \u00b7  ".join(bits))
         self.detail_delete_btn.setVisible(bool(entry.installed and entry.pid))
         self.detail_unity_btn.setVisible(bool(entry.unity))

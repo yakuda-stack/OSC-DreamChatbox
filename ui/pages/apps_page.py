@@ -992,9 +992,9 @@ class AppsPageMixin:
         lg_title.setStyleSheet("font-weight: 600;")
         lg.addWidget(lg_title)
         lg_body = QLabel(
-            "{artist} {title} {time} {time_status} {time_end} {position} "
-            "{length} {bar} {lyrics} {lyrics_prefix} {player} "
-            "{icon_sound}")
+            "{artist} {title} {album} {time} {time_status} {time_end} "
+            "{remaining} {progress_percent} {position} {length} {bar} "
+            "{lyrics} {lyrics_prefix} {player} {icon_sound}")
         lg_body.setObjectName("dim")
         lg_body.setWordWrap(True)
         lg.addWidget(lg_body)
@@ -2570,6 +2570,7 @@ class AppsPageMixin:
     DEMO_TRACK = {
         "artist": "Nightdrive",
         "title": "Midnight Signal (Extended Mix)",
+        "album": "Neon Hours",
         "position": 78.0,
         "length": 227.0,
         "playing": True,
@@ -3350,9 +3351,10 @@ class AppsPageMixin:
          "Status card - so the ten templates double as a text library "
          "for All in one. An empty slot renders empty; a template that "
          "is empty or has no such number falls back to the active one."),
-        ("MediaPlay", "{artist}  {title}  {time}  {time_status}  "
-                      "{time_end}  {bar}  {lyrics}  {lyrics_prefix}  "
-                      "{icon_sound}  {media_idle}",
+        ("MediaPlay", "{artist}  {title}  {album}  {time}  "
+                      "{time_status}  {time_end}  {remaining}  "
+                      "{progress_percent}  {bar}  {lyrics}  "
+                      "{lyrics_prefix}  {icon_sound}  {media_idle}",
          "{bar} is the progress bar, {time_status} follows the time "
          "format you picked in MediaPlay. {media_idle} is the idle "
          "symbol while nothing plays and empty otherwise."),
@@ -3724,7 +3726,8 @@ class AppsPageMixin:
     #: recognise a template line that is about the song and nothing else.
     MEDIA_KEYS = frozenset((
         "artist", "title", "time", "time_status", "time_end", "bar",
-        "lyrics", "lyrics_prefix", "position", "length"))
+        "lyrics", "lyrics_prefix", "position", "length",
+        "album", "remaining", "progress_percent"))
 
     def _line_is_media(self, tpl_line):
         """True when this template line asks for at least one MediaPlay
@@ -4077,6 +4080,15 @@ class AppsPageMixin:
             "time_end": (ft(info["length"])
                          if info["length"] > 0 else None),
             "time": time_str if c["media_show_time"] else None,
+            # v1.5.8: the three the chatbox converter knows from
+            # MagicChatbox. Empty when the player does not say (no
+            # album tag, a stream without a length).
+            "album": (info.get("album") or "").strip() or None,
+            "remaining": (ft(max(0.0, info["length"] - info["position"]))
+                          if info["length"] > 0 else None),
+            "progress_percent": (
+                f"{round(min(1.0, max(0.0, info['position'] / info['length'])) * 100)}%"
+                if info["length"] > 0 else None),
             # {lyrics} only works while the checkbox is checked –
             # unchecked means no LRCLIB requests at all (performance)
             "lyrics": (self._cut_lyrics(self.lyrics.current_line(

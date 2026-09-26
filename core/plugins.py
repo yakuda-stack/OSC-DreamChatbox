@@ -82,6 +82,10 @@ Beyond the required keys, plugin.json may declare:
                     Both default to true: most plugins are plain python and
                     run anywhere, so only a plugin that really touches
                     pactl, /sys, WMI or similar has to say so.
+    "tags":         ["vrchat", "hardware", "stream"] - short words the
+                    store search and its tag filter use (v1.5.8). Lower
+                    case, at most 8, each up to 24 characters; anything
+                    else is cleaned up or dropped, never an error.
     "headless":     false when the plugin does not work in terminal mode
                     (--headless) - typically one that is all about its
                     own build_widget() panel. It is then not loaded
@@ -327,7 +331,7 @@ KNOWN_MANIFEST_KEYS = frozenset({
     "id", "name", "version", "author", "description", "short_description",
     "summary", "about", "Github",
     "github", "main", "image", "unity", "enabled", "is_linux", "is_windows",
-    "headless",
+    "headless", "tags",
     "template", "placeholders", "global_placeholders", "settings", "api",
     "layout", "user_reorderable", "chatbox",
     "min_app"})
@@ -595,6 +599,30 @@ def parse_layout(value, blocks=LAYOUT_BLOCKS):
     return out
 
 
+TAGS_MAX = 8
+TAG_LEN = 24
+
+
+def parse_tags(value):
+    """The manifest's "tags" as a clean list: lower case, no '#', no
+    doubles, at most TAGS_MAX of at most TAG_LEN characters. A comma
+    separated string is accepted too - hand-written manifests get that
+    wrong often enough, and a wrong type must never cost the plugin."""
+    if isinstance(value, str):
+        value = value.split(",")
+    if not isinstance(value, (list, tuple)):
+        return []
+    tags = []
+    for item in value:
+        tag = " ".join(str(item or "").strip().lstrip("#").lower().split())
+        tag = tag[:TAG_LEN].strip()
+        if tag and tag not in tags:
+            tags.append(tag)
+        if len(tags) >= TAGS_MAX:
+            break
+    return tags
+
+
 def _truthy(value, default=False):
     """Lenient bool. Manifests are hand-written and "true" in quotes is
     the single most common thing an author gets wrong; refusing it
@@ -649,6 +677,8 @@ class Plugin:
     default_enabled: bool = True
     is_linux: bool = True          # manifest flags, both default to true
     is_windows: bool = True
+    #: manifest "tags": short words for the store search / tag filter
+    tags: list = field(default_factory=list)
     #: manifest "headless": false = does not work in terminal mode.
     #: Missing means true, so every existing plugin keeps running there.
     headless: bool = True
@@ -1349,6 +1379,7 @@ class PluginManager:
             is_linux=bool(data.get("is_linux", True)),
             is_windows=bool(data.get("is_windows", True)),
             headless=_truthy(data.get("headless"), True),
+            tags=parse_tags(data.get("tags")),
             template=template,
             placeholders={str(k): str(v) for k, v in placeholders.items()},
             global_keys=global_keys,

@@ -3,6 +3,12 @@
 The short version of every release — what you will actually notice.
 The full details are in the changelog.
 
+## v1.5.8 – 2026-09-26
+
+- **Search the plugin store:** type a name or `#tag`, pick a tag from the dropdown, or click a tag on a tile.
+- **New in MediaPlay:** `{album}`, `{remaining}` (time left) and `{progress_percent}`.
+- **New plugins in the store:** Life Stats (clock, countdown, weather, heart rate, text from files) and Linux Extras. The clock moved from World Stats to Life Stats – your settings come along.
+
 ## v1.5.7 – 2026-09-26
 
 - **Plugins travel with your profile:** on/off and all plugin settings are saved per profile. A profile that needs a missing plugin offers to install it from the store.

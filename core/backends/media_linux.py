@@ -242,7 +242,7 @@ class MediaFetcher:
     # ----------------------------------------------------------- fetch
     def fetch(self):
         """Returns dict {artist, title, position, length, player,
-        player_key, player_label, playing} or None if nothing is playing
+        player_key, player_label, playing, album} or None if nothing is playing
         / no player found."""
         if self.bus is None:
             return None
@@ -281,6 +281,7 @@ class MediaFetcher:
                 artist = ", ".join(str(a) for a in artist_v)
             else:
                 artist = str(artist_v or "")
+            album = str(meta.get("xesam:album", "") or "")
             length_us = meta.get("mpris:length", 0) or 0
             pos_us = self._get_prop(chosen, "Position") or 0
             if not title and not artist:
@@ -295,6 +296,7 @@ class MediaFetcher:
                 "playing": status == "Playing",
                 "artist": artist,
                 "title": title,
+                "album": album,
                 "position": float(pos_us) / 1_000_000.0,
                 "length": float(length_us) / 1_000_000.0,
             }

@@ -6,6 +6,59 @@ All notable changes to OSC-DreamChatbox are documented here.
 
 🟢 Linux Support: Complete & Stable (v1.2.6)
 
+## [v1.5.8] – 2026-09-26
+
+**Store search with tags**, three new MediaPlay placeholders and a
+bigger plugin catalogue.
+
+### Added
+
+**Plugin store: search and tags**
+
+- Search field above the store: finds plugins by name, description,
+  author and tags. Several words must all match; `#word` searches only
+  the tags.
+- Tag dropdown next to it (most used tags first), and the tags on every
+  tile are clickable – one click filters the store by that tag. The
+  detail page lists them too.
+- Status shows "2 of 5 plugin(s)" while filtered, and a short hint when
+  nothing matches.
+- New manifest key `"tags": ["weather", "clock"]` – lower case, up to 8,
+  each up to 24 characters. A `#`, capitals or a comma separated string
+  are cleaned up, never refused; older apps ignore the key. Documented
+  in `docs/PLUGIN_API.md`.
+
+**MediaPlay**
+
+- `{album}` – the album, when the player reports one (MPRIS
+  `xesam:album` on Linux, the media session on Windows). It was already
+  listed in the placeholder picker but never filled.
+- `{remaining}` – time left in the song.
+- `{progress_percent}` – how far in, e.g. `34%`.
+- All three stay empty when the player does not say (no album tag, a
+  stream without a length) and drop out together with their separators.
+  Names as in the chatbox converter.
+
+**Plugin catalogue (v1.1.8)**
+
+- New in the store: **Life Stats** (clock, countdown, weather, heart
+  rate, text from files) and **Linux Extras (from VRCOSC)**
+  (`vrcosc_modules`, Linux only).
+- The clock moved from World Stats to Life Stats; Life Stats takes the
+  clock settings over on its first start.
+
+### Changed
+
+- README: store search, the new MediaPlay placeholders and the plugins
+  in the store.
+
+### Tests
+
+- `tests/test_plugin_tags.py`: tag clean-up, manifest parsing, search
+  and tag order.
+- `tests/test_media_custom_mode.py`: `{album}` `{remaining}`
+  `{progress_percent}`, including the empty case.
+
 ## [v1.5.7] – 2026-09-26
 
 **Plugins travel with profiles**, a *Default* profile, profile

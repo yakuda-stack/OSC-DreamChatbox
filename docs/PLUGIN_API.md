@@ -218,6 +218,7 @@ Types: `text` `bool` `int` `slider` `choice` `group` `widget`.
   "enabled": false,
   "api": 2, "min_app": "v1.3.2",
   "is_linux": true, "is_windows": true, "headless": true,
+  "tags": ["vrchat", "leash", "osc"],
   "template": "🐕 {oscleash_name}",
   "layout": ["widget", "settings", "chatbox"],
   "user_reorderable": true,
@@ -231,6 +232,12 @@ Types: `text` `bool` `int` `slider` `choice` `group` `widget`.
 `id` must match the folder name and the `[a-z0-9_-]` rule — it is used as
 a python module name. `global_placeholders` claims names without the id
 prefix; a built-in value always wins, so a plugin cannot hijack one.
+
+`tags` (v1.5.8) are short words the **store search** and its **tag
+filter** use – what the plugin is about, not what it is called:
+`["weather", "clock"]`, `["twitch", "stream"]`. Lower case, at most 8,
+each up to 24 characters; a `#` in front, capitals or a comma separated
+string are cleaned up rather than refused. Older apps ignore the key.
 
 `headless` says whether the plugin works in terminal mode
 (`--headless`, no window). Leave it out or set `true` for anything that

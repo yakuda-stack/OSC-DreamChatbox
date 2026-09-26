@@ -67,7 +67,7 @@ import tempfile
 import urllib.error
 import urllib.request
 import zipfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from core.atomicfile import write_text_atomic
@@ -75,7 +75,7 @@ from core.constants import (
     APP_NAME, CONFIG_DIR, GITHUB_REPO, STORE_SOURCES_FILE, VERSION)
 from core.plugins import (
     DEFAULT_ABOUT_FORMAT, IS_WINDOWS, OS_NAME, PLUGIN_API_VERSION, http_url,
-    read_about, url_filename)
+    read_about, url_filename, parse_tags)
 
 RAW_HOST = "https://raw.githubusercontent.com"
 # where to look for a newer catalogue when plugins.json names no self_url
@@ -233,6 +233,8 @@ class StoreEntry:
     # that predates the key, which is all of them until an author opts in
     api_needed: int = 1
     min_app: str = ""
+    #: manifest "tags" (v1.5.8) - store search and tag filter
+    tags: list = field(default_factory=list)
     error: str = ""
     # filled in against the installed set
     installed_version: str = ""
@@ -533,6 +535,7 @@ class PluginStore:
         # both mean the same, and the long description is the fallback.
         entry.summary = str(data.get("short_description")
                             or data.get("summary") or entry.description)
+        entry.tags = parse_tags(data.get("tags"))
         image = str(data.get("image") or "").strip()
         if image:
             entry.image_url = image if image.startswith(("http://", "https://")) \
@@ -667,3 +670,34 @@ class PluginStore:
         installed and have a newer version upstream."""
         self.refresh(installed)
         return [e for e in self.entries if e.has_update]
+
+
+# ----------------------------------------------------------- searching
+def matches(entry, text="", tag=""):
+    """Store search (v1.5.8). `tag` must be one of the entry's tags;
+    every word of `text` must appear in its name, id, author, short or
+    long description or tags. A word written as #word only matches a
+    tag. Upper/lower case does not matter."""
+    tags = [t.lower() for t in (getattr(entry, "tags", None) or [])]
+    if tag and tag.lower() not in tags:
+        return False
+    haystack = " ".join(str(x or "") for x in (
+        entry.name, entry.pid, entry.author, entry.summary,
+        entry.description, " ".join(tags))).lower()
+    for word in str(text or "").lower().split():
+        if word.startswith("#"):
+            if word[1:] and not any(t == word[1:] or t.startswith(word[1:])
+                                    for t in tags):
+                return False
+        elif word not in haystack:
+            return False
+    return True
+
+
+def all_tags(entries):
+    """Every tag in the catalogue, most used first, then A-Z."""
+    count = {}
+    for entry in entries:
+        for tag in getattr(entry, "tags", None) or []:
+            count[tag] = count.get(tag, 0) + 1
+    return sorted(count, key=lambda t: (-count[t], t))

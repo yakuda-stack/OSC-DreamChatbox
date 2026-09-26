@@ -112,6 +112,8 @@ MEDIA_ITEMS = (
     ("{time}", "elapsed / total"),
     ("{time_status}", "elapsed with the play/pause symbol"),
     ("{time_end}", "total length"),
+    ("{remaining}", "time left"),
+    ("{progress_percent}", "how far in, in %"),
     ("{bar}", "progress bar"),
     ("{lyrics}", "current line, synced via LRCLIB"),
     ("{lyrics_prefix}", "the symbol in front of the lyrics"),
