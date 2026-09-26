@@ -23,6 +23,7 @@ so.
 
 import pytest
 
+from core.constants import CHATBOX_LIMIT
 from core.textstyle import STYLE_NORMAL
 from ui.mainwindow import MainWindow
 from ui.pages.apps_page import AppsPageMixin
@@ -172,3 +173,22 @@ def test_an_unticked_part_collapses_its_separator():
     page = make_page(media_show_title=False,
                      media_custom_template="{title} | {time}")
     assert page.build_media_lines() == ["1:18/3:47"]
+
+
+# ---- lyrics Max length ------------------------------------------------
+
+def test_lyrics_max_cuts_placeholder():
+    # "and the city lights go by" -> hard cut, trailing space removed
+    page = make_page(media_show_lyrics=True, media_lyrics_max=12)
+    assert values(page)["lyrics"] == "and the city"
+
+
+def test_lyrics_max_default_is_no_limit():
+    page = make_page(media_show_lyrics=True)
+    assert values(page)["lyrics"] == "and the city lights go by"
+
+
+def test_lyrics_max_is_clamped():
+    assert make_page(media_lyrics_max=1)._lyrics_max() == 10
+    assert make_page(media_lyrics_max=9999)._lyrics_max() == CHATBOX_LIMIT
+    assert make_page(media_lyrics_max="junk")._lyrics_max() == CHATBOX_LIMIT

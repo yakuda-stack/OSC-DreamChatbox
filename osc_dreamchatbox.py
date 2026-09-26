@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-OSC-DreamChatbox v1.5.5
+OSC-DreamChatbox v1.5.6
 A clean VRChat OSC chatbox sender.
 
 Entry point only – the actual code lives in:
@@ -19,7 +19,14 @@ IMPORTANT: OSC must be enabled in VRChat!
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 import sys
-from pathlib import Path
+
+# 3.12+ is the minimum (f-strings with backslashes in ui/pages/*).
+# Say so plainly instead of a SyntaxError deep inside the UI import.
+if sys.version_info < (3, 12):
+    sys.exit("OSC-DreamChatbox needs Python 3.12 or newer "
+             f"(this is {sys.version.split()[0]}).")
+
+from pathlib import Path  # noqa: E402
 
 # make sure the project root is importable no matter where we're
 # started from (start.sh, .desktop file, terminal, the .exe, ...)

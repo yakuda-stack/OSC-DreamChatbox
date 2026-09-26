@@ -15,7 +15,7 @@ from core.osinfo import (  # noqa: F401  (IS_WINDOWS/OS_NAME re-exported)
     IS_WINDOWS, OS_NAME, config_dir, legacy_config_dir, resource_root)
 
 APP_NAME = "OSC-DreamChatbox"
-VERSION = "v1.5.5"
+VERSION = "v1.5.6"
 
 #: how many All-in-one strings there can be. Raised from 5 in v1.4.0;
 #: every list that is "one entry per AIO string" is sized from here.
@@ -87,6 +87,7 @@ OSC_RATE_MAX_SENDS = 5
 OSC_MIN_SEND_GAP_SEC = 1.5
 
 TITLE_MAX_LEN = 24   # max characters of the song title shown
+LYRICS_MAX_MIN = 10  # smallest Max length of the lyrics line (max = CHATBOX_LIMIT = no limit)
 SONGBAR_LEN = 13     # number of segments in the song progress bar
 
 # ------------------------------------------------------------ second GPU

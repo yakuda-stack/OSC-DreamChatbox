@@ -3,6 +3,11 @@
 The short version of every release — what you will actually notice.
 The full details are in the changelog.
 
+## v1.5.6 – 2026-09-26
+
+- **Max length for lyrics:** new slider under *Lyrics* – long lines get shortened, so your songbar, box frame and slim characters no longer get cut off. Default: no limit.
+- **AppImage works on Python 3.12, 3.13 and 3.14** – Ubuntu 24.04 / Mint 22 no longer need an extra Python 3.14.
+
 ## v1.5.5 – 2026-09-24
 
 - **Start with a profile:** `osc-dreamchatbox --profile="Gaming"` – works for the window and `--headless`. Without it, your last profile is loaded.

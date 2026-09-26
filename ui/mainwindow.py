@@ -687,6 +687,12 @@ class MainWindow(ConfigMixin, AppsPageMixin, AdvancedPageMixin,
             str(self.cfg.get("media_lyrics_prefix", "\u266a"))[:4])
         self.lyrics_prefix_input.blockSignals(False)
         self.lyrics_prefix_input.setEnabled(prefix_on)
+        lmax = self._lyrics_max()
+        self.cfg["media_lyrics_max"] = lmax
+        self.lyrics_max_slider.blockSignals(True)
+        self.lyrics_max_slider.setValue(lmax)
+        self.lyrics_max_slider.blockSignals(False)
+        self.lyrics_max_lbl.setText(self._lyrics_max_text(lmax))
         self.chk_bar.setChecked(self.cfg["media_show_bar"])
         # local lyrics folder row + fetcher state
         self._sync_lyrics_local()

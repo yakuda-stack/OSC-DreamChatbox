@@ -16,7 +16,8 @@ from PyQt6.QtWidgets import (
 from core.constants import (
     AFK_PRESET_COUNT, AIO_MAX, DEFAULT_AFK_PARAM, DEFAULT_AFK_TEXTS,
     DEFAULT_AFK_TIMER_TEXT, GPU2_MODE_INLINE, GPU2_MODE_LINE, ORIGINS, ORIGIN_CHAT,
-    CHATBOX_LIMIT, LYRICS_DIR, MIN_STATUS_CYCLE_SEC, SLIM_SUFFIX, SONGBAR_LEN, TITLE_MAX_LEN)
+    CHATBOX_LIMIT, LYRICS_DIR, MIN_STATUS_CYCLE_SEC, SLIM_SUFFIX, SONGBAR_LEN, TITLE_MAX_LEN,
+    LYRICS_MAX_MIN)
 from core.lyrics_sources import SOURCES, normalize_sources
 from core.afk import (
     afk_body, afk_param_name, afk_preset, afk_text, format_afk_time)
@@ -663,6 +664,33 @@ class AppsPageMixin:
         # Three rows that only make sense together, so they share one
         # container and one rule down the left edge.
         self.lyrics_box, lyr = self._sub_group(vertical=True)
+
+        # Max length, like the Song title one. A long line otherwise
+        # pushes everything after it (songbar, Custom Box frame, slim
+        # characters) past the 144 character limit and VRChat cuts it.
+        lm_row = QHBoxLayout()
+        lm_row.setSpacing(6)
+        lm_row.addWidget(QLabel("Max length"))
+        self.lyrics_max_slider = QSlider(Qt.Orientation.Horizontal)
+        self.lyrics_max_slider.setRange(LYRICS_MAX_MIN, CHATBOX_LIMIT)
+        self.lyrics_max_slider.setSingleStep(1)
+        self.lyrics_max_slider.setPageStep(4)
+        self.lyrics_max_slider.setFixedWidth(160)
+        self.lyrics_max_slider.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.lyrics_max_slider.setToolTip(
+            "Shortens long lyrics lines so the rest of the chatbox "
+            "(songbar, box frame, slim characters) still fits. "
+            "All the way right = no limit.")
+        self.lyrics_max_slider.valueChanged.connect(self.on_lyrics_max)
+        lm_row.addWidget(self.lyrics_max_slider)
+        self.lyrics_max_lbl = QLabel("no limit")
+        self.lyrics_max_lbl.setObjectName("dim")
+        self.lyrics_max_lbl.setFixedWidth(96)
+        lm_row.addWidget(self.lyrics_max_lbl)
+        lm_row.addStretch()
+        self.lyrics_max_row = QWidget()
+        self.lyrics_max_row.setLayout(lm_row)
+        lyr.addWidget(self.lyrics_max_row)
 
         lp_row = QHBoxLayout()
         lp_row.setSpacing(6)
@@ -2771,6 +2799,37 @@ class AppsPageMixin:
         self.save_config_later()
         self.update_preview()
 
+    def _lyrics_max(self):
+        """Max characters of the lyrics line (without the symbol in
+        front). CHATBOX_LIMIT = no limit, the default."""
+        try:
+            val = int(self.cfg.get("media_lyrics_max", CHATBOX_LIMIT))
+        except (TypeError, ValueError):
+            val = CHATBOX_LIMIT
+        return min(CHATBOX_LIMIT, max(LYRICS_MAX_MIN, val))
+
+    def _cut_lyrics(self, line):
+        """Shortens a lyrics line to the Max length setting.
+        Hard cut like the song title – no "…", so no characters are
+        wasted. One place, so the standard layout and {lyrics} agree."""
+        if not line:
+            return line
+        lmax = self._lyrics_max()
+        if len(line) > lmax:
+            line = line[:lmax].rstrip()
+        return line
+
+    @staticmethod
+    def _lyrics_max_text(val):
+        return "no limit" if val >= CHATBOX_LIMIT else f"{val} characters"
+
+    def on_lyrics_max(self, val):
+        val = min(CHATBOX_LIMIT, max(LYRICS_MAX_MIN, int(val)))
+        self.cfg["media_lyrics_max"] = val
+        self.lyrics_max_lbl.setText(self._lyrics_max_text(val))
+        self.save_config_later()
+        self.update_preview()
+
     def on_lyrics_source(self, source_id, on):
         """Ticks one lyrics service on or off.
 
@@ -4020,9 +4079,9 @@ class AppsPageMixin:
             "time": time_str if c["media_show_time"] else None,
             # {lyrics} only works while the checkbox is checked –
             # unchecked means no LRCLIB requests at all (performance)
-            "lyrics": (self.lyrics.current_line(
+            "lyrics": (self._cut_lyrics(self.lyrics.current_line(
                            info["artist"], info["title"],
-                           info["length"], info["position"])
+                           info["length"], info["position"]))
                        if c.get("media_show_lyrics") else None),
             "bar": (bar or None) if c["media_show_bar"] else None,
             "player": info["player"],
@@ -4091,6 +4150,7 @@ class AppsPageMixin:
             lyr = demo if demo is not None else self.lyrics.current_line(
                 info["artist"], info["title"],
                 info["length"], info["position"])
+            lyr = self._cut_lyrics(lyr)
             if lyr:
                 pre = self._lyrics_prefix()
                 lines.append(f"{pre} {lyr}" if pre else lyr)

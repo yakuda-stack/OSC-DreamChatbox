@@ -6,6 +6,45 @@ All notable changes to OSC-DreamChatbox are documented here.
 
 🟢 Linux Support: Complete & Stable (v1.2.6)
 
+## [v1.5.6] – 2026-09-26
+
+**Max length for lyrics** and an AppImage that runs on Python 3.12 –
+Ubuntu 24.04 / Mint 22 no longer need a separate Python 3.14.
+
+### Added
+
+- **Lyrics › Max length:** a slider right under *Lyrics*, same as the one
+  for the song title (10–144 characters). Long lyrics lines are cut hard
+  (no "…") so the songbar, the Custom Box frame and the slim characters
+  still fit into VRChat's 144 characters instead of being cut off. The
+  symbol in front (♪) stays. Works for the normal layout and for
+  `{lyrics}` in custom, All in one and Advanced mode strings. Default: all
+  the way right = no limit, so existing setups do not change.
+- Tests for the lyrics Max length (cut, default, out-of-range values).
+
+### Fixed
+
+- **AppImage on Python 3.12 / 3.13:** the AppImage only carried the
+  compiled modules (PyQt6.sip, zeroconf, setproctitle, …) for the Python
+  of the build machine (3.14). On distros with Python 3.12 PyQt6 did not
+  load, and installing Python 3.14 separately did not reliably help. The
+  AppImage now bundles them for **3.12, 3.13 and 3.14** side by side –
+  Python picks the matching ones by itself – with almost no extra size.
+- The AppImage start script uses the system `python3` if it fits,
+  otherwise an installed `python3.14` / `3.13` / `3.12`, and otherwise
+  explains in plain words which Python is needed instead of a traceback.
+- Starting from source with Python older than 3.12 now ends with a clear
+  message instead of a `SyntaxError` deep inside the UI.
+
+### Changed
+
+- `scripts/build_appimage.sh`: downloads ready-made wheels for every
+  version in `DCB_PYVERS` (default `3.12 3.13 3.14`), no matching Python
+  needed on the build machine. For 3.13+ the `aifc`/`audioop` backports
+  for SpeechRecognition are added explicitly.
+- README: Python badge now says 3.12+; AppImage section names the
+  supported Python versions.
+
 ## [v1.5.5] – 2026-09-24
 
 ### Added

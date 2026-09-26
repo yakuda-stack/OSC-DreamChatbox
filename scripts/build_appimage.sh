@@ -166,31 +166,88 @@ cp "$BUILD_DIR/usr/share/applications/osc-dreamchatbox.desktop" "$BUILD_DIR/osc-
 
 # 5. Python-Abhängigkeiten ins AppDir bundeln
 echo "[4/5] Bundele Python-Abhängigkeiten..."
-mkdir -p "$BUILD_DIR/usr/lib/python3"
-pip install --target="$BUILD_DIR/usr/lib/python3" \
-    PyQt6 python-osc SpeechRecognition zeroconf deepl setproctitle 2>/dev/null || \
-    pip install --break-system-packages --target="$BUILD_DIR/usr/lib/python3" \
-    PyQt6 python-osc SpeechRecognition zeroconf deepl setproctitle || \
-    echo "[Warn] Abhängigkeiten konnten nicht gebundelt werden — müssen auf dem System vorhanden sein."
-pip install --target="$BUILD_DIR/usr/lib/python3" pyaudio 2>/dev/null || \
-    pip install --break-system-packages --target="$BUILD_DIR/usr/lib/python3" pyaudio 2>/dev/null || \
-    echo "[Info] pyaudio nicht gebundelt — Speech to Text braucht es vom System (pacman -S python-pyaudio)."
-
-# Welche Python-Version brauchen die gebundelten Pakete?
 #
 # PyQt6 selbst ist abi3 (läuft auf jedem Python 3.x), aber PyQt6.sip,
-# zeroconf & Co. werden pro Python-Minor-Version kompiliert. pip baut
-# gegen den Python DIESER Maschine — auf einem System mit anderer
-# Minor-Version scheitert dann schon "import PyQt6.QtWidgets".
-PYVER="$(find "$BUILD_DIR/usr/lib/python3" -name '*.so' \
-    | grep -oE 'cpython-3[0-9]+' | sort -u | grep -oE '3[0-9]+' | head -1)"
-if [ -n "$PYVER" ]; then
-    PYVER="3.${PYVER#3}"
-    echo "$PYVER" > "$BUILD_DIR/usr/lib/osc-dreamchatbox/.python-version"
-    echo "[Info] Gebundelte C-Module sind für Python $PYVER gebaut."
-    echo "       Auf Systemen mit anderer Python-Minor-Version wird ein"
-    echo "       passendes python$PYVER gesucht (siehe AppRun)."
+# zeroconf, setproctitle & Co. sind pro Python-Minor-Version kompiliert.
+# Früher wurde nur für den Python DIESER Maschine gebundelt (Arch: 3.14)
+# — auf Ubuntu 24.04 / Mint 22 (Python 3.12) lud dann PyQt6 nicht.
+#
+# Jetzt: für JEDE Version in PYVERS fertige Wheels laden (geht ohne dass
+# der Interpreter installiert ist) und alles in EINEN Ordner legen. Die
+# .so-Dateien tragen die Version im Namen (sip.cpython-312-...so,
+# sip.cpython-314-...so) — Python lädt automatisch die passende, die
+# reinen .py-Dateien sind für alle Versionen gleich. Kostet ~10 MB extra,
+# die Qt-Bibliotheken selbst liegen nur einmal drin.
+#
+# 3.12 ist das Minimum (f-Strings mit Backslash in ui/pages/*).
+# Andere Liste:  DCB_PYVERS="3.12 3.13" bash scripts/build_appimage.sh
+PYVERS="${DCB_PYVERS:-3.12 3.13 3.14}"
+DEPS=(PyQt6 python-osc SpeechRecognition zeroconf deepl setproctitle)
+# --platform: pip nimmt dann NUR Wheels mit genau diesen Tags. Obergrenze
+# glibc 2.35 hält die AppImage auf älteren Distros lauffähig.
+PLAT_ARGS=()
+for g in 17 24 27 28 31 34 35; do
+    PLAT_ARGS+=(--platform "manylinux_2_${g}_${ARCH}")
+done
+PLAT_ARGS+=(--platform "manylinux2014_${ARCH}")
+
+if python3 -m pip --version >/dev/null 2>&1; then
+    PIP=(python3 -m pip)
+else
+    PIP=(pip)
 fi
+
+SITE="$BUILD_DIR/usr/lib/python3"
+STAGE="$OUT_DIR/pystage"
+mkdir -p "$SITE"
+DONE_VERS=""
+for V in $PYVERS; do
+    echo "      → Python $V"
+    rm -rf "$STAGE"
+    XARGS=(--quiet --no-compile --target="$STAGE" --python-version "$V"
+           --implementation cp --only-binary=:all: "${PLAT_ARGS[@]}")
+    if "${PIP[@]}" install "${XARGS[@]}" "${DEPS[@]}" 2>"$OUT_DIR/pip-$V.log" \
+       || "${PIP[@]}" install --break-system-packages "${XARGS[@]}" \
+            "${DEPS[@]}" 2>>"$OUT_DIR/pip-$V.log"; then
+        # pip wertet Marker wie python_version>="3.13" mit dem LAUFENDEN
+        # Python aus, nicht mit --python-version — und manche pip-Versionen
+        # prüfen auch Requires-Python gegen den laufenden. SpeechRecognition
+        # braucht ab 3.13 diese Backports (aifc/audioop/chunk wurden aus der
+        # Standardbibliothek entfernt), also gezielt ohne Abhängigkeitsprüfung.
+        case "$V" in
+            3.12) ;;
+            *) "${PIP[@]}" install "${XARGS[@]}" --no-deps --ignore-requires-python \
+                   standard-aifc standard-chunk audioop-lts 2>>"$OUT_DIR/pip-$V.log" \
+               || "${PIP[@]}" install --break-system-packages "${XARGS[@]}" \
+                   --no-deps --ignore-requires-python \
+                   standard-aifc standard-chunk audioop-lts 2>>"$OUT_DIR/pip-$V.log" \
+               || echo "[Warn] aifc/audioop-Backports für $V fehlen — Speech to Text könnte dort fehlen." ;;
+        esac
+        cp -a "$STAGE/." "$SITE/"
+        DONE_VERS="$DONE_VERS $V"
+        rm -f "$OUT_DIR/pip-$V.log"
+    else
+        echo "[Warn] Python $V übersprungen — keine passenden Wheels (Log: build/pip-$V.log)."
+    fi
+done
+rm -rf "$STAGE"
+DONE_VERS="${DONE_VERS# }"
+
+if [ -z "$DONE_VERS" ]; then
+    echo "FEHLER: Für keine Python-Version konnten Abhängigkeiten gebundelt werden."
+    exit 1
+fi
+# pyaudio hat keine Linux-Wheels: wird (wenn überhaupt) nur für den
+# Python dieser Maschine gebaut. Speech to Text geht sonst über
+# sounddevice bzw. das pyaudio des Systems.
+"${PIP[@]}" install --quiet --no-compile --target="$SITE" pyaudio 2>/dev/null || \
+    "${PIP[@]}" install --quiet --no-compile --break-system-packages --target="$SITE" pyaudio 2>/dev/null || \
+    echo "[Info] pyaudio nicht gebundelt — Speech to Text braucht es vom System (python3-pyaudio / python-pyaudio)."
+find "$SITE" -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null || true
+
+# Liste der unterstützten Versionen für AppRun (eine Zeile, Leerzeichen)
+echo "$DONE_VERS" > "$LIB/.python-versions"
+echo "[Info] Gebundelt für Python: $DONE_VERS"
 
 # AppRun Script
 cat > "$BUILD_DIR/AppRun" << 'APPRUN'
@@ -210,24 +267,37 @@ if ! command -v python3 >/dev/null 2>&1; then
     exit 1
 fi
 
-# Die gebundelten C-Module (PyQt6.sip, zeroconf) sind an eine
-# Python-Minor-Version gebunden. Passt die des Systems nicht, erst nach
-# einem passenden pythonX.Y suchen — sonst gibt es eine verständliche
-# Meldung statt eines ImportError-Tracebacks.
-NEED="$(cat "$HERE/usr/lib/osc-dreamchatbox/.python-version" 2>/dev/null)"
-HAVE="$(python3 -c 'import sys;print("%d.%d"%sys.version_info[:2])' 2>/dev/null)"
+# Die gebundelten C-Module (PyQt6.sip, zeroconf, ...) liegen für mehrere
+# Python-Versionen bei (.python-versions, z. B. "3.12 3.13 3.14").
+# Erst python3 des Systems probieren, sonst ein passendes pythonX.Y
+# (neueste zuerst) — sonst eine verständliche Meldung statt Traceback.
+SUPPORTED="$(cat "$HERE/usr/lib/osc-dreamchatbox/.python-versions" 2>/dev/null)"
+# ältere AppImages hatten nur eine Version in .python-version
+[ -z "$SUPPORTED" ] && SUPPORTED="$(cat "$HERE/usr/lib/osc-dreamchatbox/.python-version" 2>/dev/null)"
+pyver() { "$1" -c 'import sys;print("%d.%d"%sys.version_info[:2])' 2>/dev/null; }
+HAVE="$(pyver python3)"
 DREAMCHATBOX_PYTHON="python3"
-if [ -n "$NEED" ] && [ "$NEED" != "$HAVE" ]; then
-    if command -v "python$NEED" >/dev/null 2>&1; then
-        DREAMCHATBOX_PYTHON="python$NEED"
-    else
-        echo "OSC-DreamChatbox: diese AppImage wurde für Python $NEED gebaut," >&2
-        echo "  auf diesem System läuft Python $HAVE." >&2
-        echo "  Die mitgelieferten Qt-Module laden damit nicht." >&2
-        echo "  Abhilfe:  sudo apt install python$NEED" >&2
-        echo "  oder die AppImage auf einem System mit Python $HAVE bauen." >&2
-        exit 1
-    fi
+if [ -n "$SUPPORTED" ]; then
+    case " $SUPPORTED " in
+        *" $HAVE "*) ;;
+        *)
+            DREAMCHATBOX_PYTHON=""
+            for V in $(printf '%s\n' $SUPPORTED | sort -rV); do
+                if command -v "python$V" >/dev/null 2>&1 \
+                   && [ "$(pyver "python$V")" = "$V" ]; then
+                    DREAMCHATBOX_PYTHON="python$V"
+                    break
+                fi
+            done
+            if [ -z "$DREAMCHATBOX_PYTHON" ]; then
+                echo "OSC-DreamChatbox: diese AppImage läuft mit Python $SUPPORTED," >&2
+                echo "  auf diesem System ist python3 = $HAVE." >&2
+                echo "  This AppImage needs Python $SUPPORTED (you have $HAVE)." >&2
+                echo "  Abhilfe / Fix:  eine davon installieren, z. B. python3.12" >&2
+                exit 1
+            fi
+            ;;
+    esac
 fi
 export DREAMCHATBOX_PYTHON
 

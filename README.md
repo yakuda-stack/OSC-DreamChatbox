@@ -10,7 +10,7 @@
 
 [![License: GPL--3.0--or--later](https://img.shields.io/badge/License-GPL--3.0--or--later-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20Windows-green.svg)]()
-[![Python](https://img.shields.io/badge/Python-3.10%2B-yellow.svg)]()
+[![Python](https://img.shields.io/badge/Python-3.12%2B-yellow.svg)]()
 [![AUR](https://img.shields.io/badge/AUR-osc--dreamchatbox-1793D1.svg)](https://aur.archlinux.org/packages/osc-dreamchatbox)
 [![YouTube](https://img.shields.io/badge/YouTube-Watch-FF0000.svg)](https://www.youtube.com/watch?v=XJFplUvuGVs)
 [![Discord](https://img.shields.io/badge/Discord-Join-5865F2.svg)](https://discord.gg/ShNKvvZu74)
@@ -104,7 +104,7 @@ Then launch **OSC DreamChatbox** from your app menu or run `osc-dreamchatbox`.
 
 **AppImage (any distro)**
 
-Grab `OSC-DreamChatbox-<version>-x86_64.AppImage` from the **[releases page](https://github.com/yakuda-stack/OSC-DreamChatbox/releases)**, `chmod +x` it, run it. It carries **update information (zsync)**: AppImageUpdate, AppImageLauncher, Gear Lever, AM or AppManager update it by downloading **only the changed parts** — often just a few MB instead of the full ~120 MB.
+Grab `OSC-DreamChatbox-<version>-x86_64.AppImage` from the **[releases page](https://github.com/yakuda-stack/OSC-DreamChatbox/releases)**, `chmod +x` it, run it. It carries **update information (zsync)**: AppImageUpdate, AppImageLauncher, Gear Lever, AM or AppManager update it by downloading **only the changed parts** — often just a few MB instead of the full ~120 MB. Works with **Python 3.12, 3.13 and 3.14** — whichever your distro ships (Ubuntu 24.04 / Mint 22 included).
 
 <details>
 <summary>Without an AUR helper (plain <code>makepkg</code>)</summary>
@@ -241,6 +241,7 @@ Shows what you are listening to — **Spotify, Apple Music, YT Music, browsers, 
 - Toggle artist / title (adjustable max length) / time / progress songbar individually
 - Time with or without seconds, and the digits can be rendered as **superscript** to save height
 - **Synced lyrics** from six sources — the current line, only fetched while the checkbox is on
+  - **Max length** slider: shortens long lines so the songbar, box frame and slim characters still fit (default: no limit)
   - **LRCLIB** · **LyricsPlus** · **Better Lyrics** on by default; **Paxsenix** · **KuGou** · **Musixmatch** one tick away
   - Tried in that order, first synced hit wins — a source further down is only ever contacted when everything above it came back empty, so a song LRCLIB knows costs exactly one request
   - Your own `.lrc` files still beat all of them
