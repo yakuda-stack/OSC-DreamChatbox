@@ -217,7 +217,7 @@ Types: `text` `bool` `int` `slider` `choice` `group` `widget`.
   "Github": "github.com/yakuda-stack",
   "enabled": false,
   "api": 2, "min_app": "v1.3.2",
-  "is_linux": true, "is_windows": true,
+  "is_linux": true, "is_windows": true, "headless": true,
   "template": "🐕 {oscleash_name}",
   "layout": ["widget", "settings", "chatbox"],
   "user_reorderable": true,
@@ -231,6 +231,13 @@ Types: `text` `bool` `int` `slider` `choice` `group` `widget`.
 `id` must match the folder name and the `[a-z0-9_-]` rule — it is used as
 a python module name. `global_placeholders` claims names without the id
 prefix; a built-in value always wins, so a plugin cannot hijack one.
+
+`headless` says whether the plugin works in terminal mode
+(`--headless`, no window). Leave it out or set `true` for anything that
+only produces chatbox text. Set `false` when it depends on its own panel
+(`build_widget()`), a dialog or anything else that needs the window: in
+terminal mode it is then not loaded and `DCB-plugin-status` says so,
+instead of a traceback. The window is not affected.
 
 `short_description` is optional and holds the one line the **Installed
 list** shows; `description` stays the full text and is what the info

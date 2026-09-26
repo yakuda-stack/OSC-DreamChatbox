@@ -219,6 +219,11 @@ class MainWindow(ConfigMixin, AppsPageMixin, AdvancedPageMixin,
         self._announce_fps_move()
         self.refresh_plugin_list()
         self._update_plugin_timer()
+        # fresh install / nobody has a profile yet -> "Default"
+        self.ensure_default_profile()
+        # once per start: plugins the active profile does not know yet
+        # -> one "save into profile?" popup (ui/pages/profiles_panel.py)
+        self.queue_profile_plugin_check()
         # natives OSCQuery: dynamische Ports + VRChat-Discovery
         self.oscq_timer = QTimer(self)
         self.oscq_timer.timeout.connect(self.poll_oscquery)
@@ -1501,6 +1506,10 @@ class MainWindow(ConfigMixin, AppsPageMixin, AdvancedPageMixin,
             self._write_config()
         except Exception as e:      # noqa: BLE001
             print(f"closeEvent: config could not be written: {e}")
+        # Options -> Profiles -> "Save the active profile when the app
+        # closes" (on by default). Before plugins.shutdown() below, so
+        # the plugin state is still there to read.
+        self.save_profile_on_exit()
 
         # Each step is isolated: one failing teardown must not skip the
         # ones after it, or we leak a server / leave text in the chatbox.

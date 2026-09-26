@@ -1730,6 +1730,10 @@ class PluginsPageMixin:
         self._store_selected = key
         if ok:
             self.log(f"Store: installed '{name}'")
+            pids = [e.pid for e in self.store.entries
+                    if e.source.key == key and e.pid]
+            if pids:
+                self.offer_profile_plugin_data(pids)
         else:
             QMessageBox.warning(self, "Installation failed",
                                 f"'{name}' could not be installed:\n\n{err}")
@@ -2153,6 +2157,8 @@ class PluginsPageMixin:
             QMessageBox.information(
                 self, "Plugin installed",
                 f"'{plugin.name}' {plugin.version} installed – {state}.")
+            # the active profile may already have data for it
+            self.offer_profile_plugin_data([plugin.pid])
 
     def on_open_plugins_dir(self):
         try:
@@ -2162,8 +2168,14 @@ class PluginsPageMixin:
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(PLUGINS_DIR)))
 
     def on_rescan_plugins(self):
+        before = set(self.plugins.plugins)
         self.plugins.discover()
         self.plugins.load_enabled()
         self.refresh_plugin_list()
         self._update_plugin_timer()
         self.log(f"Plugins: rescanned – {len(self.plugins.plugins)} found")
+        # a plugin copied into the folder by hand: the active profile may
+        # already have data for it
+        new = sorted(set(self.plugins.plugins) - before)
+        if new:
+            self.offer_profile_plugin_data(new)

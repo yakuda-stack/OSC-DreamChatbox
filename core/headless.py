@@ -400,6 +400,9 @@ def _make_window_class():
     class HeadlessWindow(MainWindow):
         """The normal MainWindow, never shown."""
 
+        # read by PluginManager: plugins with "headless": false stay off
+        HEADLESS = True
+
         def __init__(self, verbose=False):
             self._verbose = verbose
             self._log_lock = threading.Lock()
@@ -472,6 +475,26 @@ def _make_window_class():
 
         def _save_active_profile(self):
             return True
+
+        def queue_profile_plugin_check(self):
+            pass            # no popups in terminal mode
+
+        def ensure_default_profile(self):
+            pass            # the window creates "Default"
+
+        def save_profile_on_exit(self):
+            pass            # terminal mode never writes a profile itself
+
+        def offer_profile_plugin_data(self, pids):
+            pass            # installs happen in the window
+
+        def _offer_profile_plugins(self, name, missing, settings):
+            """No dialogs here: just say which plugins the profile wants.
+            Installing them is one click in the window (the same switch
+            offers it there)."""
+            say(f"Profile '{name}' uses plugins that are not installed: "
+                f"{', '.join(missing)} - open the window (DCB-UI) and "
+                "switch to the profile there to install them.")
 
         def apply_start_profile(self, wanted):
             """--profile: like the window, plus storing the switch -
@@ -755,6 +778,9 @@ def _make_window_class():
         def _plugin_state(p):
             if not p.supported:
                 return "not for this OS"
+            if not p.headless:
+                return ("ON in the window, not for terminal mode"
+                        if p.enabled else "off (not for terminal mode)")
             if p.enabled and p.error and not p.loaded:
                 return "ON, but failed to load (DCB-log)"
             return "ON" if p.enabled else "off"

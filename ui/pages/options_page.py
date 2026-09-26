@@ -19,7 +19,7 @@ from PyQt6.QtCore import QUrl, Qt
 from PyQt6.QtGui import QColor, QDesktopServices, QPainter, QPixmap
 from PyQt6.QtWidgets import (
     QButtonGroup, QColorDialog, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget, QMessageBox, QPushButton, QSlider, QSpinBox, QVBoxLayout, QWidget)
-from core import desktop_integration, queryfix, vrc_pictures
+from core import desktop_integration, profiles, queryfix, vrc_pictures
 from core.theming import (
     TOKEN_LABELS, import_background, list_backgrounds, remove_background,
     resolve_tokens, theme_ids, theme_name)
@@ -454,6 +454,34 @@ class OptionsPageMixin:
             self.on_profile_delete))
         prof_row.addStretch()
         prof.addLayout(prof_row)
+
+        io_row = QHBoxLayout()
+        io_row.setSpacing(8)
+        io_row.addWidget(self._opt_button(
+            "\U0001F4E4  Export active", "linkbtn",
+            self.on_profile_export,
+            "One file with all settings of the active profile, plugin "
+            "settings included \u2013 to back it up or share it."))
+        io_row.addWidget(self._opt_button(
+            "\U0001F4E5  Import", "linkbtn",
+            self.on_profile_import,
+            "Adds a profile from an exported file. Missing plugins are "
+            "offered from the store when you switch to it."))
+        io_row.addStretch()
+        prof.addLayout(io_row)
+
+        exit_row = QHBoxLayout()
+        self.toggle_profile_exit = ToggleSwitch()
+        self.toggle_profile_exit.setChecked(
+            bool(self.cfg.get(profiles.SAVE_ON_EXIT_KEY, True)))
+        self.toggle_profile_exit.toggled.connect(
+            self.on_profile_save_on_exit)
+        exit_row.addWidget(self.toggle_profile_exit)
+        exit_row.addWidget(ToggleLabel(
+            "Save the active profile when the app closes  "
+            "(settings and plugin settings)", self.toggle_profile_exit))
+        exit_row.addStretch()
+        prof.addLayout(exit_row)
         general_lay.addWidget(prof_card)
 
         # ---- Terminal mode (core/headless.py)

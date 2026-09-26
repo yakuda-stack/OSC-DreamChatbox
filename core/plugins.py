@@ -82,6 +82,11 @@ Beyond the required keys, plugin.json may declare:
                     Both default to true: most plugins are plain python and
                     run anywhere, so only a plugin that really touches
                     pactl, /sys, WMI or similar has to say so.
+    "headless":     false when the plugin does not work in terminal mode
+                    (--headless) - typically one that is all about its
+                    own build_widget() panel. It is then not loaded
+                    there, with a note instead of a traceback. Defaults
+                    to true; the window is not affected either way.
     "about":        the long text, when one paragraph is not enough. A
                     list of lines, or {"format": "markdown", "text": ...}
                     for headings and bullets. "description" stays the
@@ -322,6 +327,7 @@ KNOWN_MANIFEST_KEYS = frozenset({
     "id", "name", "version", "author", "description", "short_description",
     "summary", "about", "Github",
     "github", "main", "image", "unity", "enabled", "is_linux", "is_windows",
+    "headless",
     "template", "placeholders", "global_placeholders", "settings", "api",
     "layout", "user_reorderable", "chatbox",
     "min_app"})
@@ -643,6 +649,9 @@ class Plugin:
     default_enabled: bool = True
     is_linux: bool = True          # manifest flags, both default to true
     is_windows: bool = True
+    #: manifest "headless": false = does not work in terminal mode.
+    #: Missing means true, so every existing plugin keeps running there.
+    headless: bool = True
     template: str = ""             # default custom string from the manifest
     placeholders: dict = field(default_factory=dict)   # name -> description
     global_keys: list = field(default_factory=list)    # unprefixed names
@@ -886,6 +895,9 @@ class PluginManager:
         self.log = log
         self.host = host
         self.dir = Path(plugins_dir)
+        # True in terminal mode: plugins with "headless": false are
+        # skipped there (see _load)
+        self.headless_mode = bool(getattr(host, "HEADLESS", False))
         self.plugins = {}          # pid -> Plugin, insertion = display order
         self.settings = {}         # pid -> config dict (mirrors config.json)
         self._snap = None          # cached snapshot for the current frame
@@ -1336,6 +1348,7 @@ class PluginManager:
             default_enabled=bool(data.get("enabled", True)),
             is_linux=bool(data.get("is_linux", True)),
             is_windows=bool(data.get("is_windows", True)),
+            headless=_truthy(data.get("headless"), True),
             template=template,
             placeholders={str(k): str(v) for k, v in placeholders.items()},
             global_keys=global_keys,
@@ -1594,6 +1607,15 @@ class PluginManager:
                             f"{OS_NAME} ({MANIFEST_NAME}).")
             self.log(f"Plugins: '{plugin.pid}' skipped - {plugin.platform_note}")
             return False
+        if self.headless_mode and not plugin.headless:
+            # the author said it does not work without the window (its
+            # own panel, a dialog, ...). Skipped, not failed: it stays
+            # switched on and runs again as soon as the window is back.
+            plugin.error = ("This plugin does not work in terminal mode "
+                            f"({MANIFEST_NAME}: \"headless\": false).")
+            self.log(f"Plugins: '{plugin.pid}' skipped - not for terminal "
+                     "mode")
+            return False
         if not plugin.api_ok:
             # the same idea one step earlier: a plugin built against a
             # newer API would import fine and then call something that
@@ -1693,6 +1715,75 @@ class PluginManager:
     def is_enabled(self, pid):
         plugin = self.plugins.get(pid)
         return bool(plugin and plugin.enabled)
+
+    # -------------------------------------------------------- profiles
+    # What a profile carries of a plugin: everything in its config.json
+    # except "enabled" (that is the plugin_<id> key in the profile itself)
+    # and "chat" (the user's "may this plugin write to the chatbox"
+    # answer belongs to this machine, not to a setup someone shares).
+    PROFILE_SKIP_KEYS = frozenset(("enabled", "chat"))
+
+    def profile_state(self):
+        """({id: on/off}, {id: settings}) of every installed plugin, for
+        saving into a profile. Keys a newer app wrote ride along."""
+        flags, settings = {}, {}
+        for pid in sorted(self.plugins):
+            entry = self.entry(pid)
+            flags[pid] = bool(entry.get("enabled"))
+            data = {k: self._json_safe(v) for k, v in entry.items()
+                    if k not in self.PROFILE_SKIP_KEYS and k != "extra"}
+            for key, value in (entry.get("extra") or {}).items():
+                data.setdefault(key, self._json_safe(value))
+            settings[pid] = data
+        return flags, settings
+
+    def apply_profile_settings(self, pid, data):
+        """Puts one plugin's settings from a profile into place. Unknown
+        or broken values fall back the same way a hand-edited config.json
+        does. True when something was applied."""
+        plugin = self.plugins.get(pid)
+        if plugin is None or not isinstance(data, dict):
+            return False
+        entry = self.entry(pid)
+        keep = {k: entry.get(k) for k in self.PROFILE_SKIP_KEYS}
+        raw = {k: v for k, v in data.items()
+               if k not in self.PROFILE_SKIP_KEYS}
+        raw.update({k: v for k, v in keep.items() if v is not None})
+        # same validation as reading config.json from disk
+        self.settings.pop(pid, None)
+        try:
+            plugin.config_dir.mkdir(parents=True, exist_ok=True)
+            write_text_atomic(plugin.config_file,
+                              json.dumps(raw, indent=2, ensure_ascii=False))
+        except Exception as e:      # noqa: BLE001
+            self.log(f"Plugins: could not apply the profile settings of "
+                     f"'{pid}': {e}")
+            self.settings[pid] = entry
+            return False
+        self._read_config(plugin)
+        self._snap = None
+        return True
+
+    def apply_profile(self, flags, settings):
+        """Loads the plugin part of a profile. Plugins the profile does
+        not mention are left alone. Returns the ids that are switched on
+        in the profile but not installed here."""
+        settings = settings or {}
+        missing = []
+        for pid, on in (flags or {}).items():
+            plugin = self.plugins.get(pid)
+            if plugin is None:
+                if on:
+                    missing.append(pid)
+                continue
+            changed = self.apply_profile_settings(pid, settings.get(pid))
+            if bool(on) != bool(plugin.enabled):
+                self.set_enabled(pid, on)
+            elif changed and plugin.enabled:
+                # new settings for a plugin that keeps running: reload so
+                # setup() sees them, exactly like a restart would
+                self.reload(pid)
+        return missing
 
     # -------------------------------------------------------- dispatch
     def _safe_call(self, plugin, hook, *args, **kwargs):

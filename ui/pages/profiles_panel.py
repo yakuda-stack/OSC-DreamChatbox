@@ -19,7 +19,10 @@ Mixin for MainWindow; all `self.*` refer to the MainWindow instance.
 
 from PyQt6.QtCore import QEvent, QObject, QSize, Qt, QTimer, QUrl
 from PyQt6.QtGui import QDesktopServices
-from PyQt6.QtWidgets import (QComboBox, QHBoxLayout, QInputDialog, QLabel,
+from pathlib import Path
+
+from PyQt6.QtWidgets import (QApplication, QComboBox, QFileDialog,
+                             QHBoxLayout, QInputDialog, QLabel,
                              QMessageBox, QPushButton, QSizePolicy,
                              QStyledItemDelegate, QVBoxLayout, QWidget)
 
@@ -31,6 +34,10 @@ NO_PROFILE_LABEL = "\u2014 no profile \u2014"
 #: first dropdown entry - not a profile, an action
 SAVE_NEW_LABEL = "\U0001F4BE  Save as new profile \u2026"
 SAVE_NEW_DATA = "\x00save-new"
+
+#: delay after start before asking "save into your profile?" - the
+#: window should be on screen and settled first
+PLUGIN_CHECK_DELAY_MS = 2500
 
 #: the bin drawn at the right end of every profile row in the dropdown
 BIN = "\U0001F5D1"
@@ -217,7 +224,7 @@ class ProfilesMixin:
             return
         self._store_live_config()
         try:
-            name = profiles.save_profile(name, self.cfg)
+            name = self._write_profile(name)
         except Exception as e:      # noqa: BLE001
             QMessageBox.warning(self, "New profile",
                                 f"Could not save the profile:\n{e}")
@@ -253,6 +260,9 @@ class ProfilesMixin:
             QMessageBox.warning(self, "Rename profile", str(e))
             return
         self.cfg[profiles.ACTIVE_KEY] = new
+        asked = self.cfg.get(profiles.ASKED_KEY)
+        if isinstance(asked, dict) and old in asked:
+            asked[new] = asked.pop(old)
         self.save_config()
         self.refresh_profile_combo()
         self.log(f"Profile renamed: \u201c{old}\u201d \u2192 \u201c{new}\u201d")
@@ -271,6 +281,9 @@ class ProfilesMixin:
                 "is removed.") != QMessageBox.StandardButton.Yes:
             return
         profiles.delete_profile(name)
+        asked = self.cfg.get(profiles.ASKED_KEY)
+        if isinstance(asked, dict):
+            asked.pop(name, None)
         if name == self.cfg.get(profiles.ACTIVE_KEY):
             self.cfg[profiles.ACTIVE_KEY] = ""
         self.save_config()
@@ -281,6 +294,382 @@ class ProfilesMixin:
         profiles.PROFILES_DIR.mkdir(parents=True, exist_ok=True)
         QDesktopServices.openUrl(
             QUrl.fromLocalFile(str(profiles.PROFILES_DIR)))
+
+    # ---------------------------------------------- default / exit / io
+    def ensure_default_profile(self):
+        """No profile at all (fresh install, or nobody ever made one):
+        the current settings become "Default" and it is active. Someone
+        who has profiles and picked "no profile" on purpose is left
+        alone."""
+        if profiles.list_profiles():
+            return
+        try:
+            name = self._write_profile(profiles.DEFAULT_NAME)
+        except Exception as e:      # noqa: BLE001
+            self.log(f"Profiles: could not create "
+                     f"\u201c{profiles.DEFAULT_NAME}\u201d: {e}")
+            return
+        self.cfg[profiles.ACTIVE_KEY] = name
+        self.save_config()
+        self.refresh_profile_combo()
+        self.log(f"Profile \u201c{name}\u201d created and active")
+
+    def save_profile_on_exit(self):
+        """closeEvent: the live settings into the active profile, if the
+        option is on (default). Never raises - closing must always work."""
+        if not self.cfg.get(profiles.SAVE_ON_EXIT_KEY, True):
+            return
+        name = self.active_profile()
+        if not name:
+            return
+        try:
+            self._write_profile(name)
+        except Exception as e:      # noqa: BLE001
+            print(f"closeEvent: profile \u201c{name}\u201d could not be "
+                  f"saved: {e}")
+
+    def on_profile_save_on_exit(self, on):
+        self.cfg[profiles.SAVE_ON_EXIT_KEY] = bool(on)
+        self.save_config()
+
+    def on_profile_export(self):
+        name = self._need_active_profile("Export profile")
+        if not name or not self._save_active_profile():
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export profile",
+            str(Path.home() / f"{name}{profiles.EXPORT_SUFFIX}"),
+            "DreamChatbox profile (*.json)")
+        if not path:
+            return
+        try:
+            profiles.export_profile(name, path)
+        except Exception as e:      # noqa: BLE001
+            QMessageBox.warning(self, "Export profile",
+                                f"Could not export:\n{e}")
+            return
+        self.log(f"Profile \u201c{name}\u201d exported \u2192 {path}")
+        QMessageBox.information(
+            self, "Export profile",
+            f"\u201c{name}\u201d exported with all settings and plugin "
+            f"settings:\n\n{path}")
+
+    def on_profile_import(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Import profile", str(Path.home()),
+            "DreamChatbox profile (*.json);;All files (*)")
+        if not path:
+            return
+        try:
+            name, stored, plugin_data = profiles.read_export(path)
+        except Exception as e:      # noqa: BLE001
+            QMessageBox.warning(self, "Import profile",
+                                f"This is not a profile file:\n{e}")
+            return
+        name = name or "Imported"
+        if profiles.exists(name):
+            box = QMessageBox(self)
+            box.setWindowTitle("Import profile")
+            box.setText(f"A profile called \u201c{name}\u201d already "
+                        "exists.")
+            replace = box.addButton("Replace",
+                                    QMessageBox.ButtonRole.DestructiveRole)
+            rename = box.addButton("Import with another name",
+                                   QMessageBox.ButtonRole.AcceptRole)
+            box.addButton(QMessageBox.StandardButton.Cancel)
+            box.exec()
+            if box.clickedButton() is rename:
+                name = self._ask_profile_name("Import profile", "Name:",
+                                              f"{name} (imported)")
+                if not name:
+                    return
+                if profiles.exists(name):
+                    QMessageBox.warning(
+                        self, "Import profile",
+                        f"\u201c{name}\u201d exists too \u2013 pick "
+                        "another name.")
+                    return
+            elif box.clickedButton() is not replace:
+                return
+        replacing_active = name == self.active_profile()
+        try:
+            name = profiles.import_profile(name, stored, plugin_data)
+        except Exception as e:      # noqa: BLE001
+            QMessageBox.warning(self, "Import profile",
+                                f"Could not import:\n{e}")
+            return
+        self.log(f"Profile \u201c{name}\u201d imported from {path}")
+        self.refresh_profile_combo()
+        if QMessageBox.question(
+                self, "Import profile",
+                f"\u201c{name}\u201d imported. Switch to it now?") \
+                != QMessageBox.StandardButton.Yes:
+            if replacing_active:
+                # the live settings would overwrite the import on the
+                # next save - detach instead
+                self.cfg[profiles.ACTIVE_KEY] = ""
+                self.save_config()
+                self.refresh_profile_combo()
+            return
+        if replacing_active:
+            # switch_profile() saves the active profile first, which
+            # would write the OLD live settings over what was just
+            # imported
+            self.cfg[profiles.ACTIVE_KEY] = ""
+        if not self.switch_profile(name):
+            self.refresh_profile_combo()
+
+    # ------------------------------------------------------- plugins
+    def queue_profile_plugin_check(self):
+        """Called ONCE at start. A single-shot timer, nothing that keeps
+        running: it fires one check a moment after the window is up."""
+        timer = getattr(self, "_plugin_check_timer", None)
+        if timer is None:
+            timer = QTimer(self)
+            timer.setSingleShot(True)
+            timer.timeout.connect(self._check_profile_plugins)
+            self._plugin_check_timer = timer
+        timer.start(PLUGIN_CHECK_DELAY_MS)
+
+    def _check_profile_plugins(self):
+        """Goes through all installed plugins (on or off) and asks ONCE per
+        plugin and profile whether the ones the active profile does not
+        list yet should be saved into it - all of them in one popup. Yes or no, the
+        answer is remembered (config.json, profile_plugins_asked), so the
+        same plugin never asks again for this profile."""
+        name = self.active_profile()
+        manager = getattr(self, "plugins", None)
+        if manager is None:
+            return
+        # busy installing, or the window not up yet: try again later
+        # instead of stacking a popup on top of another one
+        if getattr(self, "_store_busy", False) or not self.isVisible() \
+                or QApplication.activeModalWidget() is not None:
+            self.queue_profile_plugin_check()
+            return
+        asked = self.cfg.get(profiles.ASKED_KEY)
+        asked = dict(asked) if isinstance(asked, dict) else {}
+        if not name:
+            self._ask_where_plugins_go(manager, asked)
+            return
+        try:
+            stored = profiles.read_profile(name)
+        except Exception:           # noqa: BLE001
+            return
+        done = asked.get(name) if isinstance(asked.get(name), list) else []
+        new = profiles.plugins_to_ask(stored, manager.plugins, done)
+        if not new:
+            return
+        names = "\n".join(f"  \u2022 {manager.plugins[p].name}" for p in new)
+        answer = QMessageBox.question(
+            self, "Save plugins into profile?",
+            f"The profile \u201c{name}\u201d does not know "
+            f"{'this plugin' if len(new) == 1 else 'these plugins'} yet:"
+            f"\n\n{names}\n\nSave {'it' if len(new) == 1 else 'them'} "
+            "(on/off and settings) into the profile?\n\n"
+            "You are only asked once per plugin.")
+        asked[name] = sorted(set(done) | set(new))
+        self.cfg[profiles.ASKED_KEY] = asked
+        if answer == QMessageBox.StandardButton.Yes \
+                and self._save_active_profile():
+            self.log(f"Profile \u201c{name}\u201d: saved plugins "
+                     f"{', '.join(new)}")
+        self.save_config()
+
+    def _ask_where_plugins_go(self, manager, asked):
+        """No profile active: plugins that NO profile knows yet -> one
+        popup asking which profile they should go into. Asked once per
+        plugin (stored under "" in profile_plugins_asked)."""
+        names = profiles.list_profiles()
+        if not names:
+            return
+        done = asked.get("") if isinstance(asked.get(""), list) else []
+        new = profiles.plugins_in_no_profile(manager.plugins, asked=done)
+        if not new:
+            return
+        skip = "\u2014 don't save \u2014"
+        lines = "\n".join(f"  \u2022 {manager.plugins[p].name}" for p in new)
+        start = names.index(profiles.DEFAULT_NAME) \
+            if profiles.DEFAULT_NAME in names else 0
+        target, ok = QInputDialog.getItem(
+            self, "Save plugins into a profile?",
+            f"No profile is active, and no profile knows "
+            f"{'this plugin' if len(new) == 1 else 'these plugins'} yet:"
+            f"\n\n{lines}\n\nWhich profile should "
+            f"{'it' if len(new) == 1 else 'they'} be saved into "
+            "(on/off and settings)?\nYou are only asked once per plugin.",
+            names + [skip], start, False)
+        asked[""] = sorted(set(done) | set(new))
+        self.cfg[profiles.ASKED_KEY] = asked
+        self.save_config()
+        if not ok or target == skip or target not in names:
+            return
+        flags, settings = manager.profile_state()
+        try:
+            profiles.add_plugins(target, {p: flags[p] for p in new},
+                                 {p: settings[p] for p in new})
+        except Exception as e:      # noqa: BLE001
+            QMessageBox.warning(self, "Profiles",
+                                f"Could not save into \u201c{target}\u201d:"
+                                f"\n{e}")
+            return
+        self.log(f"Profile \u201c{target}\u201d: saved plugins "
+                 f"{', '.join(new)}")
+
+    def offer_profile_plugin_data(self, pids):
+        """Just installed `pids` (zip, rescan, store tab). If the active
+        profile has plugin_<id> for any of them, ask ONE question whether
+        to load its on/off state and settings. No timer - it runs right
+        where the install finished."""
+        name = self.active_profile()
+        manager = getattr(self, "plugins", None)
+        if not name or manager is None:
+            return
+        try:
+            stored = profiles.read_profile(name)
+        except Exception:           # noqa: BLE001
+            return
+        flags = profiles.plugin_flags(stored)
+        wanted = [p for p in pids if p in flags and p in manager.plugins]
+        if not wanted:
+            return
+        lines = "\n".join(
+            f"  \u2022 {manager.plugins[p].name}  "
+            f"({'on' if flags[p] else 'off'} in the profile)" for p in wanted)
+        if QMessageBox.question(
+                self, "Load profile data?",
+                f"The profile \u201c{name}\u201d has saved data for:"
+                f"\n\n{lines}\n\nLoad it (on/off and settings)?") \
+                != QMessageBox.StandardButton.Yes:
+            return
+        settings = profiles.read_plugin_settings(name)
+        manager.apply_profile({p: flags[p] for p in wanted}, settings)
+        self._after_plugin_change()
+        self.log(f"Profile \u201c{name}\u201d: loaded data for "
+                 f"{', '.join(wanted)}")
+
+    def _write_profile(self, name):
+        """Profile file + its plugin settings file. The plugin_<id> keys
+        are rebuilt from what is installed right now, so the profile
+        always matches the Plugins page."""
+        manager = getattr(self, "plugins", None)
+        flags, settings = (manager.profile_state() if manager is not None
+                           else ({}, {}))
+        name = profiles.save_profile(name, self.cfg, plugins=flags)
+        profiles.save_plugin_settings(name, settings)
+        return name
+
+    def _after_plugin_change(self):
+        for method in ("refresh_plugin_list", "_update_plugin_timer",
+                       "update_preview"):
+            fn = getattr(self, method, None)
+            if fn is not None:
+                fn()
+
+    def _load_profile_plugins(self, name, stored):
+        """Switches plugins on/off and puts their settings in place.
+        A profile without plugin_ keys (made before v1.5.7) changes
+        nothing here."""
+        manager = getattr(self, "plugins", None)
+        flags = profiles.plugin_flags(stored)
+        if manager is None or not flags:
+            return
+        settings = profiles.read_plugin_settings(name)
+        missing = manager.apply_profile(flags, settings)
+        self._after_plugin_change()
+        if missing:
+            self._offer_profile_plugins(name, missing, settings)
+
+    def _offer_profile_plugins(self, name, missing, settings):
+        """Looks the missing plugins up in the store (worker thread) and
+        offers to install them."""
+        store = getattr(self, "store", None)
+        if store is None or getattr(self, "_store_busy", False):
+            self.log(f"Profile “{name}” uses plugins that are not "
+                     f"installed: {', '.join(missing)}")
+            return
+        self._store_busy = True
+        installed = self._installed_versions()
+
+        def work():
+            known = {e.pid for e in store.entries if not e.error}
+            if not set(missing) <= known:
+                store.refresh(installed)
+            return {e.pid: e for e in store.entries
+                    if e.pid in missing and not e.error}
+
+        def failed(err):
+            self._store_busy = False
+            self.log(f"Profile “{name}”: could not reach the "
+                     f"plugin store ({err}) – missing: "
+                     f"{', '.join(missing)}")
+
+        self.run_async(
+            work,
+            lambda found: self._ask_profile_plugins(name, missing, found,
+                                                    settings),
+            interval=250, on_error=failed)
+
+    def _ask_profile_plugins(self, name, missing, found, settings):
+        self._store_busy = False
+        usable = [found[p] for p in missing
+                  if p in found and found[p].supported]
+        skipped = [p for p in missing if p not in {e.pid for e in usable}]
+        if skipped:
+            self.log(f"Profile “{name}”: not in the store or not "
+                     f"for this system: {', '.join(skipped)}")
+        if not usable:
+            return
+        names = "\n".join(f"  • {e.name}  ({e.version})" for e in usable)
+        if QMessageBox.question(
+                self, "Profile needs plugins",
+                f"The profile “{name}” uses plugins that are not "
+                f"installed yet:\n\n{names}\n\nInstall them now from the "
+                "plugin store?") != QMessageBox.StandardButton.Yes:
+            self.log(f"Profile “{name}”: plugins not installed "
+                     "(declined)")
+            return
+        self._store_busy = True
+        manager = self.plugins
+
+        def work():
+            done, errors = [], []
+            for entry in usable:
+                try:
+                    self.store.install(entry, manager)
+                    done.append(entry.pid)
+                except Exception as e:     # noqa: BLE001
+                    errors.append(f"{entry.name}: {e}")
+            return done, errors
+
+        def finished(result):
+            done, errors = result
+            self._store_busy = False
+            # the user may have switched on in the meantime - then the
+            # plugins stay installed, but the settings of THIS profile
+            # are not forced onto the other one
+            if self.active_profile() == name:
+                for pid in done:
+                    manager.apply_profile_settings(pid, settings.get(pid))
+                    manager.set_enabled(pid, True)
+            if done:
+                self.log(f"Profile “{name}”: installed "
+                         f"{', '.join(done)}")
+            if errors:
+                QMessageBox.warning(self, "Profile needs plugins",
+                                    "Some plugins could not be installed:"
+                                    "\n\n" + "\n".join(errors))
+            if hasattr(self.store, "sync_installed"):
+                self.store.sync_installed(self._installed_versions())
+            self._after_plugin_change()
+            fn = getattr(self, "refresh_store_grid", None)
+            if fn is not None:
+                fn()
+
+        self.run_async(work, finished, interval=250,
+                       on_error=lambda e: (setattr(self, "_store_busy",
+                                                   False),
+                                           self.log(f"Profile plugins: {e}")))
 
     # ------------------------------------------------------- switching
     def _store_live_config(self):
@@ -297,7 +686,7 @@ class ProfilesMixin:
             return True
         self._store_live_config()
         try:
-            profiles.save_profile(active, self.cfg)
+            self._write_profile(active)
             return True
         except Exception as e:      # noqa: BLE001
             QMessageBox.warning(
@@ -384,6 +773,7 @@ class ProfilesMixin:
                                                 True))
         self.apply_config_to_ui()
         self.refresh_media_sources()
+        self._load_profile_plugins(name, stored)
         self.update_timers()
         self.update_preview()
         self.refresh_profile_combo()

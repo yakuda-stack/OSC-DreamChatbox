@@ -404,7 +404,7 @@ Own **Plugins** page with two tabs: **Installed** and **Store**.
 - The catalogue is a list of GitHub links in `config/plugins.json`; **Refresh pulls the current list from GitHub**, so new plugins appear without updating the app
 - Every plugin is usable as `{plugin_id}` in status texts, in the Apps custom strings and in All in one — with its own custom string, if you set one
 - **Per-plugin settings** declared in `plugin.json` (text, switch, number, slider, dropdown, path, secret, action button, collapsible groups) are rendered automatically — a plugin author gets a settings UI without writing any Qt
-- `is_linux` / `is_windows` flags mark what a plugin can run on; anything incompatible is greyed out rather than hidden. Each row has a 🗑 button to uninstall it
+- `is_linux` / `is_windows` flags mark what a plugin can run on; anything incompatible is greyed out rather than hidden. `"headless": false` marks a plugin that does not work in terminal mode — it is simply not loaded there (default: true). Each row has a 🗑 button to uninstall it
 - Crash-safe by design: a broken plugin logs a traceback to the debug console and is skipped, it can never take the chatbox down
 - In the store: **World Stats** (players in your instance, world name, local clock, headset/controller battery), **OSCLeash** (runs ZenithVal's OSCLeash, which ships inside the plugin — nothing to install), **VR Autostart**, **Social Media** and **Stream Stats**
 - [**example_template**](https://github.com/yakuda-stack/Dream-Chatbox-Plugins/tree/main/template/example_template) to start your own: a plugin that actually runs, with every setting type next to every hook. Copy the folder, rename it, delete what you don't need
@@ -498,6 +498,10 @@ Pick a theme, then recolour anything you like — or drop an image behind the wi
 - Recolour **any** part of the active theme with a colour picker (accent, window, cards, inner boxes, borders, text …); overrides are kept per theme
 - **Background images** — import your own, switch between them, and adjust how solid the cards sit on top
 - **Profiles** — save complete setups (Gaming, Music, Translation …) via *Save as new profile …* in the sidebar dropdown and switch with one click; changes are kept in the active profile, **💾 next to the dropdown saves right away**. OSC target and theme stay shared. Rename, delete and the profiles folder: *Options › General › Profiles*. **Start with a profile:** `osc-dreamchatbox --profile="Gaming"` (window and `--headless`, AppImage/AUR/Windows too) — without it, the profile you used last is loaded
+  - **Plugins travel with the profile** — `plugin_<id>: true/false` at the end of the profile file switches them on/off, their settings are kept per profile in `profiles/plugins/<name>.json`. A profile that needs a plugin you don't have offers to install it from the store (profiles made before v1.5.7 leave plugins as they are). At start, plugins the active profile doesn't know yet are listed in **one** popup: save them into the profile? With no profile active, it asks **which** profile. Each plugin is asked only once. A plugin installed later (store, .zip or rescan) that the profile already lists asks whether to load its saved data
+  - **Default profile** — a fresh install (or anyone without a profile) starts with a profile called *Default*
+  - **Save on exit** — *Options › General › Profiles*: the active profile is saved when the app closes, plugin settings included (on by default)
+  - **Import / Export** — *Options › General › Profiles*: one `.dcbprofile.json` file with all settings and plugin settings; plain profile `.json` files import too. An import never changes your OSC target or theme
 
 </details>
 

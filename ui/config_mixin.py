@@ -236,6 +236,8 @@ class ConfigMixin:
             # request); "" behaves the same as switching it off.
             "media_lyrics_prefix_on": True,
             "media_lyrics_prefix": "\u266a",
+            # Options -> Profiles: save the active profile on exit
+            "profile_save_on_exit": True,
             # lyrics line cutoff; CHATBOX_LIMIT = no limit (default)
             "media_lyrics_max": CHATBOX_LIMIT,
             "media_show_bar": True,

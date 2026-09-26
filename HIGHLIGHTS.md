@@ -3,6 +3,12 @@
 The short version of every release — what you will actually notice.
 The full details are in the changelog.
 
+## v1.5.7 – 2026-09-26
+
+- **Plugins travel with your profile:** on/off and all plugin settings are saved per profile. A profile that needs a missing plugin offers to install it from the store.
+- **Default profile, save on exit, import/export:** new installs start with *Default*, the active profile is saved when you close the app, and *Options › General › Profiles* exports a profile (plugin settings included) into one file to share or back up.
+- **For plugin authors:** `"headless": false` in `plugin.json` keeps a plugin out of terminal mode.
+
 ## v1.5.6 – 2026-09-26
 
 - **Max length for lyrics:** new slider under *Lyrics* – long lines get shortened, so your songbar, box frame and slim characters no longer get cut off. Default: no limit.

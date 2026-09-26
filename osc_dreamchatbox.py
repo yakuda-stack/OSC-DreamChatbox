@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-OSC-DreamChatbox v1.5.6
+OSC-DreamChatbox v1.5.7
 A clean VRChat OSC chatbox sender.
 
 Entry point only – the actual code lives in:

@@ -6,6 +6,66 @@ All notable changes to OSC-DreamChatbox are documented here.
 
 🟢 Linux Support: Complete & Stable (v1.2.6)
 
+## [v1.5.7] – 2026-09-26
+
+**Plugins travel with profiles**, a *Default* profile, profile
+import/export, saving on exit – and a `headless` flag for plugins.
+
+### Added
+
+**Plugins in profiles**
+
+- A profile now lists its plugins at the end of the file:
+  `"plugin_oscleash": true`, `"plugin_afk": false`, … Loading a profile
+  switches them on/off.
+- Each profile keeps the settings of its plugins in
+  `profiles/plugins/<name>.json`: options, custom string, own line,
+  position and block order. The "may write to the chatbox" answer stays
+  per machine.
+- A profile that needs a plugin you don't have asks once whether to
+  install it from the store. Plugins that are not in the store (or not
+  for your system) are only logged – no crash, the profile loads anyway.
+- A plugin installed later (store, .zip or rescan) that the active
+  profile already lists asks whether to load its saved on/off state and
+  settings. Several at once share one popup.
+- At start, plugins the active profile does not know yet are listed in
+  **one** popup: save them into the profile? With no profile active, the
+  popup asks **which** profile they should go into. Each plugin is asked
+  only once.
+- Profiles made before v1.5.7 (no `plugin_` keys) leave plugins exactly
+  as they are.
+
+**Profiles**
+
+- **Default profile:** a fresh install – or anyone without a profile –
+  starts with a profile called *Default*.
+- **Save on exit** (*Options › General › Profiles*, on by default): the
+  active profile is saved when the app closes, plugin settings included.
+- **Export / Import** (*Options › General › Profiles*): one
+  `<name>.dcbprofile.json` with all settings and plugin settings. Plain
+  profile `.json` files import too. An existing name can be replaced or
+  imported under another name; afterwards the app offers to switch to
+  it. An import never changes your OSC target or theme.
+
+**Plugin API**
+
+- New manifest key `"headless": false` for plugins that do not work in
+  terminal mode. They are not loaded there (a note in the log and in
+  `DCB-plugin-status` instead of a traceback). Missing = `true`, so every
+  existing plugin behaves as before; the window is not affected.
+  Documented in `docs/PLUGIN_API.md`.
+
+### Changed
+
+- Rename and delete of a profile take its plugin settings file along.
+- README: profiles section and plugin flags updated.
+
+### Tests
+
+- `tests/test_profile_plugins.py`: plugin keys, settings file,
+  switching, missing plugins, popups, import/export and the `headless`
+  flag.
+
 ## [v1.5.6] – 2026-09-26
 
 **Max length for lyrics** and an AppImage that runs on Python 3.12 –
