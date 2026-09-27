@@ -52,7 +52,7 @@ from ui.ui_main import DragHandle, ToggleLabel, ToggleSwitch
 #: {text_t<X>} and {text_t<X>_<N>} in their canonical spelling - see
 #: core.textutils.canonical_placeholder(), which folds {text_template3},
 #: {text_tpl3_5} and {text_t03} onto exactly this shape first.
-_TEXT_T_RE = re.compile(r"^text_t(\d{1,2})(?:_(\d{1,2}))?$")
+_TEXT_T_RE = re.compile(r"^text_t(\d{1,2})(?:_(\d{1,3}))?$")
 
 
 class LazyStatusValues(dict):
@@ -2134,6 +2134,8 @@ class AppsPageMixin:
         self._update_texts_expander_label()
         self.status_index = 0
         self.save_config()
+        # the rotation timer depends on which template is active now
+        self.update_timers()
         self.update_preview()
         self.log(f"Personal Status: template {idx + 1} active")
 
@@ -2225,7 +2227,13 @@ class AppsPageMixin:
         texts = [t.strip() for t in
                  self.cfg["status_texts"][:self.cfg["status_count"]]]
         texts = [t for t in texts if t]
-        if len(texts) <= 1:
+        if len(texts) <= 1 or not self.cfg.get("status_active", True):
+            # nothing of the active template to rotate (or the card is
+            # off) - but {text_tX} of the OTHER templates still runs on
+            # this clock, so move it along without touching the chatbox
+            # line of Personal Status itself
+            self.status_tick = getattr(self, "status_tick", 0) + 1
+            self.update_preview()
             return
         current = self.status_index % len(texts)
         if self.cfg.get("status_random", True):
@@ -2265,6 +2273,9 @@ class AppsPageMixin:
         if self.pending_status_index is not None:
             self.status_index = self.pending_status_index
             self.pending_status_index = None
+            # one step on the shared clock - the other templates'
+            # {text_tX} follow it, see _template_pos()
+            self.status_tick = getattr(self, "status_tick", 0) + 1
 
     def _status_slots(self):
         """[(slot, text)] of the non-empty texts of the active template.
@@ -3689,9 +3700,38 @@ class AppsPageMixin:
         slot 4.
         """
         texts = tpl.get("texts") or []
-        count = min(20, max(1, int(tpl.get("count", 1) or 1)))
+        count = min(STATUS_MAX_TEXTS, max(1, int(tpl.get("count", 1) or 1)))
         return [(i, str(t).strip()) for i, t in enumerate(texts[:count])
                 if str(t).strip()]
+
+    def _template_pos(self, idx, n):
+        """Where the rotation of a NON-active template stands.
+
+        Every template walks its own list - the active template's index
+        used to be shared, so a first template with 2 texts pinned every
+        {text_tX} to its first two entries. They still step on the same
+        clock (status_tick, bumped once per switch), just each through
+        its own texts, in the order the Random order checkbox says.
+        """
+        rot = self.__dict__.setdefault("_tpl_rotation", {})
+        tick = getattr(self, "status_tick", 0)
+        seen, pos = rot.get(idx, (tick, 0))
+        if seen != tick and n > 1:
+            if self.cfg.get("status_random", True):
+                pos = random.choice([i for i in range(n) if i != pos % n])
+            else:
+                pos += tick - seen
+        pos %= max(1, n)
+        rot[idx] = (tick, pos)
+        return pos
+
+    def other_templates_rotate(self):
+        """True when a template other than the active one has more than
+        one text - its {text_tX} needs the rotation timer running."""
+        tpls = self.cfg.get("status_templates") or []
+        active = int(self.cfg.get("status_template_active", 0))
+        return any(len(self._template_slots(t)) > 1
+                   for i, t in enumerate(tpls) if i != active)
 
     @staticmethod
     def _template_style(tpl, slot):
@@ -3757,11 +3797,16 @@ class AppsPageMixin:
             # an empty template falls back to the active one, so a
             # template you have not filled in yet does not silently blank
             # the line it sits on
+            idx = active
             tpl = tpls[active]
             slots = self._template_slots(tpl)
         if not slots:
             return ""
-        slot, text = slots[self.status_index % len(slots)]
+        if idx == active:
+            pos = self.status_index % len(slots)
+        else:
+            pos = self._template_pos(idx, len(slots))
+        slot, text = slots[pos]
         return self._render_status(
             text, self._template_style(tpl, slot)) or None
 

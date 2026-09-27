@@ -200,7 +200,7 @@ PLACEHOLDER_ALIASES = {
 #: folded onto one canonical spelling, text_t<X>[_<N>], so the value side
 #: only has to answer one shape. See ui/pages/apps_page.py.
 _TEXT_TEMPLATE_RE = re.compile(
-    r"^text_(?:t|tpl|template)(\d{1,2})(?:_(\d{1,2}))?$")
+    r"^text_(?:t|tpl|template)(\d{1,2})(?:_(\d{1,3}))?$")
 
 
 def canonical_placeholder(key: str) -> str:

@@ -3,6 +3,10 @@
 The short version of every release — what you will actually notice.
 The full details are in the changelog.
 
+## v1.5.10 – 2026-09-27
+
+- **Fix:** `{text_t2}` & co. now rotate through *all* texts of their own template – not just as many as the active template has.
+
 ## v1.5.9 – 2026-09-27
 
 - **Up to 100 Personal Status texts** per template (was 20) – perfect for random quotes.

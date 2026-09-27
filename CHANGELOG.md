@@ -6,6 +6,19 @@ All notable changes to OSC-DreamChatbox are documented here.
 
 🟢 Linux Support: Complete & Stable (v1.2.6)
 
+## [v1.5.10] – 2026-09-27
+
+### Fixed
+
+- **`{text_tX}` of other templates used the active template's list
+  index** – with 2 texts in template 1, `{text_t2}` only ever showed the
+  first two texts of template 2. Every template now walks its own list
+  (own position, Random order respected), still on the same clock. They
+  also keep rotating when the active template has only one text or
+  Personal Status is off.
+- The other templates were still capped at 20 texts, and
+  `{text_tX_N}` only took two-digit slot numbers – both now go to 100.
+
 ## [v1.5.9] – 2026-09-27
 
 From user feedback: more status texts, a CPU temp sensor picker and

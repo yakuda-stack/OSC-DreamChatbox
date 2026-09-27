@@ -1079,8 +1079,11 @@ class MainWindow(ConfigMixin, AppsPageMixin, AdvancedPageMixin,
         active_texts = [t for t in
                         self.cfg["status_texts"][:self.cfg["status_count"]]
                         if t.strip()]
-        if (self.cfg["status_active"] and self.cfg["status_count"] > 1
-                and len(active_texts) > 1):
+        # also runs for {text_tX}: another template with 2+ texts rotates
+        # on this clock even when the active one has a single text
+        if ((self.cfg["status_active"] and self.cfg["status_count"] > 1
+                and len(active_texts) > 1)
+                or self.other_templates_rotate()):
             self.rotate_timer.start(self.cfg["status_cycle_sec"] * 1000)
         else:
             self.rotate_timer.stop()
