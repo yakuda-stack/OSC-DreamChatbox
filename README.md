@@ -44,7 +44,7 @@ Status rotation, now-playing, hardware stats, speech-to-text, live translation, 
 
 | | |
 |---|---|
-| 📝 **Personal Status** | 10 templates × 20 texts, rotating, with icon picker |
+| 📝 **Personal Status** | 10 templates × 100 texts, rotating, with icon picker |
 | 🎵 **MediaPlay** | Spotify / YT Music / VLC / browser — title, time, songbar, synced lyrics |
 | 🖥️ **Hardware** | GPU / CPU / RAM / VRAM, temps, watts, FPS |
 | 🧩 **All in one** | Merge everything into one master string, 10 layouts |
@@ -180,7 +180,7 @@ Rotating one-liners about you — the card everyone starts with.
 <details>
 <summary><b>Details</b></summary>
 
-- **10 switchable text templates**, each with its own set of up to **20 texts** — exclusive toggles, enabling one switches the others off
+- **10 switchable text templates**, each with its own set of up to **100 texts** (20 before v1.5.9) — exclusive toggles, enabling one switches the others off
 - Adjustable change interval (10 s minimum); texts are pushed to VRChat the moment they change
 - **Random order** (default) picks any text but the one currently up; turn it off and the texts run top to bottom and start over. Empty fields are skipped either way
 - Per text a **size style**: Normal · Superscript ᴴᴬᴸᴸᴼ · Subscript — same character count, less height in the chatbox
@@ -277,11 +277,12 @@ Live GPU / VRAM / CPU / RAM stats in the chatbox.
 
 - Settings laid out as a **2×2 grid** of component boxes (GPU · VRAM · CPU · RAM) since v1.4.5, each with its own checkboxes and, for GPU and CPU, a custom name and its size style on one row
 - Auto-detected or custom GPU/CPU names, temps as `°C` or 🔥
+- **CPU temp sensor** (v1.5.9) — dropdown in the CPU box with every temperature sensor the machine has (hwmon on Linux, LibreHardwareMonitor on Windows) and its current value. *Automatic* keeps the old pick; choose another one when the CPU temperature looks wrong
 - **Select GPU** (v1.5.1) — a dropdown in the GPU box lists every card the machine has, so a desktop Ryzen no longer reports on the Radeon inside the CPU when you meant the discrete card. Automatic still takes the one with the most VRAM
 - **Second GPU** (v1.5.1) — a *GPU 2* box in the same style as the others, hidden until you tick "I have a second GPU". Pick the second card and it comes with its own checkboxes, custom name and placeholders: `{gpu2_name} {gpu2_usage} {gpu2_temp} {gpu2_power} {vram2_usage} {vram2_pct}`. In the generated layout it takes its own line or joins the first one (`GPU: 42% 61°C | GPU2: 7% 44°C`); in a custom string, an All-in-one string or on the node canvas (*GPU 2* block) you place it yourself. Per-card readings come from sysfs on Linux and from `nvidia-smi` on Windows, where the counters Windows offers are machine-wide rather than per card
 - **Power draw in watts** — one tick per section puts it next to the temperature (`GPU: 68% 61°C 213W`) and fills `{gpu_power}` / `{cpu_power}`. Off by default, so no existing line gets longer without being asked. NVIDIA always reports it; AMD needs amdgpu's hwmon node, CPU watts need zenpower or readable RAPL counters, and on Windows both come from LibreHardwareMonitor
 - **FPS** — lives in the **World Stats plugin** since v1.4.4, not on this card. A frame rate only exists inside the process drawing it, so reading one means loading something into the game: a Vulkan layer on Linux, RTSS on Windows. The plugin owns both, along with the build step and the settings
-- Custom string with placeholders: `{gpu_name} {gpu_usage} {gpu_temp} {gpu_power} {temp_icon} {vram_usage} {cpu_name} {cpu_usage} {cpu_temp} {cpu_power} {ram_usage} {ram_type} {fps}` — plus the `{gpu2_*}` / `{vram2_*}` set for the second card
+- Custom string with placeholders: `{gpu_name} {gpu_usage} {gpu_temp} {gpu_power} {temp_icon} {vram_usage} {cpu_name} {cpu_usage} {cpu_temp} {cpu_power} {ram_usage} {ram_type} {fps}` — `{ram_usage}` / `{vram_usage}` follow the Numbers + Percent ticks together, `{ram_used}` / `{vram_used}` are the numbers only (v1.5.9), `{ram_pct}` / `{vram_pct}` the percent only — plus the `{gpu2_*}` / `{vram2_*}` set for the second card
 
 **About CPU temperatures on Windows:** they live in registers only kernel-mode code can read, so *no* normal program can get them — administrator rights do not change that. Every tool that shows them ships a signed kernel driver. This app does **not** ship one (the usual candidate, WinRing0, has published privilege-escalation CVEs). Instead the Hardware card has a button that starts a small elevated helper reading everything reachable without a driver — ACPI thermal zones, which work on most laptops — and drives [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor) if you have it installed, which does have the driver. On desktop boards you will most likely need LHM; the button links it.
 

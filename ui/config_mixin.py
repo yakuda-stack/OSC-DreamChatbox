@@ -13,7 +13,7 @@ from core.audiolevel import THRESHOLD_DEFAULT, clamp_threshold
 from core.lyrics_sources import DEFAULT_SOURCES, normalize_sources
 from core.textstyle import STYLE_NORMAL, normalize as normalize_style
 from core.constants import (
-    AFK_PRESET_COUNT, AIO_MAX, CHAT_MODES, CHATBOX_LIMIT, DEFAULT_AFK_PARAM, DEFAULT_AFK_TEXTS, DEFAULT_AFK_TIMER_TEXT, DEFAULT_TRANSLATE_NOTICE, CHAT_MODE_DIRECT, CONFIG_DIR, CONFIG_FILE, GPU2_MODE_LINE, LYRICS_DIR, MIN_STATUS_CYCLE_SEC, normalize_gpu2_mode, OLD_CONFIG_FILE, SLIM_SUFFIX, TITLE_MAX_LEN)
+    AFK_PRESET_COUNT, AIO_MAX, CHAT_MODES, CHATBOX_LIMIT, DEFAULT_AFK_PARAM, DEFAULT_AFK_TEXTS, DEFAULT_AFK_TIMER_TEXT, DEFAULT_TRANSLATE_NOTICE, CHAT_MODE_DIRECT, CONFIG_DIR, CONFIG_FILE, GPU2_MODE_LINE, LYRICS_DIR, MIN_STATUS_CYCLE_SEC, normalize_gpu2_mode, STATUS_MAX_TEXTS, OLD_CONFIG_FILE, SLIM_SUFFIX, TITLE_MAX_LEN)
 from core.boxstyle import (
     CLOCK_24_HM, DEFAULT_CUSTOM_BOX, MODE_CUSTOM as BOX_MODE_CUSTOM, normalize_clock_format, normalize_custom as normalize_box_custom, normalize_mode as normalize_box_mode, normalize_template as normalize_box_template, normalize_width as normalize_box_width)
 from core.textutils import DEFAULT_CUSTOM_BAR, TIME_POS_LINE
@@ -157,21 +157,21 @@ class ConfigMixin:
         defaults = {
             "status_text": "",
             # mirror of the ACTIVE template; pre-filled on first start
-            "status_texts": list(seed) + [""] * (20 - len(seed)),
+            "status_texts": list(seed) + [""] * (STATUS_MAX_TEXTS - len(seed)),
             # per text: normal | super | sub (see core/textstyle.py)
-            "status_styles": [STYLE_NORMAL] * 20,
+            "status_styles": [STYLE_NORMAL] * STATUS_MAX_TEXTS,
             "status_count": max(1, len(seed)),
             "status_cycle_sec": 10,
             # how the next text is picked: random (the old and only
             # behaviour) or straight down the list. True keeps every
             # existing config doing exactly what it did before.
             "status_random": True,
-            # 10 switchable text templates, each with its own 1-20 texts
+            # 10 switchable text templates, each with its own 1-STATUS_MAX_TEXTS texts
             "status_templates": [
                 {"name": f"Template {i + 1}",
-                 "texts": (list(seed) + [""] * (20 - len(seed))
-                           if i == 0 else [""] * 20),
-                 "styles": [STYLE_NORMAL] * 20,
+                 "texts": (list(seed) + [""] * (STATUS_MAX_TEXTS - len(seed))
+                           if i == 0 else [""] * STATUS_MAX_TEXTS),
+                 "styles": [STYLE_NORMAL] * STATUS_MAX_TEXTS,
                  "count": max(1, len(seed)) if i == 0 else 1}
                 for i in range(10)
             ],
@@ -467,6 +467,10 @@ class ConfigMixin:
             # before this one. The id itself comes from
             # HardwareMonitor.list_gpus(): "nvidia:0", "amd:card1", ...
             "hw_gpu_select": "",
+            # CPU temperature sensor (v1.5.9). Empty = automatic (k10temp /
+            # zenpower / coretemp on Linux, LHM scoring on Windows); else
+            # an id from HardwareMonitor.list_temp_sensors()
+            "hw_cpu_temp_sensor": "",
             "hw_gpu2": False,
             "hw_gpu2_select": "",
             # Own line, or appended to the GPU line. Only decides the
@@ -533,26 +537,28 @@ class ConfigMixin:
         # migrate the old single status text into the text list
         texts = defaults.get("status_texts")
         if not isinstance(texts, list):
-            texts = [""] * 20
-        # 20 slots, not 10: normalising through a 10 wide window silently
+            texts = [""] * STATUS_MAX_TEXTS
+        # all slots, not 10: normalising through a 10 wide window silently
         # dropped slots 11-20 and only the template copy below put them
         # back - which fails the moment the active template is empty.
-        texts = [str(t) for t in texts][:20] + [""] * max(0, 20 - len(texts))
+        texts = ([str(t) for t in texts][:STATUS_MAX_TEXTS]
+                 + [""] * max(0, STATUS_MAX_TEXTS - len(texts)))
         if defaults.get("status_text") and not any(t.strip() for t in texts):
             texts[0] = defaults["status_text"]
         defaults["status_texts"] = texts
-        # pad the active texts to 20 (older configs had 10)
-        while len(defaults["status_texts"]) < 20:
+        # pad the active texts to the cap (older configs had 10 / 20)
+        while len(defaults["status_texts"]) < STATUS_MAX_TEXTS:
             defaults["status_texts"].append("")
-        defaults["status_count"] = min(20, max(1, int(defaults.get("status_count", 1))))
-        # per-text styles: same 20 slots as the texts. Configs written
+        defaults["status_count"] = min(STATUS_MAX_TEXTS, max(1, int(
+            defaults.get("status_count", 1))))
+        # per-text styles: same slots as the texts. Configs written
         # before v1.3.2 have none, so everything defaults to normal and
         # nothing about an existing setup changes on update.
         styles = defaults.get("status_styles")
         if not isinstance(styles, list):
             styles = []
-        styles = [normalize_style(x) for x in styles][:20]
-        styles += [STYLE_NORMAL] * (20 - len(styles))
+        styles = [normalize_style(x) for x in styles][:STATUS_MAX_TEXTS]
+        styles += [STYLE_NORMAL] * (STATUS_MAX_TEXTS - len(styles))
         defaults["status_styles"] = styles
         for key in ("hw_gpu_name_style", "hw_gpu2_name_style",
                     "hw_cpu_name_style", "media_time_style", "afk_style"):
@@ -562,7 +568,7 @@ class ConfigMixin:
         # when the Hardware card fills its dropdowns (see apps_page.py) -
         # here they are only forced into the right type, because a config
         # written on another machine is a normal thing to carry around.
-        for key in ("hw_gpu_select", "hw_gpu2_select"):
+        for key in ("hw_gpu_select", "hw_gpu2_select", "hw_cpu_temp_sensor"):
             value = defaults.get(key)
             defaults[key] = value.strip() if isinstance(value, str) else ""
         defaults["hw_gpu2_mode"] = normalize_gpu2_mode(
@@ -629,11 +635,12 @@ class ConfigMixin:
                      "count": 1} for i in range(10)]
         for t in tpls:
             t.setdefault("name", "Template")
-            t["texts"] = (list(t.get("texts", [])) + [""] * 20)[:20]
+            t["texts"] = (list(t.get("texts", []))
+                          + [""] * STATUS_MAX_TEXTS)[:STATUS_MAX_TEXTS]
             t["styles"] = ([normalize_style(x) for x in
                             (t.get("styles") or [])]
-                           + [STYLE_NORMAL] * 20)[:20]
-            t["count"] = min(20, max(1, int(t.get("count", 1))))
+                           + [STYLE_NORMAL] * STATUS_MAX_TEXTS)[:STATUS_MAX_TEXTS]
+            t["count"] = min(STATUS_MAX_TEXTS, max(1, int(t.get("count", 1))))
         defaults["status_templates"] = tpls
         idx = min(9, max(0, int(defaults.get("status_template_active", 0))))
         defaults["status_template_active"] = idx

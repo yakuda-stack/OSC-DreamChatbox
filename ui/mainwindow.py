@@ -652,6 +652,7 @@ class MainWindow(ConfigMixin, AppsPageMixin, AdvancedPageMixin,
         self._write_config()
 
     def _apply_config_to_ui(self):
+        self._ensure_status_rows(self.cfg["status_count"])
         self._block_updating = True
         for i, edit in enumerate(self.status_edits):
             edit.setText(self.cfg["status_texts"][i])
@@ -890,6 +891,7 @@ class MainWindow(ConfigMixin, AppsPageMixin, AdvancedPageMixin,
         # After the checkboxes above, because it reads hw_gpu2 to decide
         # whether a second card is polled at all.
         self._fill_gpu_combos()
+        self._fill_cpu_temp_combo()
         self.chk_vram_used.setChecked(self.cfg["hw_vram_used"])
         self.chk_vram_pct.setChecked(self.cfg["hw_vram_pct"])
         self.chk_ram_used.setChecked(self.cfg["hw_ram_used"])

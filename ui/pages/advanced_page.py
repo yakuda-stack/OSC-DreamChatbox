@@ -27,7 +27,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout, QLabel, QLineEdit, QListWidget, QPlainTextEdit,
     QPushButton, QSpinBox, QVBoxLayout, QWidget)
 
-from core.constants import AIO_MAX
+from core.constants import AIO_MAX, STATUS_MAX_TEXTS
 from core.hotkeys import IS_WINDOWS
 from core.hotkeys import describe as describe_hotkey
 from core.nodegraph_eval import node_count
@@ -473,9 +473,11 @@ class AdvancedPageMixin:
                     out.append((match.group(1), note))
             return out
 
+        slots = min(STATUS_MAX_TEXTS,
+                    max(20, int(self.cfg.get("status_count", 20) or 20)))
         groups = [("Personal Status", [
             ("text", "the rotating status text"),
-        ] + [(f"text_{i}", f"status slot {i}") for i in range(1, 21)]
+        ] + [(f"text_{i}", f"status slot {i}") for i in range(1, slots + 1)]
             + [(f"text_t{t}", f"the rotating text of template {t}")
                for t in range(1, 11)])]
         for name, items in HARDWARE_GROUPS:

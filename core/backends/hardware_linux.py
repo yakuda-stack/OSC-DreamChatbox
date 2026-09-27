@@ -224,6 +224,11 @@ class HardwareMonitor:
 
     def _init(self, log_fn):
         self._hwmon_cache = {}
+        #: CPU temp sensor picked on the Hardware card (an id from
+        #: list_temp_sensors()); None = automatic, see cpu_temp()
+        self.sel_cpu_temp = None
+        self._sel_temp_path = None
+        self._sel_temp_warned = False
         self.log = log_fn
         self._prev_cpu = None          # (idle, total) from /proc/stat
         # RAPL is a cumulative counter, so watts only exist as a delta -
@@ -525,7 +530,71 @@ class HardwareMonitor:
         return None
 
     def cpu_temp(self):
+        if self.sel_cpu_temp:
+            v = self._selected_temp()
+            if v is not None:
+                return v
         return self._hwmon_temp({"k10temp", "zenpower", "coretemp", "cpu_thermal"})
+
+    # ------------------------------------------------ CPU temp selection
+    @staticmethod
+    def _num_key(p):
+        """hwmon10 after hwmon9, temp10 after temp9."""
+        m = re.search(r"(\d+)", p.name)
+        return int(m.group(1)) if m else 0
+
+    def list_temp_sensors(self):
+        """Every temperature hwmon offers, for the CPU sensor dropdown.
+
+        [{"id", "label", "value"}]. The id is driver name + sensor label
+        ("k10temp/Tctl", "coretemp/Package id 0"), never the hwmonN
+        number - that one changes between boots, the driver name does
+        not. Two identical ids (two NVMe drives) get "#2", "#3".
+        """
+        out, seen = [], {}
+        try:
+            nodes = sorted(Path("/sys/class/hwmon").glob("hwmon*"),
+                           key=self._num_key)
+        except OSError:
+            return out
+        for hw in nodes:
+            name = (_read(hw / "name") or "?").strip()
+            for f in sorted(hw.glob("temp*_input"), key=self._num_key):
+                try:
+                    val = int(_read(f) or "") / 1000.0
+                except ValueError:
+                    continue
+                stem = f.name[:-len("_input")]
+                label = (_read(hw / f"{stem}_label") or stem).strip()
+                base = f"{name}/{label}"
+                n = seen.get(base, 0) + 1
+                seen[base] = n
+                out.append({"id": base if n == 1 else f"{base}#{n}",
+                            "label": f"{name} \u00b7 {label}",
+                            "value": val, "path": f})
+        return out
+
+    def select_cpu_temp(self, sensor_id=None):
+        self.sel_cpu_temp = sensor_id or None
+        self._sel_temp_path = None
+        self._sel_temp_warned = False
+
+    def _selected_temp(self):
+        path = self._sel_temp_path
+        if path is not None:
+            try:
+                return int(_read(path) or "") / 1000.0
+            except ValueError:
+                self._sel_temp_path = None     # re-resolve below
+        for s in self.list_temp_sensors():
+            if s["id"] == self.sel_cpu_temp:
+                self._sel_temp_path = s["path"]
+                return s["value"]
+        if not self._sel_temp_warned:
+            self._sel_temp_warned = True
+            self.log(f"Hardware: CPU temp sensor '{self.sel_cpu_temp}' not "
+                     "found - using the automatic one.")
+        return None
 
     def amd_gpu_temp(self, card=None):
         """Same reasoning as amd_gpu_power(): our card's own node first,

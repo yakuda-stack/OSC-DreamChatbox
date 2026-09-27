@@ -6,6 +6,30 @@ All notable changes to OSC-DreamChatbox are documented here.
 
 🟢 Linux Support: Complete & Stable (v1.2.6)
 
+## [v1.5.9] – 2026-09-27
+
+From user feedback: more status texts, a CPU temp sensor picker and
+numbers-only RAM/VRAM placeholders.
+
+### Added
+
+- **Personal Status: up to 100 texts per template** (was 20) – for
+  people who use the rotation as a quote list. `STATUS_MAX_TEXTS` in
+  `core/constants.py`. The text rows are built on demand, so nothing
+  gets heavier until you raise *Number of texts*. `{text_N}`,
+  `{text_tX_N}`, the placeholder menu, the node canvas (*Status text*
+  entry) and the Advanced variable list all follow. Existing configs
+  are padded, nothing is lost.
+- **CPU temp sensor dropdown** in the CPU box of the Hardware card.
+  Lists every temperature sensor with its current value – Linux: all
+  hwmon nodes, id = driver + label (`k10temp/Tccd1`, stable across
+  boots); Windows: every temperature in LibreHardwareMonitor's tree.
+  *Automatic* (default) behaves as before; a sensor that is gone falls
+  back to automatic with one log line. Config key `hw_cpu_temp_sensor`.
+- `{ram_used}`, `{vram_used}`, `{vram2_used}` – used/total as numbers
+  only. `{ram_usage}` / `{vram_usage}` stay as they were (numbers and/or
+  percent, whatever is ticked), so no existing string changes.
+
 ## [v1.5.8] – 2026-09-26
 
 **Store search with tags**, three new MediaPlay placeholders and a

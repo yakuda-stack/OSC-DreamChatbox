@@ -27,6 +27,7 @@ import datetime
 import re
 import time
 
+from core.constants import STATUS_MAX_TEXTS
 from core.oscin import coerce_value, format_value, value_type
 from core.textstyle import STYLE_SUB, STYLE_SUPER, apply_style
 from core.textutils import EMPTY_MARK, strip_marks, substitute_placeholders
@@ -387,7 +388,8 @@ class _Evaluator:
             name = prefix
         else:
             try:
-                entry = max(1, min(20, int(values.get("entry", 1))))
+                entry = max(1, min(STATUS_MAX_TEXTS,
+                                   int(values.get("entry", 1))))
             except (TypeError, ValueError):
                 entry = 1
             name = f"{prefix}_{entry}"

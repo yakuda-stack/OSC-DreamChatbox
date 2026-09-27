@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import (
 from core.constants import (
     AFK_PRESET_COUNT, AIO_MAX, DEFAULT_AFK_PARAM, DEFAULT_AFK_TEXTS,
     DEFAULT_AFK_TIMER_TEXT, GPU2_MODE_INLINE, GPU2_MODE_LINE, ORIGINS, ORIGIN_CHAT,
-    CHATBOX_LIMIT, LYRICS_DIR, MIN_STATUS_CYCLE_SEC, SLIM_SUFFIX, SONGBAR_LEN, TITLE_MAX_LEN,
+    CHATBOX_LIMIT, LYRICS_DIR, MIN_STATUS_CYCLE_SEC, SLIM_SUFFIX, SONGBAR_LEN, STATUS_MAX_TEXTS, TITLE_MAX_LEN,
     LYRICS_MAX_MIN)
 from core.lyrics_sources import SOURCES, normalize_sources
 from core.afk import (
@@ -142,7 +142,7 @@ class AppsPageMixin:
             b.setFixedSize(30, 26)
             b.setCursor(Qt.CursorShape.PointingHandCursor)
             b.setToolTip(f"Text template {i + 1} \u2013 own set of "
-                         "up to 20 texts")
+                         f"up to {STATUS_MAX_TEXTS} texts")
             b.setStyleSheet(
                 "QPushButton { background: #232833; border: 1px solid"
                 " #333947; border-radius: 6px; color: #aeb4bf; }"
@@ -160,7 +160,7 @@ class AppsPageMixin:
         cnt_row.addWidget(QLabel("Number of texts"))
         self.status_count_spin = QSpinBox()
         self.status_count_spin.setObjectName("smallspin")
-        self.status_count_spin.setRange(1, 20)
+        self.status_count_spin.setRange(1, STATUS_MAX_TEXTS)
         self.status_count_spin.setFixedSize(64, 28)
         self.status_count_spin.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.status_count_spin.valueChanged.connect(self.on_status_count)
@@ -232,41 +232,14 @@ class AppsPageMixin:
         style_info.setWordWrap(True)
         tc.addWidget(style_info)
 
-        # 20 text fields, visibility follows "Number of texts"
+        # text fields, visibility follows "Number of texts". Only as many
+        # rows as are needed get built (see _ensure_status_rows) - with
+        # STATUS_MAX_TEXTS at 100, building them all up front would mean
+        # 400 hidden widgets nobody asked for.
+        self._status_texts_layout = tc
         self.status_rows = []
         self.status_edits = []
         self.status_style_combos = []
-        for i in range(20):
-            row_w = QWidget()
-            row = QHBoxLayout(row_w)
-            row.setContentsMargins(0, 0, 0, 0)
-            row.setSpacing(6)
-            lbl = QLabel(f"Text {i + 1}:")
-            lbl.setFixedWidth(52)
-            row.addWidget(lbl)
-            edit = QLineEdit()
-            edit.setPlaceholderText("[Status Text goes here]")
-            edit.setMaxLength(CHATBOX_LIMIT - len(SLIM_SUFFIX))
-            edit.textChanged.connect(lambda t, idx=i: self.on_status_text(idx, t))
-            row.addWidget(edit, 1)
-            icon_btn = QPushButton("\U0001F600")
-            icon_btn.setObjectName("iconbtn")
-            icon_btn.setFixedSize(30, 30)
-            icon_btn.setToolTip("Insert icon")
-            icon_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            icon_btn.clicked.connect(
-                lambda _, e=edit, b=icon_btn: self.emoji_popup.open_for(e, b))
-            row.addWidget(icon_btn)
-            combo = self._make_style_combo(
-                f"How text {i + 1} is rendered in the chatbox")
-            combo.currentIndexChanged.connect(
-                lambda _idx, slot=i, cb=combo:
-                self.on_status_style(slot, cb.currentData()))
-            row.addWidget(combo)
-            tc.addWidget(row_w)
-            self.status_rows.append(row_w)
-            self.status_edits.append(edit)
-            self.status_style_combos.append(combo)
         sc.addWidget(self.texts_container)
 
         # ---- AFK ----------------------------------------------------
@@ -1144,6 +1117,38 @@ class AppsPageMixin:
         (self.chk_cpu_custom, self.cpu_custom_input,
          self.cpu_style_combo) = self._hw_name_row(
             cpu, "cpu", "Ryzen 7 9700X / i7 12700K / \u2026")
+        # Which temperature sensor {cpu_temp} reads. The automatic pick
+        # is right on most boards, but not all: some report an offset
+        # Tctl, some only a motherboard sensor. Filled asynchronously in
+        # _fill_cpu_temp_combo() - on Windows the list comes from LHM.
+        tbox, trow = self._sub_group()
+        tlbl = QLabel("Temp sensor")
+        tlbl.setObjectName("dim")
+        trow.addWidget(tlbl)
+        self.cpu_temp_combo = QComboBox()
+        self.cpu_temp_combo.setToolTip(
+            "Which sensor the CPU temperature comes from.\n\n"
+            "Automatic takes the CPU package sensor (k10temp / zenpower / "
+            "coretemp on Linux, Tctl/Package from LibreHardwareMonitor on "
+            "Windows). If that value looks wrong, pick another one - the "
+            "current reading is shown behind each entry.")
+        self.cpu_temp_combo.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.cpu_temp_combo.setMinimumWidth(0)
+        self.cpu_temp_combo.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.cpu_temp_combo.addItem("Automatic", "")
+        self.cpu_temp_combo.currentIndexChanged.connect(
+            lambda _i: self.on_cpu_temp_select(
+                self.cpu_temp_combo.currentData()))
+        trow.addWidget(self.cpu_temp_combo, 1)
+        tref = QPushButton("\u27F3")
+        tref.setObjectName("iconbtn")
+        tref.setFixedSize(30, 30)
+        tref.setToolTip("Re-read the sensor list and the current values")
+        tref.setCursor(Qt.CursorShape.PointingHandCursor)
+        tref.clicked.connect(self._fill_cpu_temp_combo)
+        trow.addWidget(tref)
+        cpu.addWidget(tbox)
         comp.addWidget(cpu_box, 1, 0)
 
         # ----- RAM -----
@@ -1365,10 +1370,13 @@ class AppsPageMixin:
             ("Placeholders",
              "{gpu_name} {gpu_usage} {gpu_temp} {gpu_power} {vram_usage} "
              "{cpu_name} {cpu_usage} {cpu_temp} {cpu_power} {ram_usage} "
-             "{ram_type} {icon_flame} {temp_icon}"),
+             "{ram_type} {icon_flame} {temp_icon}\n"
+             "{vram_usage} / {ram_usage} follow the Numbers + Percent "
+             "ticks together; {vram_used} / {ram_used} are the numbers "
+             "only, {vram_pct} / {ram_pct} the percent only."),
             ("Second GPU",
              "{gpu2_name} {gpu2_usage} {gpu2_temp} {gpu2_power} "
-             "{vram2_usage} {vram2_pct} - filled once Second GPU above is "
+             "{vram2_usage} {vram2_used} {vram2_pct} - filled once Second GPU above is "
              "on and a card is picked. Empty otherwise, so a string can "
              "carry them permanently."),
             ("Line breaks",
@@ -1789,6 +1797,54 @@ class AppsPageMixin:
         combo.setCurrentIndex(idx if idx >= 0 else 0)
         combo.blockSignals(False)
 
+    def _ensure_status_rows(self, n):
+        """Builds text rows until there are at least n (capped at
+        STATUS_MAX_TEXTS). Rows are never torn down again - lowering the
+        count only hides them, like it always did."""
+        n = min(STATUS_MAX_TEXTS, max(0, int(n)))
+        while len(self.status_rows) < n:
+            self._add_status_row(len(self.status_rows))
+
+    def _add_status_row(self, i):
+        row_w = QWidget()
+        row = QHBoxLayout(row_w)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(6)
+        lbl = QLabel(f"Text {i + 1}:")
+        lbl.setFixedWidth(52)
+        row.addWidget(lbl)
+        edit = QLineEdit()
+        edit.setPlaceholderText("[Status Text goes here]")
+        edit.setMaxLength(CHATBOX_LIMIT - len(SLIM_SUFFIX))
+        edit.textChanged.connect(lambda t, idx=i: self.on_status_text(idx, t))
+        row.addWidget(edit, 1)
+        icon_btn = QPushButton("\U0001F600")
+        icon_btn.setObjectName("iconbtn")
+        icon_btn.setFixedSize(30, 30)
+        icon_btn.setToolTip("Insert icon")
+        icon_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        icon_btn.clicked.connect(
+            lambda _, e=edit, b=icon_btn: self.emoji_popup.open_for(e, b))
+        row.addWidget(icon_btn)
+        combo = self._make_style_combo(
+            f"How text {i + 1} is rendered in the chatbox")
+        combo.currentIndexChanged.connect(
+            lambda _idx, slot=i, cb=combo:
+            self.on_status_style(slot, cb.currentData()))
+        row.addWidget(combo)
+        self._status_texts_layout.addWidget(row_w)
+        self.status_rows.append(row_w)
+        self.status_edits.append(edit)
+        self.status_style_combos.append(combo)
+        texts = self.cfg.get("status_texts") or []
+        was = getattr(self, "_block_updating", False)
+        self._block_updating = True
+        try:
+            edit.setText(texts[i] if i < len(texts) else "")
+            self.set_style_combo(combo, self._status_style(i))
+        finally:
+            self._block_updating = was
+
     def _status_style(self, idx):
         styles = self.cfg.get("status_styles") or []
         if 0 <= idx < len(styles):
@@ -1798,8 +1854,9 @@ class AppsPageMixin:
     def on_status_style(self, idx, value):
         if getattr(self, "_block_updating", False):
             return
-        styles = self.cfg.setdefault("status_styles", [STYLE_NORMAL] * 20)
-        while len(styles) < 20:
+        styles = self.cfg.setdefault("status_styles",
+                                     [STYLE_NORMAL] * STATUS_MAX_TEXTS)
+        while len(styles) < STATUS_MAX_TEXTS:
             styles.append(STYLE_NORMAL)
         styles[idx] = normalize_style(value)
         self._sync_active_template()
@@ -1830,7 +1887,7 @@ class AppsPageMixin:
         self.update_preview()
 
     def on_texts_expand(self):
-        """Folds the 20 text fields in/out (keeps the card compact)."""
+        """Folds the text fields in/out (keeps the card compact)."""
         show = self.texts_container.isHidden()
         self.texts_container.setVisible(show)
         self._update_texts_expander_label(show)
@@ -2060,9 +2117,11 @@ class AppsPageMixin:
         self.cfg["status_count"] = tpl["count"]
         self.cfg["status_styles"] = [normalize_style(x) for x in
                                      (tpl.get("styles") or
-                                      [STYLE_NORMAL] * 20)][:20]
-        while len(self.cfg["status_styles"]) < 20:
+                                      [STYLE_NORMAL] * STATUS_MAX_TEXTS)
+                                     ][:STATUS_MAX_TEXTS]
+        while len(self.cfg["status_styles"]) < STATUS_MAX_TEXTS:
             self.cfg["status_styles"].append(STYLE_NORMAL)
+        self._ensure_status_rows(self.cfg["status_count"])
         self._block_updating = True
         for i, edit in enumerate(self.status_edits):
             edit.setText(self.cfg["status_texts"][i])
@@ -2086,7 +2145,7 @@ class AppsPageMixin:
         tpl["texts"] = list(self.cfg["status_texts"])
         tpl["count"] = self.cfg["status_count"]
         tpl["styles"] = list(self.cfg.get("status_styles")
-                             or [STYLE_NORMAL] * 20)
+                             or [STYLE_NORMAL] * STATUS_MAX_TEXTS)
 
     def on_status_text(self, idx, text):
         if getattr(self, "_block_updating", False):
@@ -2102,6 +2161,7 @@ class AppsPageMixin:
         self.cfg["status_count"] = val
         self._sync_active_template()
         self.save_config()
+        self._ensure_status_rows(val)
         for i, row in enumerate(self.status_rows):
             row.setVisible(i < val)
         self._update_texts_expander_label()
@@ -3030,6 +3090,60 @@ class AppsPageMixin:
         except Exception as e:
             self.log(f"Hardware: GPU selection failed ({e})")
 
+    # ------------------------------------------------ CPU temp sensor
+    def _fill_cpu_temp_combo(self):
+        """Asks the backend for its temperature sensors off the GUI
+        thread (on Windows that is an HTTP call to LHM) and fills the
+        dropdown when the answer is back."""
+        lister = getattr(self.hw, "list_temp_sensors", None)
+        self._apply_cpu_temp_selection()
+        if not callable(lister):
+            return
+        self.run_async(lambda: list(lister() or []),
+                       self._on_temp_sensors,
+                       on_error=lambda e: self.log(
+                           f"Hardware: could not list temp sensors ({e})"))
+
+    def _on_temp_sensors(self, sensors):
+        combo = self.cpu_temp_combo
+        want = (self.cfg.get("hw_cpu_temp_sensor") or "").strip()
+        combo.blockSignals(True)
+        combo.clear()
+        combo.addItem("Automatic", "")
+        for s in sensors:
+            text = s.get("label") or s["id"]
+            if s.get("value") is not None:
+                text += f"  ({s['value']:.0f}\u00b0C)"
+            combo.addItem(text, s["id"])
+        idx = combo.findData(want) if want else 0
+        if idx < 0:
+            # not on this machine (right now) - keep the setting, it may
+            # be LHM that is not running yet, and show it as missing
+            combo.addItem(f"{want}  (not found)", want)
+            idx = combo.count() - 1
+        combo.setCurrentIndex(idx)
+        combo.blockSignals(False)
+
+    def _apply_cpu_temp_selection(self):
+        select = getattr(self.hw, "select_cpu_temp", None)
+        if not callable(select):
+            return
+        try:
+            select((self.cfg.get("hw_cpu_temp_sensor") or "") or None)
+        except Exception as e:
+            self.log(f"Hardware: CPU temp sensor selection failed ({e})")
+
+    def on_cpu_temp_select(self, sensor_id):
+        if sensor_id is None:
+            return
+        self.cfg["hw_cpu_temp_sensor"] = sensor_id or ""
+        self.save_config()
+        self._apply_cpu_temp_selection()
+        self.log(f"Hardware: CPU temp sensor = {sensor_id or 'automatic'}")
+        if self.cfg["hw_active"]:
+            self.poll_hw()
+        self.update_preview()
+
     def on_gpu_select(self, key, gpu_id):
         self.cfg[key] = gpu_id or ""
         if key == "hw_gpu_select":
@@ -3338,11 +3452,12 @@ class AppsPageMixin:
     #: Kept as data because it is a reference, not logic - a new
     #: placeholder is one line here and nothing else.
     SOFTWARE_PARAMETERS = (
-        ("Personal Status", "{text}  {text_1} \u2026 {text_20}",
+        ("Personal Status", "{text}  {text_1} \u2026 {text_%d}" % STATUS_MAX_TEXTS,
          "{text} is the status text currently on rotation; the numbered "
          "ones address a specific slot."),
         ("Personal Status \u2013 other templates",
-         "{text_t1} \u2026 {text_t10}   {text_t1_1} \u2026 {text_t10_20}",
+         "{text_t1} \u2026 {text_t10}   {text_t1_1} \u2026 "
+         "{text_t10_%d}" % STATUS_MAX_TEXTS,
          "Reach into a template that is NOT the one selected above: "
          "{text_t3} is the rotating text of template 3, {text_t3_5} is "
          "its slot 5. {text_template3} and {text_tpl3} spell the same "
@@ -3360,7 +3475,8 @@ class AppsPageMixin:
          "symbol while nothing plays and empty otherwise."),
         ("Hardware", "{gpu_name}  {gpu_usage}  {gpu_temp}  {gpu_power}  "
                      "{vram_usage}  {cpu_name}  {cpu_usage}  {cpu_temp}  "
-                     "{cpu_power}  {ram_usage}  {ram_type}  {temp_icon}  "
+                     "{cpu_power}  {ram_usage}  {ram_used}  {ram_pct}  "
+                     "{vram_used}  {vram_pct}  {ram_type}  {temp_icon}  "
                      "{icon_flame}",
          "{gpu_power} / {cpu_power} are the power draw in watts "
          "({gpu_watt} spells the same thing) and follow the "
@@ -3373,7 +3489,8 @@ class AppsPageMixin:
          "With {temp_icon} in the string the temperatures drop their unit, "
          "because the icon already carries it."),
         ("Second GPU", "{gpu2_name}  {gpu2_usage}  {gpu2_temp}  "
-                       "{gpu2_power}  {vram2_usage}  {vram2_pct}",
+                       "{gpu2_power}  {vram2_usage}  {vram2_used}  "
+                       "{vram2_pct}",
          "The same values for a second card. Switch “Second GPU” "
          "on in the Hardware card and pick which one it is; until then "
          "these stay empty and collapse like every other empty "
@@ -3665,14 +3782,14 @@ class AppsPageMixin:
             vals["text"] = self._render_status(
                 self.current_status_text(),
                 self.current_status_style()) or None
-            for i in range(20):
+            for i in range(len(self.cfg["status_texts"])):
                 vals[f"text_{i + 1}"] = (
                     self._render_status(self.cfg["status_texts"][i].strip(),
                                         self._status_style(i))
                     or None)
         else:
             vals["text"] = None
-            for i in range(20):
+            for i in range(STATUS_MAX_TEXTS):
                 vals[f"text_{i + 1}"] = None
         # MediaPlay values
         if self.cfg["media_active"] and self.media_info:
@@ -4405,7 +4522,14 @@ class AppsPageMixin:
             "gpu_usage": (f"{gpu['usage']:.0f}%"
                           if c["hw_gpu_usage"] and gpu.get("usage") is not None else None),
             "gpu_temp": (self._temp_str(gpu.get("temp")) if c["hw_gpu_temp"] else None),
+            # {vram_usage} / {ram_usage} = whatever the ticks select (numbers
+            # and/or %); {vram_used} / {ram_used} = the numbers only, so a
+            # custom string can place the percent somewhere else via _pct
             "vram_usage": " ".join(vram_parts) or None,
+            "vram_used": (f"{gpu['vram_used']:.0f}/{gpu['vram_total']:.0f}GB"
+                          if c["hw_vram_used"]
+                          and gpu.get("vram_used") is not None
+                          and gpu.get("vram_total") else None),
             "vram_pct": (f"{gpu['vram_pct']:.0f}%"
                          if c["hw_vram_pct"] and gpu.get("vram_pct") is not None else None),
             "cpu_name": cpu_name,
@@ -4413,6 +4537,8 @@ class AppsPageMixin:
                           if c["hw_cpu_usage"] and info.get("cpu_usage") is not None else None),
             "cpu_temp": (self._temp_str(info.get("cpu_temp")) if c["hw_cpu_temp"] else None),
             "ram_usage": " ".join(ram_parts) or None,
+            "ram_used": (f"{ram['used']:.0f}/{ram['total']:.0f}GB"
+                         if c["hw_ram_used"] and ram else None),
             "ram_pct": (f"{ram['pct']:.0f}%" if c["hw_ram_pct"] and ram else None),
             "ram_type": c["hw_ram_type"].strip() or None,
             "icon_flame": "\U0001F525",
@@ -4446,6 +4572,10 @@ class AppsPageMixin:
             "gpu2_power": (self._watt_str(power) if power is not None
                            else None),
             "vram2_usage": " ".join(vram) or None,
+            "vram2_used": (f"{gpu['vram_used']:.0f}/{gpu['vram_total']:.0f}GB"
+                           if c.get("hw_gpu2_vram_used")
+                           and gpu.get("vram_used") is not None
+                           and gpu.get("vram_total") else None),
             "vram2_pct": (f"{gpu['vram_pct']:.0f}%"
                           if c.get("hw_gpu2_vram_pct")
                           and gpu.get("vram_pct") is not None else None),

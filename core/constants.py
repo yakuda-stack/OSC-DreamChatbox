@@ -15,7 +15,7 @@ from core.osinfo import (  # noqa: F401  (IS_WINDOWS/OS_NAME re-exported)
     IS_WINDOWS, OS_NAME, config_dir, legacy_config_dir, resource_root)
 
 APP_NAME = "OSC-DreamChatbox"
-VERSION = "v1.5.8"
+VERSION = "v1.5.9"
 
 #: how many All-in-one strings there can be. Raised from 5 in v1.4.0;
 #: every list that is "one entry per AIO string" is sized from here.
@@ -70,6 +70,10 @@ CHATBOX_INPUT = "/chatbox/input"
 # time it flips, so the UI and the config validator both enforce it
 MIN_STATUS_CYCLE_SEC = 10
 CHATBOX_LIMIT = 144  # VRChat chatbox character limit
+# Personal Status: texts per template. Was 20 up to v1.5.8; raised for
+# people who use the rotation as a quote list. The text rows on the Apps
+# page are built on demand, so a high cap costs nothing until used.
+STATUS_MAX_TEXTS = 100
 
 
 

@@ -80,7 +80,8 @@ HARDWARE_GROUPS = (
         ("{gpu_usage}", "load in %"),
         ("{gpu_temp}", "temperature"),
         ("{gpu_power}", "power draw in watts - needs the GPU watt tick"),
-        ("{vram_usage}", "VRAM used / total"),
+        ("{vram_usage}", "VRAM as ticked (numbers and/or %)"),
+        ("{vram_used}", "VRAM used / total, numbers only"),
         ("{vram_pct}", "VRAM in %"),
     )),
     ("GPU 2", (
@@ -88,7 +89,8 @@ HARDWARE_GROUPS = (
         ("{gpu2_usage}", "load in %"),
         ("{gpu2_temp}", "temperature"),
         ("{gpu2_power}", "power draw in watts - needs the GPU 2 watt tick"),
-        ("{vram2_usage}", "VRAM used / total"),
+        ("{vram2_usage}", "VRAM as ticked (numbers and/or %)"),
+        ("{vram2_used}", "VRAM used / total, numbers only"),
         ("{vram2_pct}", "VRAM in %"),
     )),
     ("CPU", (
@@ -98,7 +100,8 @@ HARDWARE_GROUPS = (
         ("{cpu_power}", "power draw in watts - needs the CPU watt tick"),
     )),
     ("RAM & System", (
-        ("{ram_usage}", "RAM used / total"),
+        ("{ram_usage}", "RAM as ticked (numbers and/or %)"),
+        ("{ram_used}", "RAM used / total, numbers only"),
         ("{ram_pct}", "RAM in %"),
         ("{ram_type}", "the label you typed, e.g. DDR5"),
         ("{temp_icon}", "the temperature unit (\u00b0C or \U0001F525)"),
@@ -466,14 +469,19 @@ class PlaceholderPickerMixin:
     # other.
     @staticmethod
     def _slot_items(texts, prefix):
-        """The twenty numbered slots of one status template.
+        """The numbered slots of one status template: the first twenty,
+        or up to the last filled one when a template holds more (up to
+        STATUS_MAX_TEXTS) - a menu of 100 mostly empty rows helps nobody.
 
         The text itself is the description - a menu of twenty identical
         looking entries is useless, and the slot you want is the one you
         recognise by what is in it.
         """
+        from core.constants import STATUS_MAX_TEXTS
+        last = max((i + 1 for i, t in enumerate(texts) if str(t).strip()),
+                   default=0)
         items = []
-        for i in range(1, 21):
+        for i in range(1, min(STATUS_MAX_TEXTS, max(20, last)) + 1):
             preview = ""
             if i <= len(texts) and str(texts[i - 1]).strip():
                 preview = str(texts[i - 1]).strip()[:32]

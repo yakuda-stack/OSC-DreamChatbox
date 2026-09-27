@@ -420,6 +420,11 @@ class _Lhm:
         # comes out of the same fetch - a second HTTP round trip per poll
         # for one more number would be silly
         self._power = (None, None)        # (cpu_power, gpu_power)
+        #: CPU temp sensor picked on the Hardware card: the joined LHM
+        #: tree path of one temperature; None = scoring, see temps()
+        self.cpu_pick = None
+        #: every temperature of the last fetch, [{"id", "label", "value"}]
+        self.temp_list = []
 
     def _fetch(self):
         try:
@@ -475,6 +480,8 @@ class _Lhm:
         # look alarming in a chatbox).
         best_cpu = best_gpu = (-1, None)     # (score, value)
         best_cpu_w = best_gpu_w = (-1, None)
+        temp_list = []
+        picked = None
         for trail, text, value in rows:
             joined = " / ".join(trail).lower()
             if "power" in joined:
@@ -499,6 +506,14 @@ class _Lhm:
             v = _num(value)
             if v is None or not (0 < v < 150):
                 continue
+            # trail = [Sensor, PC, <hardware>, Temperatures, <sensor>]
+            sid = " / ".join(t for t in trail[2:] if t) or text
+            hw_name = trail[-3] if len(trail) >= 3 else ""
+            temp_list.append({"id": sid, "value": v,
+                              "label": f"{hw_name} \u00b7 {text}"
+                              if hw_name else text})
+            if self.cpu_pick and sid == self.cpu_pick:
+                picked = v
             label = text.lower()
             if "gpu" in joined:
                 score = 3 if "core" in label else (0 if "hot" in label else 1)
@@ -517,6 +532,9 @@ class _Lhm:
                     best_cpu = (score, v)
 
         cpu, gpu = best_cpu[1], best_gpu[1]
+        if picked is not None:
+            cpu = picked
+        self.temp_list = temp_list
         self._power = (best_cpu_w[1], best_gpu_w[1])
         self._cache = (now, cpu, gpu)
         return cpu, gpu
@@ -721,6 +739,18 @@ class WindowsHardwareMonitor:
 
     def cpu_temp(self):
         return self._temps()[0]
+
+    # ------------------------------------------------ CPU temp selection
+    def list_temp_sensors(self):
+        """Every temperature LibreHardwareMonitor reports, for the CPU
+        sensor dropdown. Empty while LHM is not reachable - the elevated
+        helper only hands over two finished numbers, nothing to pick."""
+        self._lhm.temps()
+        return list(self._lhm.temp_list)
+
+    def select_cpu_temp(self, sensor_id=None):
+        self._lhm.cpu_pick = sensor_id or None
+        self._lhm._cache = (0.0, None, None)     # next read re-scores
 
     def amd_gpu_temp(self):
         return self._temps()[1]

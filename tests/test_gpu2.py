@@ -140,7 +140,7 @@ def values(page):
 
 
 GPU2_KEYS = ("gpu2_name", "gpu2_usage", "gpu2_temp", "gpu2_power",
-             "vram2_usage", "vram2_pct")
+             "vram2_usage", "vram2_used", "vram2_pct")
 
 
 def test_the_keys_exist_even_with_the_feature_off():

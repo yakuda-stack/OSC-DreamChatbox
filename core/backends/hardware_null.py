@@ -95,6 +95,13 @@ class NullHardwareMonitor:
     def gpu_name_for(self, gpu_id):
         return "GPU"
 
+    # --------------------------------------------------- cpu temp sensor
+    def list_temp_sensors(self):
+        return []
+
+    def select_cpu_temp(self, sensor_id=None):
+        self.sel_cpu_temp = sensor_id or None
+
     def snapshot(self):
         """Same shape as the Linux backend, so poll_hw() needs no
         special case: keys exist, values are None."""

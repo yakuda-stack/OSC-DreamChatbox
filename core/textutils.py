@@ -146,6 +146,7 @@ PLACEHOLDER_ALIASES = {
     "gpu2power": "gpu2_power", "gpu_2_watt": "gpu2_power",
     "vram2": "vram2_usage", "vram_2": "vram2_usage",
     "vram_2_usage": "vram2_usage", "vram_2_pct": "vram2_pct",
+    "vram_2_used": "vram2_used",
     "song": "title", "song_title": "title", "songtitle": "title",
     "songbar": "bar",
     "lyric": "lyrics", "songtext": "lyrics", "liedtext": "lyrics",

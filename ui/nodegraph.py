@@ -29,6 +29,8 @@ from PyQt6.QtWidgets import (
     QGraphicsItem, QGraphicsPathItem, QGraphicsScene, QGraphicsView,
     QListWidget, QListWidgetItem, QTreeWidget, QTreeWidgetItem)
 
+from core.constants import STATUS_MAX_TEXTS
+
 #: MIME type used when a palette entry is dragged onto the canvas.
 NODE_MIME = "application/x-dreamchatbox-node"
 
@@ -101,7 +103,7 @@ NODE_DEFS = {
         "fields": [("template", "choice", "Template", "active",
                     ["active"] + [str(i) for i in range(1, 11)]),
                    ("entry", "choice", "Text entry", "1",
-                    [str(i) for i in range(1, 21)])],
+                    [str(i) for i in range(1, STATUS_MAX_TEXTS + 1)])],
         "note": "One specific status text, no rotation - the way "
                 "{text_3} or {text_t2_5} would address it. Useful as a "
                 "text library: a slot you never put on rotation is still "
