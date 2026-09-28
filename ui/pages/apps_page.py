@@ -35,7 +35,7 @@ except ImportError:      # pragma: no cover - python-osc is a hard dep
 from core.backends.wintemp import LHM_DOWNLOAD_URL
 from core.mediafetch import (
     backend_note as media_backend_note, source_label as media_source_label,
-    player_label)
+    fmt_volume, fmt_volume_db, player_label)
 from core.textstyle import (
     COMPACT_STYLE_CHOICES, DIGIT_STYLE_CHOICES, KEEP_HINT, STYLE_CHOICES, STYLE_NORMAL, apply_style, is_inline_marker, normalize as normalize_style, unsupported as unsupported_chars)
 from core.textutils import (
@@ -615,13 +615,23 @@ class AppsPageMixin:
             "Use my own .lrc files  (local, offline \u2013 matched by "
             "artist/title, takes priority over LRCLIB)")
         self.chk_bar = QCheckBox("Songbar  (progress bar)")
+        self.chk_volume = QCheckBox(
+            "Player volume  (\U0001F50A 65% on the song line)")
+        self.chk_volume.setToolTip(
+            "The volume slider of the player itself (Spotify, VLC, ...), "
+            "read via MPRIS on Linux.\n"
+            "Players that do not report it - many browsers, and every "
+            "player on Windows - simply show nothing.\n"
+            "In a custom string: {volume} (65%) and {volume_db} (-3.7 dB) "
+            "work whether this is ticked or not.")
         for chk, key in ((self.chk_artist, "media_show_artist"),
                          (self.chk_title, "media_show_title"),
                          (self.chk_time, "media_show_time"),
                          (self.chk_time_seconds, "media_time_seconds"),
                          (self.chk_lyrics, "media_show_lyrics"),
                          (self.chk_lyrics_local, "media_lyrics_local"),
-                         (self.chk_bar, "media_show_bar")):
+                         (self.chk_bar, "media_show_bar"),
+                         (self.chk_volume, "media_show_volume")):
             chk.toggled.connect(lambda on, k=key: self.on_media_option(k, on))
 
         cnt.addWidget(self.chk_artist)
@@ -780,6 +790,7 @@ class AppsPageMixin:
         # that grew up around the old name still means this row
         self.time_style_row = self.time_opts_box
 
+        pb.addWidget(self.chk_volume)
         pb.addWidget(self.chk_bar)
 
         # ---- all songbar options ------------------------------------
@@ -980,7 +991,8 @@ class AppsPageMixin:
         lg.addWidget(lg_title)
         lg_body = QLabel(
             "{artist} {title} {album} {time} {time_status} {time_end} "
-            "{remaining} {progress_percent} {position} {length} {bar} "
+            "{remaining} {progress_percent} {volume} {volume_db} "
+            "{position} {length} {bar} "
             "{lyrics} {lyrics_prefix} {player} {icon_sound}")
         lg_body.setObjectName("dim")
         lg_body.setWordWrap(True)
@@ -2662,6 +2674,7 @@ class AppsPageMixin:
         "player": "spotify",
         "player_key": "spotify",
         "player_label": "Spotify",
+        "volume": 0.65,
     }
     DEMO_LYRICS = "and the city lights go by"
 
@@ -3497,11 +3510,13 @@ class AppsPageMixin:
          "is empty or has no such number falls back to the active one."),
         ("MediaPlay", "{artist}  {title}  {album}  {time}  "
                       "{time_status}  {time_end}  {remaining}  "
-                      "{progress_percent}  {bar}  {lyrics}  "
-                      "{lyrics_prefix}  {icon_sound}  {media_idle}",
+                      "{progress_percent}  {volume}  {volume_db}  {bar}  "
+                      "{lyrics}  {lyrics_prefix}  {icon_sound}  {media_idle}",
          "{bar} is the progress bar, {time_status} follows the time "
          "format you picked in MediaPlay. {media_idle} is the idle "
-         "symbol while nothing plays and empty otherwise."),
+         "symbol while nothing plays and empty otherwise. {volume} / "
+         "{volume_db} are the player's own volume (empty when the "
+         "player does not report it)."),
         ("Hardware", "{gpu_name}  {gpu_usage}  {gpu_temp}  {gpu_power}  "
                      "{vram_usage}  {cpu_name}  {cpu_usage}  {cpu_temp}  "
                      "{cpu_power}  {ram_usage}  {ram_used}  {ram_pct}  "
@@ -3907,7 +3922,7 @@ class AppsPageMixin:
     MEDIA_KEYS = frozenset((
         "artist", "title", "time", "time_status", "time_end", "bar",
         "lyrics", "lyrics_prefix", "position", "length",
-        "album", "remaining", "progress_percent"))
+        "album", "remaining", "progress_percent", "volume", "volume_db"))
 
     def _line_is_media(self, tpl_line):
         """True when this template line asks for at least one MediaPlay
@@ -4209,9 +4224,12 @@ class AppsPageMixin:
             self.media_status_lbl.setText(
                 f"Detected player: {hidden['player']}  (paused \u2013 hidden)")
         elif info:
+            state = "playing" if info["playing"] else "paused"
+            vol = fmt_volume(info.get("volume"))
+            if vol:
+                state += f"  \u00b7  \U0001F50A {vol}"
             self.media_status_lbl.setText(
-                f"Detected player: {info['player']}"
-                f"  ({'playing' if info['playing'] else 'paused'})")
+                f"Detected player: {info['player']}  ({state})")
             if changed:
                 self.log(f"MediaPlay: now playing \"{info['artist']} – {info['title']}\" "
                          f"({info['player']})")
@@ -4285,6 +4303,9 @@ class AppsPageMixin:
                            info["length"], info["position"]))
                        if c.get("media_show_lyrics") else None),
             "bar": (bar or None) if c["media_show_bar"] else None,
+            # v1.6.2: the player's own volume - empty when not reported
+            "volume": fmt_volume(info.get("volume")),
+            "volume_db": fmt_volume_db(info.get("volume")),
             "player": info["player"],
             "icon_sound": "\U0001F3B5",
             # so a custom / AIO template can follow the same setting
@@ -4340,6 +4361,11 @@ class AppsPageMixin:
             time_str = (f"{self._fmt_media_time(info['position'])}/"
                         f"{self._fmt_media_time(info['length'])}")
             text = f"{text} | {time_str}" if text else time_str
+        vol = (fmt_volume(info.get("volume"))
+               if self.cfg.get("media_show_volume") else None)
+        if vol:
+            vol = f"\U0001F50A {vol}"
+            text = f"{text} | {vol}" if text else vol
         if text:
             lines.append(text)
         # synced lyrics line (between title/time and the songbar)

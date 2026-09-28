@@ -73,7 +73,7 @@ only when the corresponding feature is enabled.
 | Service | Used for | Terms |
 |---|---|---|
 | **LRCLIB** (https://lrclib.net) | synced lyrics | Free, key-less community API. The app identifies itself with a descriptive `User-Agent` as requested by LRCLIB. |
-| **Lingva Translate** (default instance: lingva.adminforge.de) | default translation backend | Anonymous, key-less proxy in front of Google Translate. AGPL-3.0 software operated by a third party. |
+| **Lingva Translate** (default instance: lingva.ml) | default translation backend | Anonymous, key-less proxy in front of Google Translate. AGPL-3.0 software operated by a third party. |
 | **Google Cloud Translation API** | translation, when the user supplies their own API key | Official, documented API. Quota, billing and Terms of Service acceptance are the user's. |
 | **Google Translate web endpoint** (`translate.googleapis.com/translate_a/single`) | translation, when Google is selected without a key | **Unofficial and undocumented.** Not covered by an API agreement, shared by all users, and may be rate-limited or blocked by Google at any time. Provided as a convenience — **use at your own risk.** The app warns about this in the UI. |
 | **DeepL API** | translation, with the user's own key | Official API, DeepL's Terms of Service apply to the key holder. |

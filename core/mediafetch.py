@@ -28,6 +28,8 @@ on the bus - and ``status_note()`` says what to install.
 
 from __future__ import annotations
 
+import math
+
 from core.osinfo import IS_WINDOWS, OS_NAME
 from core.backends.media_null import NullMediaFetcher
 
@@ -68,6 +70,40 @@ else:
 MEDIA_AVAILABLE = BACKEND_NAME != "null"
 
 
+def fmt_volume(volume):
+    """Player volume 0.0-1.0 -> "65%". None (not reported) -> None.
+
+    Values above 1.0 exist (VLC goes to 125%) and are shown as they are.
+    """
+    if volume is None:
+        return None
+    try:
+        return f"{round(max(0.0, float(volume)) * 100)}%"
+    except (TypeError, ValueError):
+        return None
+
+
+def fmt_volume_db(volume):
+    """Player volume as dB relative to 100%: 0.5 -> "-6.0 dB",
+    1.0 -> "0.0 dB", 0 -> "-\u221e dB" (muted). None -> None.
+
+    Treats the MPRIS value as a linear amplitude factor - which is what
+    the spec suggests; a player that maps its slider differently gets a
+    number that is close, not exact.
+    """
+    if volume is None:
+        return None
+    try:
+        v = float(volume)
+    except (TypeError, ValueError):
+        return None
+    if v <= 0.0:
+        return "-\u221e dB"
+    db = 20.0 * math.log10(v)
+    # -0.0 would read oddly
+    return f"{0.0 if abs(db) < 0.05 else db:.1f} dB"
+
+
 def get_media_fetcher(log_fn):
     """Factory - use this in new code instead of the class directly."""
     return MediaFetcher(log_fn)
@@ -97,4 +133,5 @@ def source_label() -> str:
 __all__ = ["MediaFetcher", "NullMediaFetcher", "MEDIA_AVAILABLE",
            "BACKEND_NAME", "BACKEND_ERROR", "HAS_DBUS", "HAS_WINRT",
            "INSTALL_HINT", "get_media_fetcher", "backend_note",
-           "source_label", "player_key", "player_label"]
+           "source_label", "player_key", "player_label",
+           "fmt_volume", "fmt_volume_db"]

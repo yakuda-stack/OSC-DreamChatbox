@@ -433,6 +433,8 @@ class WindowsMediaFetcher:
             "album": str(album),
             "position": float(position),
             "length": float(length),
+            # GSMTC does not expose a player volume - {volume} stays empty
+            "volume": None,
             "_updated": updated,
             "_read_at": time.time(),
         }

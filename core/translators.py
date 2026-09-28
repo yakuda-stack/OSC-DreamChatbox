@@ -6,7 +6,7 @@ Four selectable methods, all behind ONE unified interface:
     translator.translate(text, source_lang, target_lang) -> str | None
 
 1. LingvaTranslator  (DEFAULT) – anonymous Lingva-Translate proxy
-   (e.g. https://lingva.adminforge.de). No API key, plain HTTP GET,
+   (e.g. https://lingva.ml). No API key, plain HTTP GET,
    shields the user from direct Google tracking.
 2. GoogleTranslator  (direct/fast) – the un-anonymised Google
    Translate web endpoint for minimal latency. No key; the request
@@ -26,7 +26,8 @@ Four selectable methods, all behind ONE unified interface:
 
 `translate_with_fallback()` picks the configured method and – if it
 fails for any reason – automatically retries with Lingva (primary
-fallback) and then with direct Google (secondary fallback), so
+fallback), then direct Google and finally adminForge's keyless
+LibreTranslate (v1.6.2), so
 speech-to-text keeps working even when DeepL hits its monthly limit
 or the local LibreTranslate instance is down. Every backend swallows
 its exceptions and returns None instead of crashing the app.
@@ -58,16 +59,22 @@ METHOD_DEEPL = "deepl"
 METHOD_CUSTOM = "custom"
 
 METHODS = [
+    ("LibreTranslate Online (hosted server, no install)",
+     METHOD_LIBRE_ONLINE),
     ("Lingva Translate (anonymous proxy, no key)", METHOD_LINGVA),
     ("Google Translate (direct / fastest, key optional)", METHOD_GOOGLE),
     ("LibreTranslate (local instance, offline)", METHOD_LIBRE),
-    ("LibreTranslate Online (hosted server, no install)",
-     METHOD_LIBRE_ONLINE),
     ("DeepL API (best quality, own API key)", METHOD_DEEPL),
     ("Custom (own API / installed translator)", METHOD_CUSTOM),
 ]
 
-DEFAULT_LINGVA_URL = "https://lingva.adminforge.de"
+#: v1.6.2: lingva.adminforge.de is gone - it now redirects to adminForge's
+#: LibreTranslate (translate.adminforge.de, see LIBRE_ONLINE_SERVERS).
+#: lingva.ml is the project's own instance. NOTE (2026-09): every Lingva
+#: instance tested returns the input untranslated - Lingva's Google
+#: scraping is broken upstream. LingvaTranslator detects that and fails
+#: over instead of sending the untranslated text.
+DEFAULT_LINGVA_URL = "https://lingva.ml"
 DEFAULT_LIBRE_URL = "http://127.0.0.1:5000"
 
 # hosted LibreTranslate instances offered in the dropdown. The empty
@@ -81,14 +88,42 @@ DEFAULT_LIBRE_URL = "http://127.0.0.1:5000"
 DEFAULT_LIBRE_ONLINE_URL = "https://de.libretranslate.com"
 #: marker value of the "Custom server …" entry - never a real URL
 LIBRE_ONLINE_CUSTOM = "__custom__"
+#: v1.6.2: two keyless instances, checked on 2026-09-29 - both HTTPS,
+#: keyRequired=false, LibreTranslate 1.9.x:
+#:   translate.adminforge.de  adminForge (DE), imprint + privacy notice,
+#:                            states "no tracking | no logging", 50 langs
+#:   lt.pyrine.net            private, NO imprint or privacy notice -
+#:                            unknown who reads the text, ~25 languages
+ADMINFORGE_LIBRE_URL = "https://translate.adminforge.de"
+PYRINE_LIBRE_URL = "https://lt.pyrine.net"
 LIBRE_ONLINE_SERVERS = [
     (f"{DEFAULT_LIBRE_ONLINE_URL}  (preset, API key required)", ""),
     ("https://libretranslate.com  (official, API key required)",
      "https://libretranslate.com"),
+    (f"{ADMINFORGE_LIBRE_URL}  (no key, adminForge, no logging)",
+     ADMINFORGE_LIBRE_URL),
+    (f"{PYRINE_LIBRE_URL}  (no key, private, fewer languages)",
+     PYRINE_LIBRE_URL),
     ("Custom server \u2026", LIBRE_ONLINE_CUSTOM),
 ]
 
 _TIMEOUT = 8
+#: v1.6.2: Google's keyless endpoint answers 429 much sooner to a
+#: non-browser User-Agent; the same request with a browser UA went
+#: through from the same IP.
+_BROWSER_UA = ("Mozilla/5.0 (X11; Linux x86_64; rv:130.0) "
+               "Gecko/20100101 Firefox/130.0")
+
+
+def _untranslated(text, out, src, tgt) -> bool:
+    """True when a service handed the input back unchanged although a
+    different language was asked for - Lingva does this since its
+    Google scraping broke, and sending that would be "translated"
+    silence. Very short input (names, "ok", "lol") is left alone."""
+    if not out or (src and src != "auto" and src == tgt):
+        return False
+    a, b = text.strip().casefold(), out.strip().casefold()
+    return a == b and sum(ch.isalpha() for ch in a) >= 4
 _LIBRE_UA = ("Mozilla/5.0 (X11; Linux x86_64) OSC-DreamChatbox "
              "(+https://github.com/yakuda-stack/OSC-DreamChatbox)")
 
@@ -152,10 +187,31 @@ class LingvaTranslator(Translator):
             url = (f"{self.instance_url}/api/v1/{src}/{tgt}/"
                    + urllib.parse.quote(text, safe=""))
             req = urllib.request.Request(
-                url, headers={"User-Agent": "OSC-DreamChatbox"})
+                url, headers={"User-Agent": "OSC-DreamChatbox",
+                              "Accept": "application/json"})
             with urllib.request.urlopen(req, timeout=_TIMEOUT) as r:
-                data = json.loads(r.read().decode("utf-8"))
+                raw = r.read().decode("utf-8", "replace")
+                final_url = r.geturl()
+            try:
+                data = json.loads(raw)
+            except ValueError:
+                # a web page instead of JSON: the instance was shut down
+                # or turned into something else (lingva.adminforge.de now
+                # redirects to a LibreTranslate) - say that, not
+                # "Expecting value: line 1 column 1"
+                where = urllib.parse.urlsplit(final_url).netloc
+                self.last_error = (
+                    f"Lingva: {self.instance_url} is no longer a Lingva "
+                    f"server (answered with a web page"
+                    f"{' from ' + where if where else ''}).")
+                return None
             out = (data.get("translation") or "").strip()
+            if _untranslated(text, out, src, tgt):
+                self.last_error = (
+                    "Lingva: returned the text untranslated - Lingva's "
+                    "connection to Google is broken right now (all "
+                    "public instances). Pick another service.")
+                return None
             return out or None
         except Exception as e:
             self.last_error = f"Lingva: {e}"
@@ -184,6 +240,10 @@ class GoogleTranslator(Translator):
     name = "Google"
     DEFAULT_ENDPOINT = ("https://translate.googleapis.com"
                         "/translate_a/single")
+    #: second keyless endpoint (the one Chrome's dictionary extension
+    #: uses), tried when the first one is rate-limited. Answers
+    #: ["text"] with a given source, [["text", "en"]] with sl=auto.
+    ALT_ENDPOINT = "https://clients5.google.com/translate_a/t"
     OFFICIAL_ENDPOINT = ("https://translation.googleapis.com"
                          "/language/translate/v2")
 
@@ -239,25 +299,57 @@ class GoogleTranslator(Translator):
                    f"&tl={urllib.parse.quote(tgt)}"
                    "&q=" + urllib.parse.quote(text))
             req = urllib.request.Request(
-                url, headers={"User-Agent": "OSC-DreamChatbox"})
+                url, headers={"User-Agent": _BROWSER_UA})
             with urllib.request.urlopen(req, timeout=_TIMEOUT) as r:
                 data = json.loads(r.read().decode("utf-8"))
             out = "".join(seg[0] for seg in data[0] if seg and seg[0])
             out = out.strip()
             return out or None
         except urllib.error.HTTPError as e:
+            if e.code in (429, 403) and \
+                    self.endpoint == self.DEFAULT_ENDPOINT:
+                out = self._translate_alt(text, src, tgt)
+                if out:
+                    return out
             if e.code in (429, 403):
                 self.last_error = (
                     f"Google (keyless): blocked/rate-limited "
                     f"(HTTP {e.code}). The unofficial endpoint is "
                     "shared by everyone – enter your own API key or "
-                    "use Lingva.")
+                    "use LibreTranslate Online.")
             else:
                 self.last_error = f"Google (keyless): HTTP {e.code}"
             return None
         except Exception as e:
             self.last_error = f"Google (keyless): {e}"
             return None
+
+    def _translate_alt(self, text, src, tgt):
+        """The second keyless endpoint. None on any failure - the
+        caller then reports the original 429."""
+        try:
+            url = (f"{self.ALT_ENDPOINT}?client=dict-chrome-ex"
+                   f"&sl={urllib.parse.quote(src)}"
+                   f"&tl={urllib.parse.quote(tgt)}"
+                   "&q=" + urllib.parse.quote(text))
+            req = urllib.request.Request(
+                url, headers={"User-Agent": _BROWSER_UA})
+            with urllib.request.urlopen(req, timeout=_TIMEOUT) as r:
+                data = json.loads(r.read().decode("utf-8"))
+            return self._parse_alt(data)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _parse_alt(data):
+        """["text"] or [["text", "en"]] (sl=auto) -> "text"."""
+        if not isinstance(data, list) or not data:
+            return None
+        first = data[0]
+        if isinstance(first, list):
+            first = first[0] if first else None
+        out = str(first or "").strip()
+        return out or None
 
 
 # ----------------------------------------------------------------------------
@@ -560,6 +652,13 @@ def translate_with_fallback(method, text, source_lang, target_lang,
         chain.append(LingvaTranslator(lingva_url or DEFAULT_LINGVA_URL))
     if method != METHOD_GOOGLE:
         chain.append(GoogleTranslator(google_endpoint, google_key))
+    # v1.6.2: last resort now that Lingva is broken - adminForge's
+    # keyless LibreTranslate (the same operator the old default Lingva
+    # instance belonged to). Skipped when it is already the chosen one.
+    chosen = chain[0]
+    if not (isinstance(chosen, LibreOnlineTranslator)
+            and chosen.url == ADMINFORGE_LIBRE_URL):
+        chain.append(LibreOnlineTranslator(ADMINFORGE_LIBRE_URL))
     for i, tr in enumerate(chain):
         out = tr.translate(text, source_lang, target_lang)
         if out is not None:

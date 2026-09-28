@@ -1268,8 +1268,11 @@ class TextboxPageMixin:
                 "used. Either way the request goes straight to Google, "
                 "so tracking is possible."),
             METHOD_LINGVA: (
-                "Anonymous Lingva-Translate proxy (lingva.adminforge.de) "
-                "\u2013 no API key, no direct Google tracking."),
+                "Anonymous Lingva-Translate proxy (lingva.ml) \u2013 no "
+                "API key, no direct Google tracking. Currently broken on "
+                "every public instance (text comes back untranslated) "
+                "\u2013 the app notices and falls back to Google, then "
+                "LibreTranslate (translate.adminforge.de)."),
             METHOD_LIBRE: (
                 "Local LibreTranslate instance \u2013 100% offline on "
                 "your own PC. Install it yourself once (\u201cInstallation\u201d "
@@ -1278,10 +1281,13 @@ class TextboxPageMixin:
                 "http://127.0.0.1:5000). If it is not reachable, "
                 "Lingva is used as fallback."),
             METHOD_LIBRE_ONLINE: (
-                "LibreTranslate on somebody else's server \u2013 nothing "
+                "Default. LibreTranslate on somebody else's server \u2013 nothing "
                 "to install, works on Windows and Linux alike. The preset "
                 "(de.libretranslate.com) and libretranslate.com need an "
-                "API key; pick \u201cCustom server\u201d for any other "
+                "API key; translate.adminforge.de and lt.pyrine.net work "
+                "without one (adminForge publishes an imprint and says it "
+                "logs nothing; lt.pyrine.net has no imprint or privacy "
+                "notice). Pick \u201cCustom server\u201d for any other "
                 "instance. If the server fails, Lingva is used as "
                 "fallback."),
             METHOD_DEEPL: (

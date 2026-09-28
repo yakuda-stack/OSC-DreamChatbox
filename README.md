@@ -259,8 +259,9 @@ Shows what you are listening to — **Spotify, Apple Music, YT Music, browsers, 
   | 6 | `▓▓▓▓▓▓▓▓░░░░░░░░░░░░` (classic) |
   | 7 | **Custom** — brackets, filled/empty chars, optional travelling knob, live preview |
 
-- Custom string with placeholders: `{artist} {title} {album} {time} {time_status} {time_end} {remaining} {progress_percent} {position} {length} {bar} {lyrics} {player} {icon_sound}`
+- Custom string with placeholders: `{artist} {title} {album} {time} {time_status} {time_end} {remaining} {progress_percent} {volume} {volume_db} {position} {length} {bar} {lyrics} {player} {icon_sound}`
 - **Idle symbol**: shows `⏸` (editable) when nothing is playing instead of the line silently disappearing — or switch it off. Works in **All in one** too; `{media_idle}` places it by hand
+- **Player volume**: `{volume}` (65%) and `{volume_db}` (-3.7 dB), or tick *Player volume* to add `🔊 65%` to the song line. Linux only (MPRIS) – the player has to report it
 - **Hide media while paused** (off by default): a paused or stopped song counts as "nothing playing" — the line disappears or shows the idle symbol
 
 </details>
@@ -373,8 +374,8 @@ Type it or speak it — either way it goes to VRChat, optionally translated on t
 - **Speech to Text** 🎤 — speak, it transcribes in realtime and sends to VRChat
 - **Microphone selection** dropdown (system default or any input device)
 - 15 input languages, **live translation** to 13 output languages
-- **Four translation services**: Lingva Translate (default — anonymous proxy, no key, no Google tracking), Google Translate direct (fastest, key optional), LibreTranslate (local instance, 100 % offline — install once, then a **Start/Stop server button** appears right in the UI and the server is shut down when the app closes) or the official **DeepL API** (own key, typed error handling). A hosted LibreTranslate is there too if you don't want to install one
-- Automatic fallback chain if the chosen service fails: **Lingva first, then direct Google** (e.g. DeepL monthly limit reached or local instance down)
+- **Translation services**: LibreTranslate Online (default since v1.6.2 — `translate.adminforge.de`, no key, no Google tracking, open source), Lingva Translate (anonymous proxy, currently broken upstream), Google Translate direct (fastest, key optional), LibreTranslate (local instance, 100 % offline — install once, then a **Start/Stop server button** appears right in the UI and the server is shut down when the app closes) or the official **DeepL API** (own key, typed error handling). A hosted LibreTranslate is there too if you don't want to install one
+- Automatic fallback chain if the chosen service fails: **Lingva, then direct Google, then LibreTranslate on translate.adminforge.de** (e.g. DeepL monthly limit reached or local instance down)
 - **"Say when a translation is running"** — the gap between speaking and the translation arriving says `Translate …` instead of leaving the previous message up
 - **Send as**: Standard (message takes over, apps pause), or routed into your own placeholders — `{stt_input}` / `{stt_output}` carry a spoken message, `{ttt_input}` / `{ttt_output}` a typed one, `{text_input}` / `{text_output}` whichever sent last
 - **"Block apps"** toggle that pauses every automatic sender while you talk, with per-app exceptions
@@ -670,7 +671,9 @@ has no server of its own to send anything to.
 | **UDP 9001 (listening)** | avatar parameters back from VRChat | only with OSCQuery off |
 | **UDP 5353, mDNS (LAN)** | finding VRChat's real OSC port via OSCQuery | with OSCQuery on (default) |
 | **HTTP on 127.0.0.1, random port** | the OSCQuery endpoint VRChat reads | with OSCQuery on (default) |
-| `lingva.adminforge.de` *(or your own instance)* | translation, default backend | only when translation is on |
+| `translate.adminforge.de` | translation, default backend (and last fallback) | only when translation is on |
+| `lingva.ml` *(or your own instance)* | translation, if you pick Lingva – and as fallback | only when translation is on |
+| `lt.pyrine.net` | translation, if you pick it under LibreTranslate Online | only when selected |
 | `translate.googleapis.com` / `translation.googleapis.com` | translation, if you pick Google | only when selected |
 | `libretranslate.com` *(or your own URL / `localhost:5000`)* | translation, if you pick LibreTranslate | only when selected |
 | `api-free.deepl.com` / `api.deepl.com` | translation, if you pick DeepL | only when selected, needs your key |
@@ -716,7 +719,7 @@ kernel driver, no system service and no file outside your home directory.
 * **Independence:** OSC-DreamChatbox is an independent open-source implementation and is not affiliated with, endorsed by, or using code from MagicChatbox.
 * **Trademarks:** VRChat is a registered trademark of VRChat Inc. This project is an independent third-party tool and is not affiliated with or endorsed by VRChat Inc.
 * **Lyrics:** Song lyrics displayed by the app are fetched from LRCLIB, LyricsPlus, Better Lyrics, Paxsenix, KuGou or Musixmatch and remain the intellectual property of their respective copyright holders. The endpoint list is derived from [Meld](https://github.com/FrancescoGrazioso/Meld) (GPL-3.0).
-* **Translation endpoints:** Lingva is the default and needs no key. If you pick *Google Translate* you can enter your **own API key**, which routes the request through the official Google Cloud Translation API (your project, your quota). Without a key the app falls back to the unofficial, undocumented Google endpoint — shared by everyone and throttled or blocked by Google at any time, so **use at your own risk**. For heavy or reliable use, enter an API key or run LibreTranslate locally.
+* **Translation endpoints:** LibreTranslate on `translate.adminforge.de` is the default and needs no key (operated by adminForge, Germany – "no tracking, no logging"). If you pick *Google Translate* you can enter your **own API key**, which routes the request through the official Google Cloud Translation API (your project, your quota). Without a key the app falls back to the unofficial, undocumented Google endpoint — shared by everyone and throttled or blocked by Google at any time, so **use at your own risk**. For heavy or reliable use, enter an API key or run LibreTranslate locally.
 * **Third-party licenses:** A full list of every dependency, external service and system tool — with licenses, attribution and the GPL/LGPL source offer for the AppImage — is in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## 📄 License

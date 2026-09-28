@@ -37,7 +37,7 @@ from core.textutils import EMPTY_MARK, strip_marks, substitute_placeholders
 #: of them.
 SOURCE_MAP = {
     "media": {"artist": "artist", "title": "title", "time": "time",
-              "bar": "bar"},
+              "bar": "bar", "volume": "volume"},
     "hw_gpu": {"usage": "gpu_usage", "temp": "gpu_temp",
                "power": "gpu_power", "vram": "vram_usage",
                "name": "gpu_name"},

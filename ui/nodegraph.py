@@ -113,7 +113,8 @@ NODE_DEFS = {
         "title": "MediaPlay", "cat": "Sources", "accent": "#5b8dc9",
         "inputs": [],
         "outputs": [("artist", "Artist"), ("title", "Title"),
-                    ("time", "Time"), ("bar", "Songbar")],
+                    ("time", "Time"), ("bar", "Songbar"),
+                    ("volume", "Volume")],
         "fields": [], "note": "What the media player is currently doing.",
     },
     "hw_gpu": {

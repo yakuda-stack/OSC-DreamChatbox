@@ -117,6 +117,8 @@ MEDIA_ITEMS = (
     ("{time_end}", "total length"),
     ("{remaining}", "time left"),
     ("{progress_percent}", "how far in, in %"),
+    ("{volume}", "player volume in %"),
+    ("{volume_db}", "player volume in dB"),
     ("{bar}", "progress bar"),
     ("{lyrics}", "current line, synced via LRCLIB"),
     ("{lyrics_prefix}", "the symbol in front of the lyrics"),

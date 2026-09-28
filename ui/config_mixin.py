@@ -17,7 +17,8 @@ from core.constants import (
 from core.boxstyle import (
     CLOCK_24_HM, DEFAULT_CUSTOM_BOX, MODE_CUSTOM as BOX_MODE_CUSTOM, normalize_clock_format, normalize_custom as normalize_box_custom, normalize_mode as normalize_box_mode, normalize_template as normalize_box_template, normalize_width as normalize_box_width)
 from core.textutils import DEFAULT_CUSTOM_BAR, TIME_POS_LINE
-from core.translators import METHOD_LINGVA
+from core.translators import (
+    ADMINFORGE_LIBRE_URL, METHOD_LIBRE_ONLINE, METHOD_LINGVA)
 from core.plugins import ANCHORS, DEFAULT_ANCHOR
 
 
@@ -241,6 +242,8 @@ class ConfigMixin:
             # lyrics line cutoff; CHATBOX_LIMIT = no limit (default)
             "media_lyrics_max": CHATBOX_LIMIT,
             "media_show_bar": True,
+            # v1.6.2: player volume on the song line ("| 🔊 65%")
+            "media_show_volume": False,
             "oscquery_enabled": True,   # natives OSCQuery (mDNS)
             "media_bar_style": 2,   # 0-5 presets, 6 = custom
             "media_bar_size": 100,  # songbar length in % (30-100)
@@ -279,13 +282,19 @@ class ConfigMixin:
             "stt_language": "de-DE",
             "stt_block": False,
             "stt_output": "",
-            "stt_method": METHOD_LINGVA,  # lingva | google | libre | deepl
+            # v1.6.2: default is adminForge's keyless LibreTranslate -
+            # Lingva is broken upstream, Google keyless tracks and
+            # rate-limits. lingva | google | libre | libre_online | deepl
+            "stt_method": METHOD_LIBRE_ONLINE,
             "stt_mic": "",   # microphone name, "" = system default
             "stt_deepl_key": "",
             "stt_google_key": "",   # optional Google Cloud Translation key
             "stt_libre_url": "",
-            # hosted LibreTranslate: "" = the preset public instance
-            "stt_libre_online_url": "",
+            # hosted LibreTranslate: "" = the de.libretranslate.com
+            # preset; new installs start on translate.adminforge.de
+            "stt_libre_online_url": ADMINFORGE_LIBRE_URL,
+            # set once the v1.6.2 Lingva -> adminForge switch has run
+            "stt_migrated_v162": False,
             "stt_libre_online_key": "",
             # the "Custom server" entry is picked (URL may still be empty)
             "stt_libre_online_custom": False,
@@ -717,6 +726,21 @@ class ConfigMixin:
             defaults.get("media_lyrics_prefix_on", True))
         defaults["stt_libre_online_custom"] = bool(
             defaults.get("stt_libre_online_custom", False))
+        # ---- v1.6.2: Lingva -> translate.adminforge.de, once ----------
+        # The old default Lingva instance (lingva.adminforge.de) was shut
+        # down and now redirects to adminForge's LibreTranslate, and
+        # every other Lingva returns text untranslated. Anyone still on
+        # Lingva moves to that same operator's LibreTranslate. Runs one
+        # time only: picking Lingva again afterwards is respected.
+        # (A pre-1.0 "stt_deepl" config is left for the DeepL migration
+        # in apply_config_to_ui.)
+        if not defaults.get("stt_migrated_v162"):
+            if defaults.get("stt_method") == METHOD_LINGVA \
+                    and not defaults.get("stt_deepl"):
+                defaults["stt_method"] = METHOD_LIBRE_ONLINE
+                defaults["stt_libre_online_url"] = ADMINFORGE_LIBRE_URL
+                defaults["stt_libre_online_custom"] = False
+            defaults["stt_migrated_v162"] = True
         for key in ("stt_libre_online_url", "stt_libre_online_key",
                     "stt_twoway_source", "stt_twoway_target",
                     "stt_custom_file"):
@@ -901,6 +925,8 @@ class ConfigMixin:
             defaults.get("media_source_fallback", True))
         defaults["media_only_playing"] = bool(
             defaults.get("media_only_playing", False))
+        defaults["media_show_volume"] = bool(
+            defaults.get("media_show_volume", False))
         gw = defaults.get("graph_panel_widths")
         if (isinstance(gw, (list, tuple)) and len(gw) == 2
                 and all(isinstance(x, int) for x in gw)):

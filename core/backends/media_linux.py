@@ -165,6 +165,20 @@ class MediaFetcher:
         except Exception:
             return ""
 
+    def _volume(self, bus_name):
+        """The player's own volume, 0.0 .. 1.0 (v1.6.2).
+
+        MPRIS makes this optional - Spotify and VLC answer, many browser
+        players do not. None means "not reported", never "muted".
+        """
+        try:
+            value = self._get_prop(bus_name, "Volume")
+            if value is None:
+                return None
+            return max(0.0, float(value))
+        except Exception:
+            return None
+
     def _status(self, bus_name):
         try:
             return str(self._get_prop(bus_name, "PlaybackStatus") or "")
@@ -242,7 +256,7 @@ class MediaFetcher:
     # ----------------------------------------------------------- fetch
     def fetch(self):
         """Returns dict {artist, title, position, length, player,
-        player_key, player_label, playing, album} or None if nothing is playing
+        player_key, player_label, playing, album, volume} or None if nothing is playing
         / no player found."""
         if self.bus is None:
             return None
@@ -299,6 +313,9 @@ class MediaFetcher:
                 "album": album,
                 "position": float(pos_us) / 1_000_000.0,
                 "length": float(length_us) / 1_000_000.0,
+                # player volume 0.0-1.0, None when the player keeps it
+                # to itself
+                "volume": self._volume(chosen),
             }
         except Exception as e:
             self.log(f"MediaPlay: error while querying player: {e}")

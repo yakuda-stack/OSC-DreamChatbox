@@ -6,6 +6,52 @@ All notable changes to OSC-DreamChatbox are documented here.
 
 🟢 Linux Support: Complete & Stable (v1.2.6)
 
+## [v1.6.2] – 2026-09-29
+
+Translation works again, and the player volume can go into the chatbox.
+
+### Fixed
+
+- **Lingva: "Expecting value: line 1 column 1"** – the default instance
+  `lingva.adminforge.de` was shut down and now redirects to adminForge's
+  LibreTranslate, so the app got a web page instead of JSON. The Lingva
+  default is now `lingva.ml`, and a web page is reported as "no longer a
+  Lingva server". On top of that, every public Lingva instance currently
+  hands the text back **untranslated** (its Google scraping broke
+  upstream) – the app now recognises that and falls back instead of
+  sending the original text.
+- **Google (keyless) HTTP 429** – requests now go out with a browser
+  User-Agent (the app's own one got blocked much sooner), and on a
+  429/403 a second keyless Google endpoint is tried before giving up.
+
+### Changed
+
+- **Default translation service: LibreTranslate Online on
+  `translate.adminforge.de`** (was Lingva). No key, no Google tracking,
+  German operator with imprint and a no-logging statement. Existing
+  configs still on Lingva are switched over once
+  (`stt_migrated_v162`); picking Lingva again afterwards sticks.
+  LibreTranslate Online is now first in the service list.
+
+### Added
+
+- **LibreTranslate Online: two keyless servers** in the dropdown –
+  `translate.adminforge.de` (adminForge, imprint, "no tracking, no
+  logging") and `lt.pyrine.net` (private, no imprint/privacy notice,
+  fewer languages). Both checked: HTTPS, no key required, working.
+- **One more fallback:** when the chosen service, Lingva and Google all
+  fail, `translate.adminforge.de` gets the last try.
+- **MediaPlay: player volume** – `{volume}` (`65%`) and `{volume_db}`
+  (`-3.7 dB`) for custom strings, AIO and the canvas (new *Volume*
+  output on the MediaPlay block), plus a *Player volume* checkbox under
+  *Playback time & progress* that adds `🔊 65%` to the song line (off by
+  default). It is the player's own slider, read via MPRIS `Volume`; the
+  card shows it next to the detected player. Players that do not report
+  it leave it empty – many browsers, and Windows, where GSMTC has no
+  volume at all.
+
+All from the community (Discord).
+
 ## [v1.6.1] – 2026-09-28
 
 Community wishes: hide the paused song, and more room in Advanced mode.

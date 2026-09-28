@@ -700,6 +700,7 @@ class MainWindow(ConfigMixin, AppsPageMixin, AdvancedPageMixin,
         self.lyrics_max_slider.blockSignals(False)
         self.lyrics_max_lbl.setText(self._lyrics_max_text(lmax))
         self.chk_bar.setChecked(self.cfg["media_show_bar"])
+        self.chk_volume.setChecked(self.cfg["media_show_volume"])
         # local lyrics folder row + fetcher state
         self._sync_lyrics_local()
         self.bar_style_combo.blockSignals(True)

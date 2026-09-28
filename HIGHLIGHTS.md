@@ -3,6 +3,11 @@
 The short version of every release — what you will actually notice.
 The full details are in the changelog.
 
+## v1.6.2 – 2026-09-29
+
+- **Translation fixed:** Lingva is broken everywhere right now – the app notices and falls back. Google is blocked less often, and there are two keyless LibreTranslate servers. **New default: translate.adminforge.de** – no key, no Google tracking.
+- **Player volume in the chatbox:** `{volume}` / `{volume_db}` or one checkbox for `🔊 65%` (Linux).
+
 ## v1.6.1 – 2026-09-28
 
 - **New in MediaPlay:** *Hide media while paused* – switch it on and a paused song disappears from the chatbox (or shows the ⏸ idle symbol). Off by default.
