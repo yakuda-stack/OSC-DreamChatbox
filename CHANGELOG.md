@@ -6,6 +6,31 @@ All notable changes to OSC-DreamChatbox are documented here.
 
 🟢 Linux Support: Complete & Stable (v1.2.6)
 
+## [v1.6.1] – 2026-09-28
+
+Community wishes: hide the paused song, and more room in Advanced mode.
+
+### Added
+
+- **MediaPlay: "Hide media while paused"** – new checkbox under the
+  player choice (`media_only_playing`, off by default). When on, a
+  paused or stopped player counts as "nothing playing": the media line
+  disappears, or shows the idle symbol if that is switched on. Works for
+  the normal line, the custom string, All in one and every media
+  placeholder. The card still says which player is paused
+  (`paused – hidden`). Saved per profile like every other option.
+- **Advanced mode: side panels can be dragged wider** – the Blocks
+  palette and the Block inspector sit in a splitter now instead of a
+  fixed 196 / 232 px. Drag the edge next to the canvas; the widths are
+  remembered (`graph_panel_widths`), folding a panel away and back keeps
+  its width, and the canvas never gets narrower than 320 px.
+- **Advanced mode: the inspector's Text field grows with its text** –
+  it was a fixed 72 px box with a scrollbar and half the panel empty
+  below. Now it gets taller line by line (wrapped lines count) up to
+  420 px and only scrolls after that.
+
+Both from the community (Discord).
+
 ## [v1.5.10] – 2026-09-27
 
 ### Fixed

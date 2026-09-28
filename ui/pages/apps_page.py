@@ -575,6 +575,20 @@ class AppsPageMixin:
             lambda on: self.on_media_option("media_source_fallback", on))
         mc.addWidget(self.chk_media_fallback)
 
+        # v1.6.1 (community wish): a paused song counts as "nothing
+        # playing" - the line goes away (or turns into the idle symbol)
+        # instead of showing the same paused title for hours
+        self.chk_media_only_playing = QCheckBox(
+            "Hide media while paused  (only show it when something plays)")
+        self.chk_media_only_playing.setToolTip(
+            "On: as soon as the player is paused or stopped, MediaPlay "
+            "behaves as if nothing is playing - the line disappears, or "
+            "shows the idle symbol if that is switched on.\n"
+            "Off: a paused song stays in the chatbox (default).")
+        self.chk_media_only_playing.toggled.connect(
+            lambda on: self.on_media_option("media_only_playing", on))
+        mc.addWidget(self.chk_media_only_playing)
+
         self.media_status_lbl = QLabel("")
         self.media_status_lbl.setObjectName("dim")
         self.media_status_lbl.setWordWrap(True)
@@ -2770,6 +2784,10 @@ class AppsPageMixin:
             # the backend reads this on every fetch, so it takes effect
             # on the next poll without rebuilding anything
             self.media.fallback = on
+        if key == "media_only_playing":
+            # the filter sits in _on_media_result - ask the player again
+            # right away instead of waiting for the next poll
+            self.poll_media()
         self._sync_media_dependents()
         self.update_preview()
 
@@ -4179,9 +4197,18 @@ class AppsPageMixin:
 
     def _on_media_result(self, info):
         self._media_busy = False
+        hidden = None
+        if info and not info.get("playing") and self.cfg.get("media_only_playing"):
+            # "Hide media while paused": from here on a paused song is
+            # the same as no song - chatbox, AIO, placeholders and the
+            # idle symbol all follow without knowing about this option
+            hidden, info = info, None
         changed = (info or {}).get("title") != (self.media_info or {}).get("title")
         self.media_info = info
-        if info:
+        if hidden:
+            self.media_status_lbl.setText(
+                f"Detected player: {hidden['player']}  (paused \u2013 hidden)")
+        elif info:
             self.media_status_lbl.setText(
                 f"Detected player: {info['player']}"
                 f"  ({'playing' if info['playing'] else 'paused'})")

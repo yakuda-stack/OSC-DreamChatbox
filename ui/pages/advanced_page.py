@@ -25,7 +25,7 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QButtonGroup, QCheckBox, QComboBox, QDialog, QFileDialog, QFrame,
     QHBoxLayout, QLabel, QLineEdit, QListWidget, QPlainTextEdit,
-    QPushButton, QSpinBox, QVBoxLayout, QWidget)
+    QPushButton, QSpinBox, QSplitter, QVBoxLayout, QWidget)
 
 from core.constants import AIO_MAX, STATUS_MAX_TEXTS
 from core.hotkeys import IS_WINDOWS
@@ -39,6 +39,46 @@ from ui.pages.placeholder_picker import (
 #: pulls the {name} back out of the picker tables, which spell their
 #: entries with the braces on
 _PLACEHOLDER_RE = re.compile(r"\{([a-z0-9_]+)\}", re.IGNORECASE)
+
+#: side panels next to the canvas (v1.6.1: draggable) - start width and
+#: the range the splitter handle may move them in
+PALETTE_WIDTH = 196
+INSPECTOR_WIDTH = 232
+PANEL_MIN = (160, 200)          # palette, inspector
+PANEL_MAX = 600
+#: width of the "show panel" tab that stays behind when one is folded
+PANEL_STRIP = 30
+
+
+class AutoGrowEdit(QPlainTextEdit):
+    """Multi-line field that gets taller with its text (v1.6.1).
+
+    The inspector's Text field was a fixed 72 px - three lines of a
+    long AIO string and the rest hidden behind a scrollbar, with half
+    the panel empty below it. Now it grows line by line (wrapped lines
+    count) up to max_h, and only then scrolls.
+    """
+
+    def __init__(self, text="", min_h=72, max_h=420, parent=None):
+        super().__init__(text, parent)
+        self.min_h, self.max_h = min_h, max_h
+        self.document().documentLayout().documentSizeChanged.connect(
+            lambda _s: self._fit())
+        self._fit()
+
+    def _fit(self):
+        # QPlainTextEdit's document height is counted in lines
+        lines = max(1, int(self.document().size().height()))
+        m = self.contentsMargins()
+        h = (lines * self.fontMetrics().lineSpacing()
+             + int(self.document().documentMargin() * 2)
+             + m.top() + m.bottom() + 6)
+        self.setFixedHeight(max(self.min_h, min(self.max_h, h)))
+
+    def resizeEvent(self, event):
+        # a wider or narrower panel re-wraps the text
+        super().resizeEvent(event)
+        self._fit()
 
 
 class AdvancedPageMixin:
@@ -79,8 +119,17 @@ class AdvancedPageMixin:
         c_layout.addLayout(self._build_graph_toolbar())
 
         # ---- palette | canvas | inspector -----------------------------
-        split = QHBoxLayout()
-        split.setSpacing(6)
+        # v1.6.1: a splitter instead of a plain row, so both side panels
+        # can be dragged wider (long block names, long Text fields)
+        split = QSplitter(Qt.Orientation.Horizontal)
+        split.setObjectName("graphsplit")
+        split.setChildrenCollapsible(False)
+        split.setHandleWidth(6)
+        split.setStyleSheet(
+            "QSplitter#graphsplit::handle:hover,"
+            "QSplitter#graphsplit::handle:pressed"
+            "{ background: palette(highlight); border-radius: 3px; }")
+        self.graph_split = split
         self.graph_palette_panel = self._build_node_palette()
         split.addWidget(self._collapsible(
             self.graph_palette_panel, "left", "Blocks & variables",
@@ -91,13 +140,23 @@ class AdvancedPageMixin:
         self.graph_canvas.node_scene.graphChanged.connect(
             self.on_graph_changed)
         self.graph_canvas.selectionChanged.connect(self.on_graph_selection)
-        split.addWidget(self.graph_canvas, 1)
+        # dragging a panel wide must never squeeze the canvas to nothing
+        self.graph_canvas.setMinimumWidth(320)
+        split.addWidget(self.graph_canvas)
 
         self.graph_inspector_panel = self._build_node_inspector()
         split.addWidget(self._collapsible(
             self.graph_inspector_panel, "right", "Block inspector",
             self.graph_inspector_hide))
-        c_layout.addLayout(split, 1)
+        # only the canvas takes up extra window width
+        split.setStretchFactor(0, 0)
+        split.setStretchFactor(1, 1)
+        split.setStretchFactor(2, 0)
+        widths = (getattr(self, "cfg", None) or {}).get("graph_panel_widths")
+        left, right = widths if widths else (PALETTE_WIDTH, INSPECTOR_WIDTH)
+        split.setSizes([left, 1000, right])
+        split.splitterMoved.connect(self._on_graph_split_moved)
+        c_layout.addWidget(split, 1)
 
         layout.addWidget(card, 1)
         return page
@@ -311,9 +370,27 @@ class AdvancedPageMixin:
         strip_col.addWidget(show_btn)
         strip_col.addStretch()
 
+        index = 0 if side == "left" else 2
+        saved = {}
+
         def apply(collapsed):
+            split = getattr(self, "graph_split", None)
+            sizes = split.sizes() if split is not None else None
+            if not sizes or len(sizes) != 3:
+                sizes = None        # still being built
+            if collapsed and sizes and sizes[index] > PANEL_STRIP:
+                saved["w"] = sizes[index]
             panel.setVisible(not collapsed)
             strip.setVisible(collapsed)
+            # in a splitter the width does not follow the content by
+            # itself: pin the folded tab, give the panel its width back
+            holder.setMaximumWidth(PANEL_STRIP if collapsed else PANEL_MAX)
+            if sizes:
+                want = PANEL_STRIP if collapsed else saved.get(
+                    "w", PANEL_MIN[index // 2])
+                sizes[1] += sizes[index] - want
+                sizes[index] = want
+                split.setSizes(sizes)
 
         hide_button.setToolTip(f"Hide {name}")
         hide_button.clicked.connect(lambda: apply(True))
@@ -326,7 +403,20 @@ class AdvancedPageMixin:
         else:
             row.addWidget(strip)
             row.addWidget(panel)
+        holder.setMaximumWidth(PANEL_MAX)
         return holder
+
+    def _on_graph_split_moved(self, _pos, _index):
+        """Remembers the panel widths (debounced - this fires on every
+        pixel of the drag). A folded panel keeps its last real width."""
+        sizes = self.graph_split.sizes()
+        old = self.cfg.get("graph_panel_widths") or [PALETTE_WIDTH,
+                                                     INSPECTOR_WIDTH]
+        left = sizes[0] if self.graph_palette_panel.isVisible() else old[0]
+        right = sizes[2] if self.graph_inspector_panel.isVisible() else old[1]
+        if [left, right] != list(old):
+            self.cfg["graph_panel_widths"] = [left, right]
+            self.save_config_later()
 
     def _panel_hide_button(self, side):
         """The collapse button that sits in a panel's own header row."""
@@ -340,7 +430,7 @@ class AdvancedPageMixin:
     def _build_node_palette(self):
         box = QFrame()
         box.setObjectName("innerbox")
-        box.setFixedWidth(196)
+        box.setMinimumWidth(PANEL_MIN[0])
         v = QVBoxLayout(box)
         v.setContentsMargins(12, 10, 12, 12)
         v.setSpacing(6)
@@ -411,7 +501,7 @@ class AdvancedPageMixin:
     def _build_node_inspector(self):
         box = QFrame()
         box.setObjectName("innerbox")
-        box.setFixedWidth(232)
+        box.setMinimumWidth(PANEL_MIN[1])
         v = QVBoxLayout(box)
         v.setContentsMargins(12, 10, 12, 12)
         v.setSpacing(8)
@@ -780,9 +870,8 @@ class AdvancedPageMixin:
             w.clicked.connect(lambda _=False, n=node: self.on_graph_button(n))
             return w
         if kind == "multiline":
-            w = QPlainTextEdit(str(value or ""))
+            w = AutoGrowEdit(str(value or ""))
             w.setObjectName("aioedit")
-            w.setFixedHeight(72)
             w.textChanged.connect(
                 lambda n=node, k=key, e=w:
                     self._set_node_value(n, k, e.toPlainText()))

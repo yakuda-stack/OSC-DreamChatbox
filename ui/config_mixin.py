@@ -260,6 +260,11 @@ class ConfigMixin:
             # (False, for someone who wants the line to mean Spotify or
             # mean nothing).
             "media_source_fallback": True,
+            # v1.6.1: treat a paused song as "nothing playing"
+            "media_only_playing": False,
+            # v1.6.1: Advanced mode side panels [palette, inspector] in
+            # px, dragged by the user - None = the built-in widths
+            "graph_panel_widths": None,
             "hw_active": False,
             "app_order": ["status", "media", "hardware"],
             "textbox_presets": ["Hey! How are you doing? \U0001F60A",
@@ -894,6 +899,16 @@ class ConfigMixin:
             if isinstance(lbl, str) else ""
         defaults["media_source_fallback"] = bool(
             defaults.get("media_source_fallback", True))
+        defaults["media_only_playing"] = bool(
+            defaults.get("media_only_playing", False))
+        gw = defaults.get("graph_panel_widths")
+        if (isinstance(gw, (list, tuple)) and len(gw) == 2
+                and all(isinstance(x, int) for x in gw)):
+            # clamped: a hand-edited 5000 must not push the canvas away
+            defaults["graph_panel_widths"] = [
+                max(160, min(600, gw[0])), max(200, min(600, gw[1]))]
+        else:
+            defaults["graph_panel_widths"] = None
         # ---- FPS moved out in v1.4.4 -----------------------------------
         # Reading a frame rate means loading something into the game - a
         # Vulkan layer on Linux, RTSS on Windows - and that has nothing

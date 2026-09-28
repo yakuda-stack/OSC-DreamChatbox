@@ -261,6 +261,7 @@ Shows what you are listening to — **Spotify, Apple Music, YT Music, browsers, 
 
 - Custom string with placeholders: `{artist} {title} {album} {time} {time_status} {time_end} {remaining} {progress_percent} {position} {length} {bar} {lyrics} {player} {icon_sound}`
 - **Idle symbol**: shows `⏸` (editable) when nothing is playing instead of the line silently disappearing — or switch it off. Works in **All in one** too; `{media_idle}` places it by hand
+- **Hide media while paused** (off by default): a paused or stopped song counts as "nothing playing" — the line disappears or shows the idle symbol
 
 </details>
 
@@ -317,7 +318,7 @@ A **Mode switch** on the All in one card: *Normal* is the text fields, *Advanced
 <details>
 <summary><b>Details</b></summary>
 
-- Blocks palette on the left, canvas in the middle, the selected block's values on the right — both side panels fold away. Drag a block out of the palette, drag from an output dot to an input dot to wire it; middle mouse pans, the wheel zooms, Delete removes the selection
+- Blocks palette on the left, canvas in the middle, the selected block's values on the right — both side panels fold away and can be **dragged wider** (the width is remembered). Long Text fields grow with their content. Drag a block out of the palette, drag from an output dot to an input dot to wire it; middle mouse pans, the wheel zooms, Delete removes the selection
 - **One canvas per AIO string**, picked with tabs above the canvas, and each of the ten AIO templates keeps its own set of canvases
 - **34 blocks**: Sources (Text, Placeholder, Personal Status, GPU, CPU, RAM & System, MediaPlay, Chat/STT, Clock, Custom Box), Text (Join with 2–10 inputs, Format, Info, Style, Truncate, Line break), Logic (If/Else, Compare, Has value), Flow (Timer, Step, Button, Change AIO), OSC, Output, System and Hotkeys
 - Every placeholder a typed string can use is **draggable out of a grouped Variables list**, plugins included

@@ -735,6 +735,7 @@ class MainWindow(ConfigMixin, AppsPageMixin, AdvancedPageMixin,
         self.media_idle_input.setText(self.cfg["media_idle_text"])
         self.chk_media_custom.setChecked(self.cfg["media_custom"])
         self.chk_media_fallback.setChecked(self.cfg["media_source_fallback"])
+        self.chk_media_only_playing.setChecked(self.cfg["media_only_playing"])
         self.media_custom_input.setText(self.cfg["media_custom_template"])
         for i, edit in enumerate(self.preset_edits):
             edit.setText(self.cfg["textbox_presets"][i])

@@ -3,6 +3,11 @@
 The short version of every release — what you will actually notice.
 The full details are in the changelog.
 
+## v1.6.1 – 2026-09-28
+
+- **New in MediaPlay:** *Hide media while paused* – switch it on and a paused song disappears from the chatbox (or shows the ⏸ idle symbol). Off by default.
+- **Advanced mode:** drag the side panels wider, and the Text field grows with long text instead of scrolling.
+
 ## v1.5.10 – 2026-09-27
 
 - **Fix:** `{text_t2}` & co. now rotate through *all* texts of their own template – not just as many as the active template has.
