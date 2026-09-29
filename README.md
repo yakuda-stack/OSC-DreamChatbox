@@ -104,7 +104,7 @@ Then launch **OSC DreamChatbox** from your app menu or run `osc-dreamchatbox`.
 
 **AppImage (any distro)**
 
-Grab `OSC-DreamChatbox-<version>-x86_64.AppImage` from the **[releases page](https://github.com/yakuda-stack/OSC-DreamChatbox/releases)**, `chmod +x` it, run it. It carries **update information (zsync)**: AppImageUpdate, AppImageLauncher, Gear Lever, AM or AppManager update it by downloading **only the changed parts** — often just a few MB instead of the full ~120 MB. Works with **Python 3.12, 3.13 and 3.14** — whichever your distro ships (Ubuntu 24.04 / Mint 22 included).
+Grab `OSC-DreamChatbox-<version>-x86_64.AppImage` from the **[releases page](https://github.com/yakuda-stack/OSC-DreamChatbox/releases)**, `chmod +x` it, run it. It carries **update information (zsync)**: AppImageUpdate, AppImageLauncher, Gear Lever, AM or AppManager update it by downloading **only the changed parts** — often just a few MB instead of the full ~150 MB. **Brings its own Python** (since v1.6.3) and the Qt libraries that are often missing (`libxcb-cursor0`), so it runs on Ubuntu 22.04 / Mint 21 and newer without installing anything.
 
 <details>
 <summary>Without an AUR helper (plain <code>makepkg</code>)</summary>

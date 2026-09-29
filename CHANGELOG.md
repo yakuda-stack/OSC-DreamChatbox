@@ -34,6 +34,20 @@ one.
   `🎵 {title} 🎵` came out as `🎵 🎵`. A line whose placeholders are all
   MediaPlay ones now disappears completely (or shows the idle symbol).
   Mixed lines like `Status: {text} | {title}` keep their other part.
+- **AppImage quit right after starting on Ubuntu 22.04 / Mint 21**
+  (reported by the AppImage catalog test: "exited within 11 seconds").
+  Two causes, both fixed in `scripts/build_appimage.sh`:
+  - it used the system's `python3` and only carried packages for
+    3.12–3.14 – Ubuntu 22.04 has 3.10. The AppImage now **brings its
+    own Python 3.12** (python-build-standalone) and needs no Python on
+    the system at all.
+  - Qt ≥ 6.5 does not start without `libxcb-cursor0`, which many
+    Ubuntu/Mint installs lack. It (and the other small xcb libraries Qt
+    wants) now ships inside the AppImage and is only used when the
+    system has none.
+  - on top: every file in the AppImage is now readable for every user.
+    Some were owner-only (`600`), which gives `PermissionError` as soon
+    as another user – or the catalog test – starts it.
 
 ## [v1.6.2] – 2026-09-29
 

@@ -8,6 +8,7 @@ The full details are in the changelog.
 - **Clear chatbox when there is nothing to send** (Options) – no more old text hanging around for 30 seconds. Your typed messages are never cleared.
 - **Hide media while paused** in All in one: remove only the song parts, or pause the whole All in one.
 - **Fix:** `🎵 {title} 🎵` no longer leaves `🎵 🎵` behind when nothing plays.
+- **AppImage now runs on Ubuntu 22.04 / Mint 21 too** – it brings its own Python and the Qt libraries that are often missing.
 
 ## v1.6.2 – 2026-09-29
 

@@ -1,6 +1,8 @@
 #!/bin/bash
 # OSC-DreamChatbox — AppImage Builder (bundled source)
-# Benötigt: python3, pip (appimagetool wird automatisch geladen)
+# Benötigt: wget, bsdtar (Arch: libarchive, ist immer da)
+#           appimagetool, Runtime, Python und ein paar X11-Bibliotheken
+#           werden automatisch geladen.
 # Verwendung:  bash scripts/build_appimage.sh   (egal von wo aus)
 #
 # Ergebnis:    build/OSC-DreamChatbox-<version>-x86_64.AppImage
@@ -115,12 +117,93 @@ if ! head -c 4 "$RUNTIME" | grep -q "ELF"; then
 fi
 chmod +x "$RUNTIME"
 
+# 1c. Eigenes Python (seit v1.6.3)
+#
+# Früher nahm die AppImage den python3 des Systems und brachte nur die
+# Pakete für 3.12/3.13/3.14 mit. Auf Ubuntu 22.04 / Mint 21 ist python3
+# aber 3.10 -> die AppImage beendete sich sofort. Genau das ist im
+# AppImage-Katalogtest passiert (der läuft auf Ubuntu 22.04):
+# "The application exited within 11 seconds instead of showing a window".
+#
+# Jetzt liegt ein komplettes Python in der AppImage (python-build-
+# standalone: relocatable, gegen alte glibc gebaut) - die AppImage
+# braucht vom System kein Python mehr.
+# Anderes Python:  DCB_PYTHON_URL=... bash scripts/build_appimage.sh
+PY_BUNDLE_URL="${DCB_PYTHON_URL:-https://github.com/astral-sh/python-build-standalone/releases/download/20250902/cpython-3.12.11%2B20250902-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz}"
+PY_BUNDLE_TGZ="/tmp/dcb-python-$(basename "$PY_BUNDLE_URL" | sed 's/%2B/+/')"
+if [ ! -s "$PY_BUNDLE_TGZ" ]; then
+    echo "[Info] Lade Python für die AppImage (python-build-standalone)..."
+    wget -q "$PY_BUNDLE_URL" -O "$PY_BUNDLE_TGZ" || {
+        echo "FEHLER: Python konnte nicht geladen werden ($PY_BUNDLE_URL)."
+        rm -f "$PY_BUNDLE_TGZ"
+        exit 1
+    }
+fi
+
+# 1d. X11-Bibliotheken, die Qt6 braucht und die viele Systeme nicht haben
+#
+# Seit Qt 6.5 startet das xcb-Plugin ohne libxcb-cursor0 gar nicht
+# ("xcb-cursor0 or libxcb-cursor0 is needed"). Auf Ubuntu/Mint fehlt es
+# oft, im Katalogtest auch. Die Pakete aus Ubuntu 22.04 (ältestes
+# Zielsystem -> alte glibc, läuft überall neuer) kommen nach
+# usr/lib/extra. AppRun nimmt sie NUR, wenn das System sie nicht hat.
+QT_DEBS=(
+    "universe/x/xcb-util-cursor/libxcb-cursor0_0.1.1-4ubuntu1_amd64.deb"
+    "main/x/xcb-util-image/libxcb-image0_0.4.0-2_amd64.deb"
+    "main/x/xcb-util-renderutil/libxcb-render-util0_0.3.9-1build3_amd64.deb"
+    "main/x/xcb-util/libxcb-util1_0.4.0-1build2_amd64.deb"
+    "main/x/xcb-util-wm/libxcb-icccm4_0.4.1-1.1build2_amd64.deb"
+    "main/x/xcb-util-keysyms/libxcb-keysyms1_0.4.0-1build3_amd64.deb"
+    "main/libx/libxkbcommon/libxkbcommon-x11-0_1.4.0-1_amd64.deb"
+)
+if ! command -v bsdtar >/dev/null 2>&1; then
+    echo "FEHLER: bsdtar fehlt (Arch: pacman -S libarchive,"
+    echo "        Debian/Ubuntu: apt install libarchive-tools)."
+    exit 1
+fi
+DEB_CACHE="/tmp/dcb-debs"
+mkdir -p "$DEB_CACHE"
+for d in "${QT_DEBS[@]}"; do
+    f="$DEB_CACHE/$(basename "$d")"
+    if [ ! -s "$f" ]; then
+        wget -q "http://archive.ubuntu.com/ubuntu/pool/$d" -O "$f" || {
+            echo "FEHLER: $(basename "$d") konnte nicht geladen werden."
+            rm -f "$f"
+            exit 1
+        }
+    fi
+done
+
 # 2. AppDir Struktur anlegen
 echo "[1/5] Erstelle AppDir Struktur..."
 mkdir -p "$BUILD_DIR/usr/bin"
 mkdir -p "$LIB"
 mkdir -p "$BUILD_DIR/usr/share/applications"
 mkdir -p "$BUILD_DIR/usr/share/icons/hicolor/256x256/apps"
+
+# Python auspacken -> usr/python/bin/python3
+tar -xzf "$PY_BUNDLE_TGZ" -C "$BUILD_DIR/usr"
+PYBIN="$BUILD_DIR/usr/python/bin/python3"
+if ! "$PYBIN" -c 'import sys' 2>/dev/null; then
+    echo "FEHLER: gebundeltes Python startet nicht ($PYBIN)."
+    exit 1
+fi
+PY_MINOR="$("$PYBIN" -c 'import sys;print("%d.%d"%sys.version_info[:2])')"
+echo "[Info] Gebundeltes Python: $PY_MINOR"
+# Tests/IDLE/Tk werden nie gebraucht
+rm -rf "$BUILD_DIR/usr/python/lib/python$PY_MINOR/test" \
+       "$BUILD_DIR/usr/python/lib/python$PY_MINOR/idlelib" \
+       "$BUILD_DIR/usr/python/lib/python$PY_MINOR/tkinter" \
+       "$BUILD_DIR/usr/python/lib/python$PY_MINOR/turtledemo"
+
+# Qt-X11-Bibliotheken -> usr/lib/extra
+EXTRA="$BUILD_DIR/usr/lib/extra"
+mkdir -p "$EXTRA"
+for d in "${QT_DEBS[@]}"; do
+    bsdtar -xOf "$DEB_CACHE/$(basename "$d")" 'data.tar.*' \
+        | bsdtar -xf - -C "$EXTRA" --strip-components 4 \
+            './usr/lib/x86_64-linux-gnu/*.so.*'
+done
 
 # 3. Programmdateien kopieren (neue Struktur: core/ + ui/ + assets/)
 echo "[2/5] Kopiere Programmdateien..."
@@ -140,7 +223,7 @@ find "$LIB" -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null || true
 cat > "$BUILD_DIR/usr/bin/osc-dreamchatbox" << 'WRAPPER'
 #!/bin/bash
 cd "$(dirname "$0")/../lib/osc-dreamchatbox"
-# AppRun sucht den passenden Interpreter aus (siehe dort), Fallback python3
+# AppRun setzt DREAMCHATBOX_PYTHON auf das gebundelte Python
 exec "${DREAMCHATBOX_PYTHON:-python3}" osc_dreamchatbox.py "$@"
 WRAPPER
 chmod +x "$BUILD_DIR/usr/bin/osc-dreamchatbox"
@@ -181,7 +264,8 @@ echo "[4/5] Bundele Python-Abhängigkeiten..."
 #
 # 3.12 ist das Minimum (f-Strings mit Backslash in ui/pages/*).
 # Andere Liste:  DCB_PYVERS="3.12 3.13" bash scripts/build_appimage.sh
-PYVERS="${DCB_PYVERS:-3.12 3.13 3.14}"
+# Seit v1.6.3 mit eigenem Python: nur noch dessen Version nötig.
+PYVERS="${DCB_PYVERS:-$PY_MINOR}"
 DEPS=(PyQt6 python-osc SpeechRecognition zeroconf deepl setproctitle)
 # --platform: pip nimmt dann NUR Wheels mit genau diesen Tags. Obergrenze
 # glibc 2.35 hält die AppImage auf älteren Distros lauffähig.
@@ -191,11 +275,9 @@ for g in 17 24 27 28 31 34 35; do
 done
 PLAT_ARGS+=(--platform "manylinux2014_${ARCH}")
 
-if python3 -m pip --version >/dev/null 2>&1; then
-    PIP=(python3 -m pip)
-else
-    PIP=(pip)
-fi
+# pip des gebundelten Pythons: wertet Marker (python_version ...) für
+# genau das Python aus, das später läuft
+PIP=("$PYBIN" -m pip --disable-pip-version-check)
 
 SITE="$BUILD_DIR/usr/lib/python3"
 STAGE="$OUT_DIR/pystage"
@@ -255,6 +337,40 @@ cat > "$BUILD_DIR/AppRun" << 'APPRUN'
 HERE="$(dirname "$(readlink -f "$0")")"
 export PYTHONPATH="$HERE/usr/lib/python3:$PYTHONPATH"
 export PATH="$HERE/usr/bin:$PATH"
+# nichts aus ~/.local/lib/python* dazwischenfunken lassen
+export PYTHONNOUSERSITE=1
+
+# Qt-X11-Bibliotheken aus usr/lib/extra - nur wenn das System sie nicht
+# hat (dann gewinnt immer die Version des Systems)
+if [ -d "$HERE/usr/lib/extra" ] && command -v ldconfig >/dev/null 2>&1; then
+    libs="$(ldconfig -p 2>/dev/null)"
+    for so in libxcb-cursor.so.0 libxcb-image.so.0 libxcb-render-util.so.0 \
+              libxcb-util.so.1 libxcb-icccm.so.4 libxcb-keysyms.so.1 \
+              libxkbcommon-x11.so.0; do
+        case "$libs" in
+            *"$so "*) ;;
+            *) export LD_LIBRARY_PATH="$HERE/usr/lib/extra${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+               break ;;
+        esac
+    done
+elif [ -d "$HERE/usr/lib/extra" ]; then
+    export LD_LIBRARY_PATH="$HERE/usr/lib/extra${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+fi
+
+# Seit v1.6.3 bringt die AppImage ihr eigenes Python mit - dann ist
+# alles weitere unten (System-Python suchen) nicht nötig.
+if [ -x "$HERE/usr/python/bin/python3" ]; then
+    export DREAMCHATBOX_PYTHON="$HERE/usr/python/bin/python3"
+    missing=""
+    if command -v ldconfig >/dev/null 2>&1; then
+        case "$(ldconfig -p 2>/dev/null)" in *libEGL.so.1*) ;; *) missing=" libegl1";; esac
+    fi
+    if [ -n "$missing" ]; then
+        echo "OSC-DreamChatbox: es fehlt eine Systembibliothek für Qt6:$missing" >&2
+        echo "  Debian/Ubuntu/Mint:  sudo apt install$missing" >&2
+    fi
+    exec "$HERE/usr/bin/osc-dreamchatbox" "$@"
+fi
 
 # Diese AppImage bundelt die Python-Pakete, benutzt aber den python3 des
 # Systems. Fehlt der oder fehlen Qt-Systembibliotheken, ist die Qt-
@@ -320,6 +436,17 @@ fi
 exec "$HERE/usr/bin/osc-dreamchatbox" "$@"
 APPRUN
 chmod +x "$BUILD_DIR/AppRun"
+
+# 5b. Dateirechte: alles für alle lesbar, Ordner/Programme ausführbar.
+# squashfs übernimmt die Rechte 1:1. Eine Datei mit 600 (nur Besitzer)
+# ist für jeden anderen Benutzer unlesbar -> "PermissionError: [Errno 13]"
+# beim Import, z. B. im AppImage-Katalogtest (der läuft unter einer
+# anderen UID). Beim Bauen auf dem eigenen Rechner merkt man das nie.
+chmod -R u+rwX,go+rX,go-w "$BUILD_DIR"
+BAD="$(find "$BUILD_DIR" ! -perm -o=r | head -3)"
+if [ -n "$BAD" ]; then
+    echo "FEHLER: nicht lesbare Dateien im AppDir:"; echo "$BAD"; exit 1
+fi
 
 # 6. AppImage bauen (mit der statischen Runtime von oben)
 #
