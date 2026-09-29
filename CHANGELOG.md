@@ -6,6 +6,35 @@ All notable changes to OSC-DreamChatbox are documented here.
 
 🟢 Linux Support: Complete & Stable (v1.2.6)
 
+## [v1.6.3] – 2026-09-29
+
+More community wishes (Discord): an empty chatbox when there is nothing
+to show, and a choice of what "Hide media while paused" hides in All in
+one.
+
+### Added
+
+- **Options: "Clear chatbox when there is nothing to send"**
+  (`clear_when_empty`, off by default). When every app is off or has
+  nothing to show – e.g. the song was paused with *Hide media while
+  paused* – one empty message removes the old text at once instead of
+  VRChat keeping it for ~30 s. Only ever the app's own automatic text:
+  a message typed and sent by hand is never cleared by this. Respects
+  the chatbox rate limit like every other send; Advanced mode clears on
+  its one-second tick.
+- **MediaPlay: "In All in one" choice under *Hide media while paused***
+  (`media_pause_scope`): *Remove only the MediaPlay parts* (default,
+  what 1.6.1 already did – status, hardware and the rest keep going) or
+  *Pause the whole All in one* (nothing from All in one while no song
+  plays; plugin and chat lines still go out).
+
+### Fixed
+
+- **A song-only AIO line left its decoration behind** – with no song,
+  `🎵 {title} 🎵` came out as `🎵 🎵`. A line whose placeholders are all
+  MediaPlay ones now disappears completely (or shows the idle symbol).
+  Mixed lines like `Status: {text} | {title}` keep their other part.
+
 ## [v1.6.2] – 2026-09-29
 
 Translation works again, and the player volume can go into the chatbox.

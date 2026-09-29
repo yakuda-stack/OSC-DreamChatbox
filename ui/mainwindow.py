@@ -737,6 +737,11 @@ class MainWindow(ConfigMixin, AppsPageMixin, AdvancedPageMixin,
         self.chk_media_custom.setChecked(self.cfg["media_custom"])
         self.chk_media_fallback.setChecked(self.cfg["media_source_fallback"])
         self.chk_media_only_playing.setChecked(self.cfg["media_only_playing"])
+        self.media_pause_scope_combo.blockSignals(True)
+        self.media_pause_scope_combo.setCurrentIndex(max(0,
+            self.media_pause_scope_combo.findData(
+                self.cfg["media_pause_scope"])))
+        self.media_pause_scope_combo.blockSignals(False)
         self.media_custom_input.setText(self.cfg["media_custom_template"])
         for i, edit in enumerate(self.preset_edits):
             edit.setText(self.cfg["textbox_presets"][i])
@@ -941,6 +946,10 @@ class MainWindow(ConfigMixin, AppsPageMixin, AdvancedPageMixin,
         self.toggle_instant.setChecked(
             bool(self.cfg.get("osc_instant_send", True)))
         self.toggle_instant.blockSignals(False)
+        self.toggle_clear_empty.blockSignals(True)
+        self.toggle_clear_empty.setChecked(
+            bool(self.cfg.get("clear_when_empty", False)))
+        self.toggle_clear_empty.blockSignals(False)
         self.toggle_slim.setChecked(self.cfg["slim_chatbox"])
         self.toggle_oscquery.blockSignals(True)
         self.toggle_oscquery.setChecked(
@@ -1333,6 +1342,11 @@ class MainWindow(ConfigMixin, AppsPageMixin, AdvancedPageMixin,
         changed = (bool(text)
                    and text != getattr(self, "_last_graph_text", None)) \
             or self.current_aio_index() != before
+        # v1.6.3: the canvas went empty - let send_now() clear the
+        # chatbox now rather than at the next interval tick
+        if not text and self.cfg.get("clear_when_empty") \
+                and getattr(self, "_auto_text_on_screen", False):
+            changed = True
         if changed:
             self._last_graph_text = text
         if changed and self.cfg.get("send_to_vrchat"):
@@ -1371,6 +1385,15 @@ class MainWindow(ConfigMixin, AppsPageMixin, AdvancedPageMixin,
         # the ONE place the graph is allowed to act: a real send, not a
         # preview repaint (see AppsPageMixin.run_graph_automation)
         text = self.build_payload(commit=True)
+        if not text and self.osc_client is not None \
+                and self.cfg.get("clear_when_empty") \
+                and getattr(self, "_auto_text_on_screen", False):
+            # v1.6.3: nothing left to show - empty the chatbox once
+            # instead of VRChat holding the old text ~30 s. Only ever
+            # our own automatic text: a typed message sets the flag off.
+            self.clear_chatbox()
+            self._render_preview(text)
+            return
         if not text or self.osc_client is None:
             return
         # kept for the preview below: `text` gets cut for the slim suffix
@@ -1389,6 +1412,7 @@ class MainWindow(ConfigMixin, AppsPageMixin, AdvancedPageMixin,
             # only a send that actually went out counts against the limit
             self._send_times.append(time.time())
             self._last_sent_payload = payload
+            self._auto_text_on_screen = True
             slim = " [+SLIM]" if payload != text else ""
             self.log(f"-> OSC {CHATBOX_INPUT} {text.count(chr(10)) + 1} line(s), "
                      f"{len(payload)} chars{slim} "

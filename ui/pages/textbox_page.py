@@ -2522,6 +2522,9 @@ class TextboxPageMixin:
             pause = self.cfg["textbox_pause_sec"]
             self.manual_pause_until = time.time() + pause
             self.last_manual_text = text
+            # what is on screen now is typed, not automatic - "Clear
+            # chatbox when there is nothing to send" leaves it alone
+            self._auto_text_on_screen = False
             self.log(f"-> MANUAL {CHATBOX_INPUT} \"{text}\" "
                      f"(apps paused for {pause}s)")
             self.update_preview()

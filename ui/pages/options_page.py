@@ -351,6 +351,27 @@ class OptionsPageMixin:
         instant_hint.setWordWrap(True)
         c.addWidget(instant_hint)
 
+        # v1.6.3 (community wish): empty the chatbox right away when
+        # nothing is left to send, instead of VRChat holding the last
+        # text for ~30 s. Typed messages are never cleared by this.
+        clear_row = QHBoxLayout()
+        self.toggle_clear_empty = ToggleSwitch()
+        self.toggle_clear_empty.toggled.connect(self.on_clear_empty_toggled)
+        clear_row.addWidget(self.toggle_clear_empty)
+        clear_row.addWidget(ToggleLabel(
+            "Clear chatbox when there is nothing to send",
+            self.toggle_clear_empty))
+        clear_row.addStretch()
+        c.addLayout(clear_row)
+        clear_hint = QLabel(
+            "When every app is off or has nothing to show (e.g. the song "
+            "was paused with \u201cHide media while paused\u201d), one empty "
+            "message removes the old text at once. A message you typed "
+            "and sent yourself is never cleared by this.")
+        clear_hint.setObjectName("dim")
+        clear_hint.setWordWrap(True)
+        c.addWidget(clear_hint)
+
         line2 = QFrame(); line2.setFrameShape(QFrame.Shape.HLine); line2.setObjectName("hline")
         c.addWidget(line2)
 
@@ -1095,6 +1116,7 @@ class OptionsPageMixin:
             # next payload is always "different" and goes out at once
             self._send_times.append(time.time())
             self._last_sent_payload = None
+            self._auto_text_on_screen = False
             self.pending_send_timer.stop()
             self.log(f"-> OSC {CHATBOX_INPUT} cleared (empty message)")
         except Exception as e:
@@ -1108,6 +1130,13 @@ class OptionsPageMixin:
             self.log("Debug mode ON – console opened")
         else:
             self.debug_console.hide()
+
+    def on_clear_empty_toggled(self, on):
+        self.cfg["clear_when_empty"] = bool(on)
+        self.save_config()
+        self.log(f"Clear chatbox when empty: {'ON' if on else 'OFF'}")
+        if on:
+            self.request_send()
 
     def on_instant_send_toggled(self, on):
         self.cfg["osc_instant_send"] = bool(on)

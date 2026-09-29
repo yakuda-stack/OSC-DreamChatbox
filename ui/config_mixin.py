@@ -265,6 +265,10 @@ class ConfigMixin:
             "media_source_fallback": True,
             # v1.6.1: treat a paused song as "nothing playing"
             "media_only_playing": False,
+            # v1.6.3: what "Hide media while paused" hides in All in one:
+            # "media" = only the song parts (rest keeps going),
+            # "aio"   = the whole All in one string pauses
+            "media_pause_scope": "media",
             # v1.6.1: Advanced mode side panels [palette, inspector] in
             # px, dragged by the user - None = the built-in widths
             "graph_panel_widths": None,
@@ -517,6 +521,10 @@ class ConfigMixin:
             # for the next interval tick. Always inside VRChat's chatbox
             # rate limit - see ui/mainwindow.py.
             "osc_instant_send": True,
+            # v1.6.3: send one empty message when there is nothing left
+            # to show, instead of VRChat keeping the last text ~30 s.
+            # A typed (manual) message is never cleared by this.
+            "clear_when_empty": False,
             "slim_chatbox": True,   # slim bar instead of big box, default ON
             "osc_ip": "127.0.0.1",
             "osc_port": 9000,
@@ -927,6 +935,10 @@ class ConfigMixin:
             defaults.get("media_only_playing", False))
         defaults["media_show_volume"] = bool(
             defaults.get("media_show_volume", False))
+        if defaults.get("media_pause_scope") not in ("media", "aio"):
+            defaults["media_pause_scope"] = "media"
+        defaults["clear_when_empty"] = bool(
+            defaults.get("clear_when_empty", False))
         gw = defaults.get("graph_panel_widths")
         if (isinstance(gw, (list, tuple)) and len(gw) == 2
                 and all(isinstance(x, int) for x in gw)):

@@ -262,7 +262,7 @@ Shows what you are listening to — **Spotify, Apple Music, YT Music, browsers, 
 - Custom string with placeholders: `{artist} {title} {album} {time} {time_status} {time_end} {remaining} {progress_percent} {volume} {volume_db} {position} {length} {bar} {lyrics} {player} {icon_sound}`
 - **Idle symbol**: shows `⏸` (editable) when nothing is playing instead of the line silently disappearing — or switch it off. Works in **All in one** too; `{media_idle}` places it by hand
 - **Player volume**: `{volume}` (65%) and `{volume_db}` (-3.7 dB), or tick *Player volume* to add `🔊 65%` to the song line. Linux only (MPRIS) – the player has to report it
-- **Hide media while paused** (off by default): a paused or stopped song counts as "nothing playing" — the line disappears or shows the idle symbol
+- **Hide media while paused** (off by default): a paused or stopped song counts as "nothing playing" — the line disappears or shows the idle symbol. In **All in one** pick: remove only the MediaPlay parts (default) or pause the whole All in one
 
 </details>
 
@@ -430,6 +430,8 @@ Own **Plugins** page with two tabs: **Installed** and **Store**.
 **Slim Chatbox (default ON)** — appends the invisible characters `\u0003\u001f` so VRChat renders a **slim bar instead of the huge box** (the hidden "BlankEgg" trick from MagicChatbox — here it's just a normal setting). The suffix is guaranteed to survive even at the 144-char limit.
 
 **Send changes instantly** — a changed text goes to VRChat right away instead of waiting for the interval, while staying inside VRChat's rate limit (5 messages per 5 s, min 1.5 s apart). Extra sends are delayed, never dropped.
+
+**Clear chatbox when there is nothing to send** — once nothing is left to show, one empty message removes the old text right away instead of VRChat keeping it ~30 s. A message you typed yourself is never cleared by this.
 
 **Also here:** update checker, Discord / Ko-fi / VRChat group links, app tray fix, VRC picture folder fix, avatar parameter input, external OSC target, keyboard watching for the Get Hotkey block, debug console.
 

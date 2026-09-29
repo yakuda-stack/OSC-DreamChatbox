@@ -589,6 +589,29 @@ class AppsPageMixin:
             lambda on: self.on_media_option("media_only_playing", on))
         mc.addWidget(self.chk_media_only_playing)
 
+        # v1.6.3: two ways to hide it in All in one (community wish)
+        self.media_pause_scope_box, psc = self._sub_group()
+        psc.addWidget(QLabel("In All in one:"))
+        self.media_pause_scope_combo = QComboBox()
+        self.media_pause_scope_combo.addItem(
+            "Remove only the MediaPlay parts", "media")
+        self.media_pause_scope_combo.addItem(
+            "Pause the whole All in one", "aio")
+        self.media_pause_scope_combo.setToolTip(
+            "Remove only the MediaPlay parts: {title}, {artist}, {bar} ... "
+            "turn empty, a line that is only about the song disappears "
+            "(or shows the idle symbol) - status, hardware and the rest "
+            "keep going.\n"
+            "Pause the whole All in one: while nothing plays, All in one "
+            "sends nothing at all. Tip: \u201cClear chatbox when there is "
+            "nothing to send\u201d in Options removes the last text "
+            "right away.")
+        self.media_pause_scope_combo.currentIndexChanged.connect(
+            self.on_media_pause_scope)
+        psc.addWidget(self.media_pause_scope_combo)
+        psc.addStretch()
+        mc.addWidget(self.media_pause_scope_box)
+
         self.media_status_lbl = QLabel("")
         self.media_status_lbl.setObjectName("dim")
         self.media_status_lbl.setWordWrap(True)
@@ -2747,6 +2770,8 @@ class AppsPageMixin:
 
         idle_on = self.chk_media_idle.isChecked()
         custom_on = self.chk_media_custom.isChecked()
+        self.media_pause_scope_box.setVisible(
+            self.chk_media_only_playing.isChecked())
 
         self.media_idle_input.setEnabled(idle_on)
         self.media_idle_box.setVisible(idle_on)
@@ -2787,6 +2812,12 @@ class AppsPageMixin:
         # folder row: only when Lyrics AND "use my own .lrc" are both on
         self._sync_lyrics_local()
         self.update_media_preview()
+
+    def on_media_pause_scope(self, _idx):
+        self.cfg["media_pause_scope"] = (
+            self.media_pause_scope_combo.currentData() or "media")
+        self.save_config()
+        self.update_preview()
 
     def on_media_option(self, key, on):
         self.cfg[key] = on
@@ -3938,6 +3969,36 @@ class AppsPageMixin:
                 return True
         return False
 
+    #: placeholders that belong to MediaPlay without being "the song" -
+    #: a line made of these plus song values is still only about music
+    MEDIA_DECOR_KEYS = frozenset(("icon_sound", "media_idle", "player"))
+
+    def _line_is_media_only(self, tpl_line):
+        """True when EVERY placeholder in the line is a MediaPlay one
+        (v1.6.3). Such a line with no song playing is dropped as a
+        whole - "\U0001F3B5 {title} \U0001F3B5" used to leave
+        "\U0001F3B5 \U0001F3B5" behind."""
+        found = False
+        for match in re.finditer(r"\{([^{}]+)\}", tpl_line):
+            inner = match.group(1)
+            if is_inline_marker(inner):
+                continue
+            key = inner.strip().lower().replace(" ", "_")
+            key = PLACEHOLDER_ALIASES.get(key, key)
+            if key in self.MEDIA_KEYS:
+                found = True
+            elif key not in self.MEDIA_DECOR_KEYS:
+                return False
+        return found
+
+    def media_pauses_aio(self):
+        """v1.6.3 "Pause the whole All in one": True while nothing plays
+        and that option is chosen."""
+        c = self.cfg
+        return bool(c.get("media_active") and c.get("media_only_playing")
+                    and c.get("media_pause_scope") == "aio"
+                    and not self.media_info)
+
     def _aio_idle_text(self):
         """The idle symbol, or "" when it does not apply right now."""
         if not (self.cfg["media_active"] and self.cfg.get("media_idle")):
@@ -4154,6 +4215,8 @@ class AppsPageMixin:
         advanced = self.aio_is_advanced()
         if not tpl and not advanced:
             return []
+        if self.media_pauses_aio():
+            return []
         if advanced and self.current_aio_index() < 0:
             # In Advanced mode "no literals" is not "nothing to show": a
             # canvas whose only source is a Clock, a Timer or an Avatar
@@ -4181,8 +4244,13 @@ class AppsPageMixin:
             return self._build_graph_lines(vals, idle)
         lines = []
         idle_used = False
+        no_song = not (self.cfg.get("media_active") and self.media_info)
         for tpl_line in tpl.split("\\n"):
             rendered = apply_template(tpl_line, vals)
+            if rendered and no_song and self._line_is_media_only(tpl_line):
+                # only decoration survived ("\U0001F3B5 \U0001F3B5") -
+                # the line is about a song that is not there
+                rendered = ""
             if rendered:
                 lines.extend(rendered.split("\n"))
             elif idle and not idle_used and self._line_is_media(tpl_line):

@@ -3,6 +3,12 @@
 The short version of every release — what you will actually notice.
 The full details are in the changelog.
 
+## v1.6.3 – 2026-09-29
+
+- **Clear chatbox when there is nothing to send** (Options) – no more old text hanging around for 30 seconds. Your typed messages are never cleared.
+- **Hide media while paused** in All in one: remove only the song parts, or pause the whole All in one.
+- **Fix:** `🎵 {title} 🎵` no longer leaves `🎵 🎵` behind when nothing plays.
+
 ## v1.6.2 – 2026-09-29
 
 - **Translation fixed:** Lingva is broken everywhere right now – the app notices and falls back. Google is blocked less often, and there are two keyless LibreTranslate servers. **New default: translate.adminforge.de** – no key, no Google tracking.
