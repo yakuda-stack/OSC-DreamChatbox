@@ -3,6 +3,10 @@
 The short version of every release — what you will actually notice.
 The full details are in the changelog.
 
+## v1.6.4 – 2026-09-29
+
+- **AppImage starts on Ubuntu 22.04 / Mint 21 for real now** – two more missing Qt libraries are included. Nothing changes in the app itself.
+
 ## v1.6.3 – 2026-09-29
 
 - **Clear chatbox when there is nothing to send** (Options) – no more old text hanging around for 30 seconds. Your typed messages are never cleared.

@@ -6,6 +6,23 @@ All notable changes to OSC-DreamChatbox are documented here.
 
 🟢 Linux Support: Complete & Stable (v1.2.6)
 
+## [v1.6.4] – 2026-09-29
+
+AppImage-only release – the app itself is unchanged from v1.6.3.
+
+### Fixed
+
+- **AppImage still did not start on a fresh Ubuntu 22.04 / Mint 21**
+  (the AppImage catalog test kept reporting "exited within 11
+  seconds"). Besides `libxcb-cursor0`, Qt's xcb plugin also needs
+  `libxcb-randr0` and `libxcb-xkb1`, which a minimal 22.04 does not
+  have either – without them Qt aborts with "Could not load the Qt
+  platform plugin xcb". Both now ship in `usr/lib/extra` like the other
+  xcb libraries and are only used when the system has none.
+  Tested by starting the AppImage in a freshly bootstrapped Ubuntu
+  22.04 (no Python, only the packages the catalog test installs) as a
+  normal user: the window comes up.
+
 ## [v1.6.3] – 2026-09-29
 
 More community wishes (Discord): an empty chatbox when there is nothing

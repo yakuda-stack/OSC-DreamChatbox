@@ -155,6 +155,10 @@ QT_DEBS=(
     "main/x/xcb-util-wm/libxcb-icccm4_0.4.1-1.1build2_amd64.deb"
     "main/x/xcb-util-keysyms/libxcb-keysyms1_0.4.0-1build3_amd64.deb"
     "main/libx/libxkbcommon/libxkbcommon-x11-0_1.4.0-1_amd64.deb"
+    # in einem frischen Ubuntu 22.04 fehlen auch diese beiden - ohne sie
+    # lädt das xcb-Plugin trotz libxcb-cursor nicht (getestet)
+    "main/libx/libxcb/libxcb-randr0_1.14-3ubuntu3_amd64.deb"
+    "main/libx/libxcb/libxcb-xkb1_1.14-3ubuntu3_amd64.deb"
 )
 if ! command -v bsdtar >/dev/null 2>&1; then
     echo "FEHLER: bsdtar fehlt (Arch: pacman -S libarchive,"
@@ -346,7 +350,7 @@ if [ -d "$HERE/usr/lib/extra" ] && command -v ldconfig >/dev/null 2>&1; then
     libs="$(ldconfig -p 2>/dev/null)"
     for so in libxcb-cursor.so.0 libxcb-image.so.0 libxcb-render-util.so.0 \
               libxcb-util.so.1 libxcb-icccm.so.4 libxcb-keysyms.so.1 \
-              libxkbcommon-x11.so.0; do
+              libxkbcommon-x11.so.0 libxcb-randr.so.0 libxcb-xkb.so.1; do
         case "$libs" in
             *"$so "*) ;;
             *) export LD_LIBRARY_PATH="$HERE/usr/lib/extra${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
