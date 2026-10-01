@@ -18,7 +18,7 @@ from PyQt6.QtCore import QTimer, Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QFrame, QHBoxLayout, QLabel, QMainWindow, QPushButton, QScrollArea, QStackedWidget, QVBoxLayout, QWidget)
 from core.constants import (
-    APP_NAME, CHATBOX_INPUT, CHATBOX_LIMIT, CHAT_MODE_LINE, ORIGIN_CHAT, OSC_MIN_SEND_GAP_SEC, OSC_RATE_MAX_SENDS, OSC_RATE_WINDOW_SEC, SLIM_SUFFIX, VERSION)
+    APP_NAME, NOTIFY_APPEAR, NOTIFY_EVENTS, NOTIFY_NEVER, NOTIFY_OUT_APP, NOTIFY_OUT_BOTH, NOTIFY_OUT_VRCHAT, DEFAULT_NOTIFY_PARAM, CHATBOX_INPUT, CHATBOX_LIMIT, CHAT_MODE_LINE, ORIGIN_CHAT, OSC_MIN_SEND_GAP_SEC, OSC_RATE_MAX_SENDS, OSC_RATE_WINDOW_SEC, SLIM_SUFFIX, VERSION)
 from core.afk import (
     afk_body, afk_param_name, afk_text, format_afk_time, is_afk_value)
 from core.hardware import HardwareMonitor
@@ -805,6 +805,15 @@ class MainWindow(ConfigMixin, AppsPageMixin, AdvancedPageMixin,
                      == self.cfg.get("stt_method", METHOD_LINGVA)), 0)
         self.tr_method_combo.setCurrentIndex(midx)
         self.tr_method_combo.blockSignals(False)
+        from core import ai_translator
+        ai_translator.use_config(self.cfg)
+        self.ai_url_input.blockSignals(True)
+        self.ai_url_input.setText(self.cfg.get("stt_ai_ollama_url", ""))
+        self.ai_url_input.blockSignals(False)
+        self.ai_custom_edit.blockSignals(True)
+        self.ai_custom_edit.setPlainText(self.cfg.get("stt_ai_custom_cmd", ""))
+        self.ai_custom_edit.blockSignals(False)
+        self._fill_tr_active_combo()
         self.deepl_key_input.setText(self.cfg["stt_deepl_key"])
         self.google_key_input.setText(self.cfg.get("stt_google_key", ""))
         self.libre_url_input.setText(self.cfg.get("stt_libre_url", ""))
@@ -946,6 +955,28 @@ class MainWindow(ConfigMixin, AppsPageMixin, AdvancedPageMixin,
         self.toggle_instant.setChecked(
             bool(self.cfg.get("osc_instant_send", True)))
         self.toggle_instant.blockSignals(False)
+        self.notify_combo.blockSignals(True)
+        nidx = self.notify_combo.findData(
+            self.cfg.get("chatbox_notify", NOTIFY_NEVER))
+        self.notify_combo.setCurrentIndex(max(nidx, 0))
+        self.notify_combo.blockSignals(False)
+        self.notify_out_combo.blockSignals(True)
+        oidx = self.notify_out_combo.findData(
+            self.cfg.get("chatbox_notify_output", NOTIFY_OUT_VRCHAT))
+        self.notify_out_combo.setCurrentIndex(max(oidx, 0))
+        self.notify_out_combo.blockSignals(False)
+        self.toggle_notify_param.blockSignals(True)
+        self.toggle_notify_param.setChecked(
+            bool(self.cfg.get("chatbox_notify_param_on", False)))
+        self.toggle_notify_param.blockSignals(False)
+        self.notify_param_input.blockSignals(True)
+        self.notify_param_input.setText(
+            self.cfg.get("chatbox_notify_param", ""))
+        self.notify_param_input.blockSignals(False)
+        self.notify_file_input.blockSignals(True)
+        self.notify_file_input.setText(self.cfg.get("chatbox_notify_file", ""))
+        self.notify_file_input.blockSignals(False)
+        self._sync_notify_ui()
         self.toggle_clear_empty.blockSignals(True)
         self.toggle_clear_empty.setChecked(
             bool(self.cfg.get("clear_when_empty", False)))
@@ -1052,8 +1083,62 @@ class MainWindow(ConfigMixin, AppsPageMixin, AdvancedPageMixin,
         self._afk_state = state
         if not state:
             self._afk_since = None
+        else:
+            self.notify_next_send()     # just went AFK
         self.log(f"AFK: detected as {'away' if state else 'back'}")
         self.afk_changed()
+
+    # ------------------------------------------- notification sound
+    #: VRChat drops a chatbox message after roughly this long without a
+    #: new one - after that the next message "appears" again
+    CHATBOX_SHOWN_SEC = 30
+
+    def notify_next_send(self):
+        """A translation arrived / AFK started: the next chatbox message
+        may play the sound ("Only on translations / AFK")."""
+        self._notify_next = True
+
+    def chatbox_notify_flag(self):
+        """Third argument of /chatbox/input - VRChat's notification
+        sound. Called once per real send; consumes a pending event.
+        With "OSC-DreamChatbox" / "Both" the app plays its own sound
+        here as well."""
+        mode = self.cfg.get("chatbox_notify", NOTIFY_NEVER)
+        pending, self._notify_next = getattr(self, "_notify_next", False), False
+        if mode == NOTIFY_APPEAR:
+            last = getattr(self, "_chatbox_last_send", 0.0)
+            ring = (not getattr(self, "_chatbox_on_screen", False)
+                    or time.time() - last > self.CHATBOX_SHOWN_SEC)
+        elif mode == NOTIFY_EVENTS:
+            ring = bool(pending)
+        else:
+            ring = False
+        if not ring:
+            return False
+        out = self.cfg.get("chatbox_notify_output", NOTIFY_OUT_VRCHAT)
+        if out in (NOTIFY_OUT_APP, NOTIFY_OUT_BOTH):
+            from core import notifysound
+            notifysound.play(self.cfg.get("chatbox_notify_file", ""),
+                             log=self.log)
+        if out in (NOTIFY_OUT_VRCHAT, NOTIFY_OUT_BOTH):
+            self.pulse_notify_param()
+            return True
+        return False
+
+    def pulse_notify_param(self):
+        """The custom avatar parameter: true now, false a second later,
+        so the avatar's own sound fires once per notification."""
+        if not self.cfg.get("chatbox_notify_param_on"):
+            return
+        name = (self.cfg.get("chatbox_notify_param") or "").strip() \
+            or DEFAULT_NOTIFY_PARAM
+        self.send_avatar_parameter(name, True)
+        QTimer.singleShot(1000, lambda n=name:
+                          self.send_avatar_parameter(n, False))
+
+    def chatbox_sent(self, empty=False):
+        self._chatbox_on_screen = not empty
+        self._chatbox_last_send = time.time()
 
     def afk_changed(self):
         """Repaints the preview and gets the new text to VRChat.
@@ -1065,6 +1150,8 @@ class MainWindow(ConfigMixin, AppsPageMixin, AdvancedPageMixin,
         state = self.afk_active()
         if not state:
             self._afk_since = None
+        elif not self._afk_state:
+            self.notify_next_send()     # just went AFK
         self._afk_state = state
         self.update_afk_status()
         self.update_preview()
@@ -1407,8 +1494,11 @@ class MainWindow(ConfigMixin, AppsPageMixin, AdvancedPageMixin,
         else:
             payload = text[:CHATBOX_LIMIT]
         try:
-            # /chatbox/input  [text, send immediately (no keyboard), no sound]
-            self.osc_client.send_message(CHATBOX_INPUT, [payload, True, False])
+            # /chatbox/input  [text, send immediately (no keyboard),
+            # notification sound - see chatbox_notify_flag()]
+            self.osc_client.send_message(
+                CHATBOX_INPUT, [payload, True, self.chatbox_notify_flag()])
+            self.chatbox_sent()
             # only a send that actually went out counts against the limit
             self._send_times.append(time.time())
             self._last_sent_payload = payload

@@ -30,6 +30,7 @@ from core.constants import EXTRAS_DIR
 from core.translators import (
     DEFAULT_LIBRE_ONLINE_URL, DEFAULT_LIBRE_URL, LIBRE_ONLINE_CUSTOM, LIBRE_ONLINE_SERVERS, METHODS as TR_METHODS, METHOD_DEEPL, METHOD_GOOGLE, METHOD_LIBRE, METHOD_LIBRE_ONLINE, METHOD_LINGVA, METHOD_CUSTOM, get_translator, libretranslate_installed, translate_with_fallback)
 from ui.ui_main import DragHandle, ToggleLabel, ToggleSwitch
+from core import ai_translator as ai
 
 
 #: where the two paid/keyed backends hand out their API keys. Kept next
@@ -43,9 +44,9 @@ LIBRE_INSTALL_URL = "https://docs.libretranslate.com/guides/installation/"
 #: that produces text here - the Chat field, the Presets, Speech to Text
 #: and Text to Text - so the route is one decision instead of four.
 CHAT_SEND_MODES = (
-    ("Standard \u2013 message on its own, apps paused", CHAT_MODE_DIRECT),
-    ("Line \u2013 as a line inside the normal output", CHAT_MODE_LINE),
-    ("Variables \u2013 only {text_input} / {text_output}", CHAT_MODE_VARS),
+    ("Standard", CHAT_MODE_DIRECT),
+    ("Line", CHAT_MODE_LINE),
+    ("Variables", CHAT_MODE_VARS),
 )
 
 #: The same three, phrased for the To Text card - "the message" there is
@@ -53,16 +54,12 @@ CHAT_SEND_MODES = (
 #: Chat card, so the wording points at them instead of repeating them.
 STT_MODE_HINTS = {
     CHAT_MODE_DIRECT: (
-        "What you speak or type takes over the chatbox on its own and the "
-        "apps pause, so nothing overwrites it."),
+        "Takes over the chatbox; the apps pause meanwhile."),
     CHAT_MODE_LINE: (
-        "What you speak or type becomes a line inside the normal output, "
-        "at the position set in the Chat card - the apps keep running "
-        "around it."),
+        "One line inside the normal output; the apps keep running."),
     CHAT_MODE_VARS: (
-        "What you speak or type gets no line of its own; it only fills "
-        "the variables below, so an All-in-one string decides where it "
-        "goes."),
+        "No line of its own \u2013 only fills the variables below, an "
+        "All-in-one string places it."),
 }
 
 #: What each mode does, spelled out under the dropdown.
@@ -84,6 +81,36 @@ CHAT_MODE_HINTS = {
         "an All-in-one string decides where it goes and what it looks "
         "like. Nothing shows up until a template asks for it."),
 }
+
+
+#: v1.6.5: group headers in the service dropdowns
+TR_HEADERS = ("\u2500\u2500\u2500\u2500  Translator  \u2500\u2500\u2500\u2500",
+              "\u2500\u2500\u2500\u2500  AI Translation  \u2500\u2500\u2500\u2500")
+
+
+def fill_service_combo(combo, items):
+    """Services grouped under a "Translator" and an "AI Translation"
+    header. Headers carry no data and cannot be picked; a group
+    without entries (only AI favorites, say) gets no header."""
+    groups = ([i for i in items if not ai.is_ai(i[1])],
+              [i for i in items if ai.is_ai(i[1])])
+    for head, group in zip(TR_HEADERS, groups):
+        if not group:
+            continue
+        combo.addItem(head)
+        item = combo.model().item(combo.count() - 1)
+        if item is not None:
+            item.setEnabled(False)
+            item.setSelectable(False)
+            font = item.font()
+            font.setBold(True)
+            item.setFont(font)
+        for label, mid in group:
+            combo.addItem(label, mid)
+
+
+def first_service_index(combo):
+    return next((i for i in range(combo.count()) if combo.itemData(i)), -1)
 
 
 class TextboxPageMixin:
@@ -247,6 +274,9 @@ class TextboxPageMixin:
         st_head.addStretch()
         self.toggle_stt_block = ToggleSwitch()
         self.toggle_stt_block.toggled.connect(self.on_stt_block)
+        self.toggle_stt_block.setToolTip(
+            "While ON, no app sends anything via OSC until you switch "
+            "it OFF again. Details: \u201cBlock exceptions\u201d below.")
         st_head.addWidget(self.toggle_stt_block)
         st_head.addWidget(ToggleLabel("Block apps", self.toggle_stt_block))
         sc.addLayout(st_head)
@@ -263,111 +293,29 @@ class TextboxPageMixin:
         mode_row.addStretch()
         sc.addLayout(mode_row)
         mode_hint = QLabel("OFF = Speech to Text (microphone) \u00b7 "
-                           "ON = Text to Text (type & translate). Both share "
-                           "the same languages, translation service and OSC "
-                           "output.")
+                           "ON = Text to Text (type & translate).")
         mode_hint.setObjectName("dim")
         mode_hint.setWordWrap(True)
         sc.addWidget(mode_hint)
-        # ---- the send route, mirrored from the Chat card ----
-        # The only "Send as" left. It used to be mirrored from the Chat
-        # card, which shared the setting - but a typed chat message is
-        # the one case where "take over the chatbox now" is always what
-        # was meant, so Chat is fixed to Standard and this dropdown
-        # belongs to speech and typed-to-text alone.
-        sm_row = QHBoxLayout()
-        sm_row.addWidget(QLabel("Send as:"))
-        self.stt_mode_combo = QComboBox()
-        for label, val in CHAT_SEND_MODES:
-            self.stt_mode_combo.addItem(label, val)
-        self.stt_mode_combo.currentIndexChanged.connect(self.on_stt_send_mode)
-        sm_row.addWidget(self.stt_mode_combo, 1)
-        sc.addLayout(sm_row)
-        sc.addWidget(self.chat_anchor_w)
-        sc.addWidget(self.chat_hold_w)
-        sc.addWidget(self.chat_mode_hint)
-        self.stt_mode_hint = QLabel("")
-        self.stt_mode_hint.setObjectName("dim")
-        self.stt_mode_hint.setWordWrap(True)
-        sc.addWidget(self.stt_mode_hint)
 
-        var_hint = QLabel(
-            "Variables: {stt_input} / {stt_output} carry a SPOKEN message, "
-            "{ttt_input} / {ttt_output} a typed one, {chat_input} / "
-            "{chat_output} one from the Chat card above – and "
-            "{text_input} / {text_output} carry whichever of them sent "
-            "last. So an All-in-one string can put speech somewhere else "
-            "than typing, or style only one of them.")
-        var_hint.setObjectName("dim")
-        var_hint.setWordWrap(True)
-        sc.addWidget(var_hint)
-
-        blk = QLabel("Block apps: while ON, NO app sends anything via OSC "
-                     "(Personal Status, MediaPlay, Hardware, AIO) \u2013 "
-                     "and, unless you switch them off below, no plugin "
-                     "line and no Custom Box frame either. Everything "
-                     "stays blocked until you turn it OFF again.")
-        blk.setObjectName("dim")
-        blk.setWordWrap(True)
-        sc.addWidget(blk)
-
-        # ---- what the block covers, and what it lets through ----
-        self.block_expander = self.make_settings_expander(
-            lambda on: self.set_expanded(self.block_expander,
-                                         self.block_box, on,
-                                         "Block exceptions"),
-            "Block exceptions")
-        sc.addWidget(self.block_expander)
-        self.block_box = QWidget()
-        bb = QVBoxLayout(self.block_box)
-        bb.setContentsMargins(8, 4, 0, 4)
-        bb.setSpacing(6)
-        bb_intro = QLabel(
-            "Block apps switches the four app cards off. These two "
-            "extend it to the rest of the output \u2013 and the list "
-            "below names what should keep running anyway.")
-        bb_intro.setObjectName("dim")
-        bb_intro.setWordWrap(True)
-        bb.addWidget(bb_intro)
-
-        bp_row = QHBoxLayout()
-        self.toggle_block_plugins = ToggleSwitch()
-        self.toggle_block_plugins.toggled.connect(self.on_block_plugins)
-        bp_row.addWidget(self.toggle_block_plugins)
-        bp_row.addWidget(ToggleLabel("Also block plugins",
-                                     self.toggle_block_plugins))
-        bp_row.addStretch()
-        bb.addLayout(bp_row)
-
-        bx_row = QHBoxLayout()
-        self.toggle_block_box = ToggleSwitch()
-        self.toggle_block_box.toggled.connect(self.on_block_box)
-        bx_row.addWidget(self.toggle_block_box)
-        bx_row.addWidget(ToggleLabel("Also block the Custom Box",
-                                     self.toggle_block_box))
-        bx_row.addStretch()
-        bb.addLayout(bx_row)
-
-        exc_lbl = QLabel("Keep running while blocked:")
-        exc_lbl.setStyleSheet("font-weight: 600;")
-        bb.addWidget(exc_lbl)
-        # rebuilt whenever the plugin list changes - see
-        # refresh_block_exceptions()
-        self.block_exc_box = QWidget()
-        self.block_exc_layout = QVBoxLayout(self.block_exc_box)
-        self.block_exc_layout.setContentsMargins(0, 0, 0, 0)
-        self.block_exc_layout.setSpacing(2)
-        bb.addWidget(self.block_exc_box)
-        self.block_box.setVisible(False)
-        sc.addWidget(self.block_box)
         self.stt_speech_desc = QLabel(
-            "Speak into your microphone \u2013 your voice is transcribed "
-            "in realtime and sent to the VRChat chatbox. While recording, "
-            "all apps (Personal Status, MediaPlay, Hardware, AIO) are "
-            "blocked so nothing overwrites your speech.")
+            "Speak into your microphone \u2013 it is transcribed live "
+            "and sent to the chatbox.")
         self.stt_speech_desc.setObjectName("dim")
         self.stt_speech_desc.setWordWrap(True)
         sc.addWidget(self.stt_speech_desc)
+
+        # the service actually used - only the favorites when some are
+        # set in the Translation card, otherwise all of them
+        svc_row = QHBoxLayout()
+        svc_row.addWidget(QLabel("Translation service:"))
+        self.tr_active_combo = QComboBox()
+        self.tr_active_combo.setToolTip(
+            "Favorites only, once you have marked some in the "
+            "Translation card \u2013 otherwise every service.")
+        self.tr_active_combo.currentIndexChanged.connect(self.on_tr_active)
+        svc_row.addWidget(self.tr_active_combo, 1)
+        sc.addLayout(svc_row)
 
         lang_row = QHBoxLayout()
         lang_row.addWidget(QLabel("Input language:"))
@@ -388,58 +336,11 @@ class TextboxPageMixin:
         out_row.addWidget(self.stt_out_combo)
         out_row.addStretch()
         sc.addLayout(out_row)
-        tr_hint = QLabel("Example: input German, pick English as output \u2013 "
-                         "your message gets translated before it is sent "
-                         "to VRChat.")
+        tr_hint = QLabel("Output \u2260 input \u2192 the message is "
+                         "translated first (settings: Translation card).")
         tr_hint.setObjectName("dim")
         tr_hint.setWordWrap(True)
         sc.addWidget(tr_hint)
-
-        # show original + translation together in the chatbox
-        both_row = QHBoxLayout()
-        self.toggle_stt_both = ToggleSwitch()
-        self.toggle_stt_both.toggled.connect(self.on_stt_show_both)
-        both_row.addWidget(self.toggle_stt_both)
-        both_row.addWidget(ToggleLabel("Show original + translation",
-                                       self.toggle_stt_both))
-        both_row.addStretch()
-        sc.addLayout(both_row)
-        both_hint = QLabel("When ON and a translation happens, the chatbox "
-                           "shows both languages as \"source \u2192 translation\".")
-        both_hint.setObjectName("dim")
-        both_hint.setWordWrap(True)
-        sc.addWidget(both_hint)
-
-        # placeholder in the chatbox while the translation is in flight
-        notice_row = QHBoxLayout()
-        self.toggle_translate_notice = ToggleSwitch()
-        self.toggle_translate_notice.toggled.connect(
-            self.on_translate_notice)
-        notice_row.addWidget(self.toggle_translate_notice)
-        notice_row.addWidget(ToggleLabel(
-            "Say when a translation is running",
-            self.toggle_translate_notice))
-        notice_row.addSpacing(12)
-        self.translate_notice_edit = QLineEdit()
-        self.translate_notice_edit.setFixedWidth(180)
-        self.translate_notice_edit.setPlaceholderText(
-            DEFAULT_TRANSLATE_NOTICE)
-        self.translate_notice_edit.editingFinished.connect(
-            self.on_translate_notice_text)
-        notice_row.addWidget(self.translate_notice_edit)
-        notice_row.addStretch()
-        sc.addLayout(notice_row)
-        notice_hint = QLabel(
-            "Translating is a network call, so between speaking and the "
-            "text arriving the chatbox keeps showing the previous "
-            "message \u2013 which reads, to everyone else in the "
-            "instance, as nothing happening. With this ON that gap says "
-            "so instead. It goes out the same way the message itself "
-            "does, so {text_output} and the Line / Variables routes show "
-            "it too.")
-        notice_hint.setObjectName("dim")
-        notice_hint.setWordWrap(True)
-        sc.addWidget(notice_hint)
 
         # ---- microphone selection (speech mode only) ----
         self.mic_row_w = QWidget()
@@ -499,14 +400,121 @@ class TextboxPageMixin:
         sr_row.addStretch()
         strict_row.addLayout(sr_row)
         strict_hint = QLabel(
-            "ON (recommended): if the selected device is gone, recording "
-            "refuses to start and says so. OFF: it falls back to the system "
-            "default \u2013 which on a machine that just lost an audio "
-            "device (leaving VR) is often the device that hangs.")
+            "ON (recommended): a missing device stops recording instead "
+            "of falling back to the system default.")
         strict_hint.setObjectName("dim")
         strict_hint.setWordWrap(True)
         strict_row.addWidget(strict_hint)
         sc.addWidget(self.mic_strict_w)
+
+        # ---- record button (speech mode only) ----
+        self.rec_row_w = QWidget()
+        rec_row = QHBoxLayout(self.rec_row_w)
+        rec_row.setContentsMargins(0, 0, 0, 0)
+        self.stt_button = QPushButton("\U0001F3A4  Start recording")
+        self.stt_button.setObjectName("recbtn")
+        self.stt_button.setCheckable(True)
+        self.stt_button.setFixedHeight(38)
+        self.stt_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.stt_button.toggled.connect(self.on_stt_toggled)
+        rec_row.addWidget(self.stt_button)
+        rec_row.addStretch()
+        sc.addWidget(self.rec_row_w)
+
+        # ---- text input (text mode only) ----
+        self.stt_text_box = QWidget()
+        tb = QVBoxLayout(self.stt_text_box)
+        tb.setContentsMargins(0, 0, 0, 0)
+        tb.setSpacing(6)
+        ttt_desc = QLabel("Type and hit Enter \u2013 same translation "
+                          "and output as speech.")
+        ttt_desc.setObjectName("dim")
+        ttt_desc.setWordWrap(True)
+        tb.addWidget(ttt_desc)
+        ttt_row = QHBoxLayout()
+        self.ttt_input = QLineEdit()
+        self.ttt_input.setPlaceholderText("Type your message \u2026")
+        self.ttt_input.setMaxLength(CHATBOX_LIMIT - len(SLIM_SUFFIX))
+        self.ttt_input.returnPressed.connect(self.send_ttt)
+        ttt_row.addWidget(self.ttt_input, 1)
+        ttt_emoji = QPushButton("\U0001F600")
+        ttt_emoji.setObjectName("iconbtn")
+        ttt_emoji.setFixedSize(30, 30)
+        ttt_emoji.setCursor(Qt.CursorShape.PointingHandCursor)
+        ttt_emoji.clicked.connect(
+            lambda _, b=ttt_emoji: self.emoji_popup.open_for(self.ttt_input, b))
+        ttt_row.addWidget(ttt_emoji)
+        self.ttt_send_btn = QPushButton("Send")
+        self.ttt_send_btn.setObjectName("sendbtn")
+        self.ttt_send_btn.setFixedSize(64, 30)
+        self.ttt_send_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.ttt_send_btn.clicked.connect(self.send_ttt)
+        ttt_row.addWidget(self.ttt_send_btn)
+        tb.addLayout(ttt_row)
+        sc.addWidget(self.stt_text_box)
+
+        self.stt_status_lbl = QLabel("")
+        self.stt_status_lbl.setObjectName("dim")
+        self.stt_status_lbl.setWordWrap(True)
+        sc.addWidget(self.stt_status_lbl)
+        # one-click installer for the pure-python half of Speech to Text.
+        # Arch has no working package for it (the AUR one drags in
+        # backends we do not use and currently fails to build), so the app
+        # can put it into its own folder instead - see core/pyextras.py.
+        self.stt_install_btn = QPushButton(
+            "\u2B07  Install SpeechRecognition")
+        self.stt_install_btn.setObjectName("linkbtn")
+        self.stt_install_btn.setFixedHeight(30)
+        self.stt_install_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.stt_install_btn.setToolTip(
+            f"Installs it with pip into {EXTRAS_DIR} - your system packages "
+            f"are not touched")
+        self._stt_install_target = "speech_recognition"
+        self.stt_install_btn.clicked.connect(self.on_install_speech)
+        self.stt_install_btn.setVisible(False)
+        sc.addWidget(self.stt_install_btn)
+
+        # ---- Send as: collapsed, the summary sits in the arrow ----
+        self.send_opts_expander = self.make_settings_expander(
+            lambda on: self.set_expanded(self.send_opts_expander,
+                                         self.send_opts_box, on,
+                                         self._send_opts_label()),
+            "Send as")
+        sc.addWidget(self.send_opts_expander)
+        self.send_opts_box = QWidget()
+        so = QVBoxLayout(self.send_opts_box)
+        so.setContentsMargins(8, 4, 0, 4)
+        so.setSpacing(6)
+        # ---- the send route, mirrored from the Chat card ----
+        # The only "Send as" left. It used to be mirrored from the Chat
+        # card, which shared the setting - but a typed chat message is
+        # the one case where "take over the chatbox now" is always what
+        # was meant, so Chat is fixed to Standard and this dropdown
+        # belongs to speech and typed-to-text alone.
+        sm_row = QHBoxLayout()
+        sm_row.addWidget(QLabel("Send as:"))
+        self.stt_mode_combo = QComboBox()
+        for label, val in CHAT_SEND_MODES:
+            self.stt_mode_combo.addItem(label, val)
+        self.stt_mode_combo.currentIndexChanged.connect(self.on_stt_send_mode)
+        sm_row.addWidget(self.stt_mode_combo)
+        sm_row.addStretch()
+        so.addLayout(sm_row)
+        so.addWidget(self.chat_anchor_w)
+        so.addWidget(self.chat_hold_w)
+        self.stt_mode_hint = QLabel("")
+        self.stt_mode_hint.setObjectName("dim")
+        self.stt_mode_hint.setWordWrap(True)
+        so.addWidget(self.stt_mode_hint)
+        var_hint = QLabel(
+            "{stt_\u2026} spoken \u00b7 {ttt_\u2026} typed \u00b7 "
+            "{chat_\u2026} Chat card \u00b7 {text_\u2026} whichever "
+            "sent last \u2013 each as _input / _output.")
+        var_hint.setObjectName("dim")
+        var_hint.setWordWrap(True)
+        so.addWidget(var_hint)
+        self.send_opts_box.setVisible(False)
+        sc.addWidget(self.send_opts_box)
 
         # ---- microphone test + sensitivity ----
         # Collapsed by default: two thirds of the people using Speech to
@@ -694,12 +702,96 @@ class TextboxPageMixin:
         self._measure_until = 0.0
         self._measure_peak = 0.0
 
+        # ---- what the block covers, and what it lets through ----
+        self.block_expander = self.make_settings_expander(
+            lambda on: self.set_expanded(self.block_expander,
+                                         self.block_box, on,
+                                         "Block exceptions"),
+            "Block exceptions")
+        sc.addWidget(self.block_expander)
+        self.block_box = QWidget()
+        bb = QVBoxLayout(self.block_box)
+        bb.setContentsMargins(8, 4, 0, 4)
+        bb.setSpacing(6)
+        bb_intro = QLabel(
+            "Block apps (top right): while ON, no app sends anything "
+            "until you switch it OFF. These two extend it to plugins and "
+            "the Custom Box; the list names what keeps running anyway.")
+        bb_intro.setObjectName("dim")
+        bb_intro.setWordWrap(True)
+        bb.addWidget(bb_intro)
+
+        bp_row = QHBoxLayout()
+        self.toggle_block_plugins = ToggleSwitch()
+        self.toggle_block_plugins.toggled.connect(self.on_block_plugins)
+        bp_row.addWidget(self.toggle_block_plugins)
+        bp_row.addWidget(ToggleLabel("Also block plugins",
+                                     self.toggle_block_plugins))
+        bp_row.addStretch()
+        bb.addLayout(bp_row)
+
+        bx_row = QHBoxLayout()
+        self.toggle_block_box = ToggleSwitch()
+        self.toggle_block_box.toggled.connect(self.on_block_box)
+        bx_row.addWidget(self.toggle_block_box)
+        bx_row.addWidget(ToggleLabel("Also block the Custom Box",
+                                     self.toggle_block_box))
+        bx_row.addStretch()
+        bb.addLayout(bx_row)
+
+        exc_lbl = QLabel("Keep running while blocked:")
+        exc_lbl.setStyleSheet("font-weight: 600;")
+        bb.addWidget(exc_lbl)
+        # rebuilt whenever the plugin list changes - see
+        # refresh_block_exceptions()
+        self.block_exc_box = QWidget()
+        self.block_exc_layout = QVBoxLayout(self.block_exc_box)
+        self.block_exc_layout.setContentsMargins(0, 0, 0, 0)
+        self.block_exc_layout.setSpacing(2)
+        bb.addWidget(self.block_exc_box)
+        self.block_box.setVisible(False)
+        sc.addWidget(self.block_box)
+        # two-way translation: the other players, translated for you
+        # (ui/pages/twoway_page.py)
+        self.build_twoway_section(sc)
+        self._sync_stt_availability()
+
+        # ----- translation -----
+        # Its own card since v1.6.5: the service, keys and how a
+        # translation looks in the chatbox used to sit in the middle of
+        # the To Text card and buried the record button.
+        tcard = QFrame()
+        tcard.setObjectName("card")
+        tco = QVBoxLayout(tcard)
+        tco.setContentsMargins(16, 14, 16, 16)
+        tco.setSpacing(10)
+        thead = QHBoxLayout()
+        thead.addWidget(DragHandle(lambda pos: self.tb_card_drag("translate", pos),
+                                   lambda: self.tb_card_drag_end("translate")))
+        tt = QLabel("Translation")
+        tt.setObjectName("cardtitle")
+        thead.addWidget(tt)
+        thead.addStretch()
+        # what is active, readable while the card is collapsed
+        self.tr_summary_lbl = QLabel("")
+        self.tr_summary_lbl.setObjectName("dim")
+        thead.addWidget(self.tr_summary_lbl)
+        tco.addLayout(thead)
+        self.tr_expander = self.make_settings_expander(
+            lambda on: self.set_expanded(self.tr_expander, self.tr_box, on))
+        tco.addWidget(self.tr_expander)
+        self.tr_box = QWidget()
+        ts = QVBoxLayout(self.tr_box)
+        ts.setContentsMargins(8, 4, 0, 4)
+        ts.setSpacing(8)
+
         # ---- translation method (four-tier system) ----
         method_row = QHBoxLayout()
-        method_row.addWidget(QLabel("Translation service:"))
+        # only picks whose settings are shown - the service in use is
+        # chosen in the To Text card (tr_active_combo)
+        method_row.addWidget(QLabel("Settings for:"))
         self.tr_method_combo = QComboBox()
-        for label, mid in TR_METHODS:
-            self.tr_method_combo.addItem(label, mid)
+        fill_service_combo(self.tr_method_combo, TR_METHODS)
         self.tr_method_combo.currentIndexChanged.connect(
             self.on_tr_method)
         method_row.addWidget(self.tr_method_combo, 1)
@@ -712,7 +804,18 @@ class TextboxPageMixin:
             "and shows the result or the exact error.")
         self.tr_test_btn.clicked.connect(self.on_tr_test)
         method_row.addWidget(self.tr_test_btn)
-        sc.addLayout(method_row)
+        ts.addLayout(method_row)
+
+        fav_row = QHBoxLayout()
+        self.toggle_tr_fav = ToggleSwitch()
+        self.toggle_tr_fav.toggled.connect(self.on_tr_favorite)
+        self.toggle_tr_fav.setToolTip(
+            "Favorites are the only services in the To Text dropdown. "
+            "No favorites = all services.")
+        fav_row.addWidget(self.toggle_tr_fav)
+        fav_row.addWidget(ToggleLabel("\u2605 Favorite", self.toggle_tr_fav))
+        fav_row.addStretch()
+        ts.addLayout(fav_row)
 
         # method 2: Google API key (only visible when Google is selected).
         # Empty = the keyless, unofficial gtx endpoint is used.
@@ -738,7 +841,7 @@ class TextboxPageMixin:
         self.google_warn_lbl.setObjectName("dim")
         self.google_warn_lbl.setWordWrap(True)
         gr.addWidget(self.google_warn_lbl)
-        sc.addWidget(self.google_row)
+        ts.addWidget(self.google_row)
 
         # method 4: DeepL API key (only visible when DeepL is selected)
         self.deepl_row = QWidget()
@@ -758,7 +861,7 @@ class TextboxPageMixin:
             "Get a key in your DeepL account", DEEPL_KEYS_URL,
             "DeepL API Free gives 500,000 characters a month; the key "
             "for it ends in \u201c:fx\u201d."))
-        sc.addWidget(self.deepl_row)
+        ts.addWidget(self.deepl_row)
 
         # method 2: LibreTranslate URL (only visible when selected)
         self.libre_row = QWidget()
@@ -789,7 +892,7 @@ class TextboxPageMixin:
         self.libre_docs_btn.clicked.connect(
             lambda _=False: QDesktopServices.openUrl(QUrl(LIBRE_INSTALL_URL)))
         lr.addWidget(self.libre_docs_btn)
-        sc.addWidget(self.libre_row)
+        ts.addWidget(self.libre_row)
 
         # method 5: Custom - an own API call, an installed CLI translator
         # or a Python file (core/custom_translator.py)
@@ -845,7 +948,7 @@ class TextboxPageMixin:
         cr_hint.setObjectName("dim")
         cr_hint.setWordWrap(True)
         cr.addWidget(cr_hint)
-        sc.addWidget(self.custom_row)
+        ts.addWidget(self.custom_row)
 
         # method 3b: hosted LibreTranslate. Server picker (preset or a
         # URL you paste yourself) plus an optional API key, because most
@@ -890,84 +993,159 @@ class TextboxPageMixin:
             self.on_libre_online_key)
         lo_key.addWidget(self.libre_online_key_input, 1)
         lo.addLayout(lo_key)
-        sc.addWidget(self.libre_online_row)
+        ts.addWidget(self.libre_online_row)
+
+        # v1.6.5: AI services (core/ai_translator.py) - status, install /
+        # log in / start buttons, model and, for Custom AI, the command
+        self.ai_row = QWidget()
+        ar = QVBoxLayout(self.ai_row)
+        ar.setContentsMargins(0, 0, 0, 0)
+        ar.setSpacing(6)
+        self.ai_status_lbl = QLabel("")
+        self.ai_status_lbl.setWordWrap(True)
+        ar.addWidget(self.ai_status_lbl)
+        ab = QHBoxLayout()
+        ab.setContentsMargins(0, 0, 0, 0)
+
+        def _btn(text, slot, tip=""):
+            b = QPushButton(text)
+            b.setObjectName("linkbtn")
+            b.setFixedHeight(30)
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            if tip:
+                b.setToolTip(tip)
+            b.clicked.connect(lambda _=False: slot())
+            ab.addWidget(b)
+            return b
+        self.ai_install_btn = _btn(
+            "📦  Install", self.on_ai_install,
+            "Opens a terminal with the install command (sudo / npm may "
+            "ask there).")
+        self.ai_login_btn = _btn(
+            "🔑  Log in", self.on_ai_login,
+            "Opens a terminal with the program – log in there once "
+            "with your account, then close it.")
+        self.ai_start_btn = _btn(
+            "🚀  Start Ollama", self.on_ai_start_ollama,
+            "Starts “ollama serve” in the background.")
+        self.ai_pull_btn = _btn(
+            "📥  Download model", self.on_ai_pull,
+            "Opens a terminal with “ollama pull <model>”.")
+        self.ai_refresh_btn = _btn(
+            "⟳", lambda: self._sync_ai_ui(self._tr_view_method()),
+            "Check again (after installing / logging in)")
+        self.ai_refresh_btn.setFixedWidth(36)
+        ab.addStretch()
+        ar.addLayout(ab)
+        am = QHBoxLayout()
+        am.setContentsMargins(0, 0, 0, 0)
+        am.addWidget(QLabel("Model:"))
+        self.ai_model_combo = QComboBox()
+        self.ai_model_combo.setEditable(True)
+        self.ai_model_combo.setToolTip(
+            "Pick one or type any other model name.")
+        self.ai_model_combo.currentTextChanged.connect(self.on_ai_model)
+        am.addWidget(self.ai_model_combo, 1)
+        ar.addLayout(am)
+        self.ai_url_row = QWidget()
+        au = QHBoxLayout(self.ai_url_row)
+        au.setContentsMargins(0, 0, 0, 0)
+        au.addWidget(QLabel("Ollama URL:"))
+        self.ai_url_input = QLineEdit()
+        self.ai_url_input.setPlaceholderText(ai.DEFAULT_OLLAMA_URL)
+        self.ai_url_input.textChanged.connect(self.on_ai_url)
+        au.addWidget(self.ai_url_input, 1)
+        ar.addWidget(self.ai_url_row)
+        self.ai_custom_box = QWidget()
+        ac = QVBoxLayout(self.ai_custom_box)
+        ac.setContentsMargins(0, 0, 0, 0)
+        ac.setSpacing(4)
+        ac_head = QHBoxLayout()
+        ac_head.setContentsMargins(0, 0, 0, 0)
+        ac_head.addWidget(QLabel("Command / API call:"))
+        ac_head.addStretch()
+        ac_ex = QPushButton("OpenAI-compatible example")
+        ac_ex.setObjectName("linkbtn")
+        ac_ex.setFixedHeight(28)
+        ac_ex.setCursor(Qt.CursorShape.PointingHandCursor)
+        ac_ex.clicked.connect(
+            lambda _=False: self.ai_custom_edit.setPlainText(
+                ai.CUSTOM_EXAMPLE))
+        ac_head.addWidget(ac_ex)
+        ac.addLayout(ac_head)
+        self.ai_custom_edit = QPlainTextEdit()
+        self.ai_custom_edit.setFixedHeight(110)
+        self.ai_custom_edit.setPlaceholderText(
+            "ollama run {model} {prompt}\n\n\u2026 or a curl call to your "
+            "own AI server")
+        self.ai_custom_edit.textChanged.connect(self.on_ai_custom_cmd)
+        ac.addWidget(self.ai_custom_edit)
+        ac_hint = QLabel(
+            "Placeholders: {prompt} (the finished translation request), "
+            "{text} {source} {target} {model}. Without {prompt}/{text} "
+            "the request goes in on stdin. curl is sent by the app; "
+            "name the answer field with  # response: field.path")
+        ac_hint.setObjectName("dim")
+        ac_hint.setWordWrap(True)
+        ac.addWidget(ac_hint)
+        ar.addWidget(self.ai_custom_box)
+        ts.addWidget(self.ai_row)
 
         self.tr_method_hint = QLabel("")
         self.tr_method_hint.setObjectName("dim")
         self.tr_method_hint.setWordWrap(True)
-        sc.addWidget(self.tr_method_hint)
+        ts.addWidget(self.tr_method_hint)
 
-        # ---- record button (speech mode only) ----
-        self.rec_row_w = QWidget()
-        rec_row = QHBoxLayout(self.rec_row_w)
-        rec_row.setContentsMargins(0, 0, 0, 0)
-        self.stt_button = QPushButton("\U0001F3A4  Start recording")
-        self.stt_button.setObjectName("recbtn")
-        self.stt_button.setCheckable(True)
-        self.stt_button.setFixedHeight(38)
-        self.stt_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.stt_button.toggled.connect(self.on_stt_toggled)
-        rec_row.addWidget(self.stt_button)
-        rec_row.addStretch()
-        sc.addWidget(self.rec_row_w)
+        # ---- how a translation shows up in the chatbox ----
+        self.tr_display_expander = self.make_settings_expander(
+            lambda on: self.set_expanded(self.tr_display_expander,
+                                         self.tr_display_box, on,
+                                         "Chatbox display"),
+            "Chatbox display")
+        ts.addWidget(self.tr_display_expander)
+        self.tr_display_box = QWidget()
+        dx = QVBoxLayout(self.tr_display_box)
+        dx.setContentsMargins(8, 4, 0, 4)
+        dx.setSpacing(6)
+        # show original + translation together in the chatbox
+        both_row = QHBoxLayout()
+        self.toggle_stt_both = ToggleSwitch()
+        self.toggle_stt_both.toggled.connect(self.on_stt_show_both)
+        both_row.addWidget(self.toggle_stt_both)
+        both_row.addWidget(ToggleLabel("Show original + translation",
+                                       self.toggle_stt_both))
+        both_row.addStretch()
+        dx.addLayout(both_row)
+        self.toggle_stt_both.setToolTip(
+            "Chatbox shows \"original \u2192 translation\".")
+        # placeholder in the chatbox while the translation is in flight
+        notice_row = QHBoxLayout()
+        self.toggle_translate_notice = ToggleSwitch()
+        self.toggle_translate_notice.toggled.connect(
+            self.on_translate_notice)
+        notice_row.addWidget(self.toggle_translate_notice)
+        notice_row.addWidget(ToggleLabel(
+            "Say when a translation is running",
+            self.toggle_translate_notice))
+        notice_row.addSpacing(12)
+        self.translate_notice_edit = QLineEdit()
+        self.translate_notice_edit.setFixedWidth(180)
+        self.translate_notice_edit.setPlaceholderText(
+            DEFAULT_TRANSLATE_NOTICE)
+        self.translate_notice_edit.editingFinished.connect(
+            self.on_translate_notice_text)
+        notice_row.addWidget(self.translate_notice_edit)
+        notice_row.addStretch()
+        dx.addLayout(notice_row)
+        self.toggle_translate_notice.setToolTip(
+            "Shows this text in the chatbox while the translation is "
+            "still on its way, so the gap does not look like nothing "
+            "happening. Goes out the same route as the message itself.")
+        self.tr_display_box.setVisible(False)
+        ts.addWidget(self.tr_display_box)
+        self.tr_box.setVisible(False)
+        tco.addWidget(self.tr_box)
 
-        # ---- text input (text mode only) ----
-        self.stt_text_box = QWidget()
-        tb = QVBoxLayout(self.stt_text_box)
-        tb.setContentsMargins(0, 0, 0, 0)
-        tb.setSpacing(6)
-        ttt_desc = QLabel("Type a message and hit Enter (or Send) \u2013 it goes "
-                          "through the same translation and OSC output as speech, "
-                          "without using the microphone.")
-        ttt_desc.setObjectName("dim")
-        ttt_desc.setWordWrap(True)
-        tb.addWidget(ttt_desc)
-        ttt_row = QHBoxLayout()
-        self.ttt_input = QLineEdit()
-        self.ttt_input.setPlaceholderText("Type your message \u2026")
-        self.ttt_input.setMaxLength(CHATBOX_LIMIT - len(SLIM_SUFFIX))
-        self.ttt_input.returnPressed.connect(self.send_ttt)
-        ttt_row.addWidget(self.ttt_input, 1)
-        ttt_emoji = QPushButton("\U0001F600")
-        ttt_emoji.setObjectName("iconbtn")
-        ttt_emoji.setFixedSize(30, 30)
-        ttt_emoji.setCursor(Qt.CursorShape.PointingHandCursor)
-        ttt_emoji.clicked.connect(
-            lambda _, b=ttt_emoji: self.emoji_popup.open_for(self.ttt_input, b))
-        ttt_row.addWidget(ttt_emoji)
-        self.ttt_send_btn = QPushButton("Send")
-        self.ttt_send_btn.setObjectName("sendbtn")
-        self.ttt_send_btn.setFixedSize(64, 30)
-        self.ttt_send_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.ttt_send_btn.clicked.connect(self.send_ttt)
-        ttt_row.addWidget(self.ttt_send_btn)
-        tb.addLayout(ttt_row)
-        sc.addWidget(self.stt_text_box)
-
-        self.stt_status_lbl = QLabel("")
-        self.stt_status_lbl.setObjectName("dim")
-        self.stt_status_lbl.setWordWrap(True)
-        sc.addWidget(self.stt_status_lbl)
-        # one-click installer for the pure-python half of Speech to Text.
-        # Arch has no working package for it (the AUR one drags in
-        # backends we do not use and currently fails to build), so the app
-        # can put it into its own folder instead - see core/pyextras.py.
-        self.stt_install_btn = QPushButton(
-            "\u2B07  Install SpeechRecognition")
-        self.stt_install_btn.setObjectName("linkbtn")
-        self.stt_install_btn.setFixedHeight(30)
-        self.stt_install_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.stt_install_btn.setToolTip(
-            f"Installs it with pip into {EXTRAS_DIR} - your system packages "
-            f"are not touched")
-        self._stt_install_target = "speech_recognition"
-        self.stt_install_btn.clicked.connect(self.on_install_speech)
-        self.stt_install_btn.setVisible(False)
-        sc.addWidget(self.stt_install_btn)
-        # two-way translation: the other players, translated for you
-        # (ui/pages/twoway_page.py)
-        self.build_twoway_section(sc)
-        self._sync_stt_availability()
         # ----- presets -----
         pcard = QFrame()
         pcard.setObjectName("card")
@@ -1028,7 +1206,8 @@ class TextboxPageMixin:
             self.preset_rows.append(row_w)
 
         # add the cards in the saved order (drag the 3x3 dots to reorder)
-        self.tb_cards = {"chat": card, "stt": scard, "presets": pcard}
+        self.tb_cards = {"chat": card, "stt": scard,
+                         "translate": tcard, "presets": pcard}
         self.tb_layout = layout
         for key in self.cfg["textbox_order"]:
             layout.addWidget(self.tb_cards[key])
@@ -1219,25 +1398,78 @@ class TextboxPageMixin:
         self.stt.translate_to = self.cfg["stt_output"]  # applies live
         self.log(f"Speech to Text output: "
                  f"{self.cfg['stt_output'] or 'same as spoken'}")
+        self._update_tr_summary()
+
+    def _tr_view_method(self):
+        """The service whose settings the Translation card shows."""
+        return (self.tr_method_combo.currentData()
+                or self.cfg.get("stt_method", METHOD_LINGVA))
 
     def on_tr_method(self, idx):
-        method = self.tr_method_combo.itemData(idx) or METHOD_LINGVA
-        self.cfg["stt_method"] = method
-        self.save_config()
-        self.stt.method = method  # applies live
+        """Translation card selector - only switches which settings are
+        shown, the service in use is picked in the To Text card."""
         self._update_tr_method_ui()
-        self.log(f"Translation service: {method}")
+
+    def on_tr_active(self, idx):
+        """To Text dropdown: the service actually used."""
+        method = self.tr_active_combo.itemData(idx)
+        if not method:
+            return
+        if method != self.cfg.get("stt_method"):
+            self.cfg["stt_method"] = method
+            self.save_config()
+            self.stt.method = method  # applies live
+            self.log(f"Translation service: {method}")
+        # the Translation card follows, so its settings match
+        j = self.tr_method_combo.findData(method)
+        if j >= 0 and j != self.tr_method_combo.currentIndex():
+            self.tr_method_combo.setCurrentIndex(j)
+        self._update_tr_summary()
+
+    def on_tr_favorite(self, on):
+        method = self.tr_method_combo.currentData()
+        if not method:
+            return
+        favs = [m for m in self.cfg.get("stt_tr_favorites", [])
+                if m != method]
+        if on:
+            favs.append(method)
+        self.cfg["stt_tr_favorites"] = favs
+        self.save_config()
+        self._fill_tr_active_combo()
+
+    def _fill_tr_active_combo(self):
+        """Favorites only when there are any, else every service. If the
+        service in use is no favorite, the first favorite takes over."""
+        favs = set(self.cfg.get("stt_tr_favorites") or [])
+        items = [(l, m) for l, m in TR_METHODS if m in favs] \
+            or list(TR_METHODS)
+        c = self.tr_active_combo
+        c.blockSignals(True)
+        c.clear()
+        fill_service_combo(c, items)
+        idx = c.findData(self.cfg.get("stt_method", METHOD_LINGVA))
+        c.setCurrentIndex(idx if idx >= 0 else first_service_index(c))
+        c.blockSignals(False)
+        self.on_tr_active(c.currentIndex())
 
     def _update_tr_method_ui(self):
         """Shows only the option fields of the selected method and
         updates the hint text. The LibreTranslate install button only
         appears while LibreTranslate is selected and not installed."""
-        method = self.cfg.get("stt_method", METHOD_LINGVA)
+        method = self._tr_view_method()
+        self.toggle_tr_fav.blockSignals(True)
+        self.toggle_tr_fav.setChecked(
+            method in (self.cfg.get("stt_tr_favorites") or []))
+        self.toggle_tr_fav.blockSignals(False)
         self.deepl_row.setVisible(method == METHOD_DEEPL)
         self.google_row.setVisible(method == METHOD_GOOGLE)
         self.libre_row.setVisible(method == METHOD_LIBRE)
         self.libre_online_row.setVisible(method == METHOD_LIBRE_ONLINE)
         self.custom_row.setVisible(method == METHOD_CUSTOM)
+        self.ai_row.setVisible(ai.is_ai(method))
+        if ai.is_ai(method):
+            self._sync_ai_ui(method)
         if method == METHOD_LIBRE_ONLINE:
             self._sync_libre_online_ui()
         if method == METHOD_GOOGLE:
@@ -1301,8 +1533,214 @@ class TextboxPageMixin:
                 "documentation (curl), a command of an installed CLI "
                 "translator, or pick a file. Press Test to check it. If it "
                 "fails, Lingva is used as fallback."),
+            ai.METHOD_OLLAMA: (
+                "A local AI on your own PC – offline, free, nothing "
+                "leaves your machine. Needs Ollama and one model "
+                "(gemma3:4b ≈ 3 GB). It shares the GPU with VR, so a "
+                "small model is best. If it fails, the normal fallback "
+                "chain takes over."),
+            ai.METHOD_CLAUDE: (
+                "Claude via the Claude Code program – uses your "
+                "Claude login (Pro/Max or API key). Install, log in once, "
+                "done. Takes a few seconds per message; haiku is the "
+                "fastest. Your text goes to Anthropic."),
+            ai.METHOD_GEMINI: (
+                "Gemini via the Gemini CLI – uses your Google login "
+                "(free tier available). Install (needs npm), log in once. "
+                "Your text goes to Google."),
+            ai.METHOD_CHATGPT: (
+                "ChatGPT via OpenAI's Codex CLI – uses your ChatGPT "
+                "login. Install (needs npm), log in once. The luna model "
+                "is the fastest. Your text goes to OpenAI."),
+            ai.METHOD_AI_CUSTOM: (
+                "Your own AI: a command or a curl call to any server "
+                "(LM Studio, llama.cpp, vLLM, a remote Ollama …). "
+                "The app builds the translation request and puts it in "
+                "{prompt}. Press Test to check it."),
         }
         self.tr_method_hint.setText(hints.get(method, ""))
+        self._update_tr_summary()
+
+    # ---------------------------------------------------- AI services
+    def _sync_ai_ui(self, method):
+        """Status line, buttons and model list of an AI service. The
+        checks (Ollama HTTP probe, login files) run off the GUI thread."""
+        if not ai.is_ai(method):
+            return
+        is_cli = method in ai.CLI_METHODS
+        is_ollama = method == ai.METHOD_OLLAMA
+        self.ai_url_row.setVisible(is_ollama)
+        self.ai_custom_box.setVisible(method == ai.METHOD_AI_CUSTOM)
+        self.ai_install_btn.setVisible(False)
+        self.ai_login_btn.setVisible(False)
+        self.ai_start_btn.setVisible(False)
+        self.ai_pull_btn.setVisible(False)
+        self.ai_refresh_btn.setVisible(method != ai.METHOD_AI_CUSTOM)
+        self._fill_ai_models(method, ai.MODELS.get(method, []))
+        if method == ai.METHOD_AI_CUSTOM:
+            self.ai_status_lbl.setText("")
+            return
+        self.ai_status_lbl.setText("⏳ Checking …")
+
+        def work():
+            st = {"installed": ai.installed(method)}
+            if is_cli:
+                st["login"] = ai.logged_in(method)
+            if is_ollama:
+                st["running"] = ai.ollama_running()
+                st["models"] = ai.models_for(method) if st["running"] \
+                    else list(ai.MODELS[method])
+                st["have"] = ai.ollama_models() if st["running"] else []
+            return st
+        self.run_async(work, lambda st, m=method: self._on_ai_status(m, st),
+                       interval=150)
+
+    def _on_ai_status(self, method, st):
+        if method != self._tr_view_method():
+            return      # switched to another service meanwhile
+        inst = st.get("installed")
+        name = {ai.METHOD_CLAUDE: "Claude Code", ai.METHOD_GEMINI:
+                "Gemini CLI", ai.METHOD_CHATGPT: "Codex CLI"}.get(
+                    method, ai.BINARIES.get(method, ""))
+        self.ai_install_btn.setVisible(not inst)
+        if method == ai.METHOD_OLLAMA:
+            running = st.get("running")
+            model = ai.model_of(method)
+            have = st.get("have", [])
+            self._fill_ai_models(method, st.get("models", []))
+            self.ai_start_btn.setVisible(bool(inst) and not running)
+            self.ai_pull_btn.setVisible(bool(running))
+            if running:
+                ok = model in have or f"{model}:latest" in have
+                self.ai_status_lbl.setText(
+                    f"✅ Ollama is running – {len(have)} "
+                    f"model(s) installed" + ("" if ok else
+                    f" · ⚠ “{model}” not downloaded "
+                    f"yet"))
+            elif inst or not self._ai_url_is_local():
+                self.ai_status_lbl.setText(
+                    "⚠ Ollama is not running (or not reachable).")
+            else:
+                self.ai_status_lbl.setText(
+                    "❌ Ollama is not installed.")
+            return
+        login = st.get("login")
+        self.ai_login_btn.setVisible(bool(inst))
+        if not inst:
+            npm = (" (needs npm / Node.js)" if ai.needs_npm(method)
+                   else "")
+            self.ai_status_lbl.setText(
+                f"❌ {name} is not installed{npm}.")
+        elif login is False:
+            self.ai_status_lbl.setText(
+                f"⚠ {name} is installed – log in once.")
+        elif login is None:
+            self.ai_status_lbl.setText(
+                f"✅ {name} is installed (login not detectable "
+                f"– press Test).")
+        else:
+            self.ai_status_lbl.setText(
+                f"✅ {name} is installed and logged in.")
+
+    def _ai_url_is_local(self):
+        url = ai.ollama_url()
+        return "127.0.0.1" in url or "localhost" in url
+
+    def _fill_ai_models(self, method, models):
+        c = self.ai_model_combo
+        cur = ai.model_of(method)
+        c.blockSignals(True)
+        c.clear()
+        for m in models:
+            c.addItem(m)
+        if cur and c.findText(cur) < 0:
+            c.addItem(cur)
+        c.setCurrentText(cur)
+        c.blockSignals(False)
+
+    def on_ai_model(self, text):
+        method = self._tr_view_method()
+        key = ai.MODEL_KEYS.get(method)
+        if not key:
+            return
+        self.cfg[key] = text.strip()
+        self.save_config_later()
+        self._update_tr_summary()
+
+    def on_ai_url(self, text):
+        self.cfg["stt_ai_ollama_url"] = text.strip()
+        self.save_config_later()
+
+    def on_ai_custom_cmd(self):
+        self.cfg["stt_ai_custom_cmd"] = self.ai_custom_edit.toPlainText()
+        self.save_config_later()
+
+    def on_ai_install(self):
+        method = self._tr_view_method()
+        cmd = ai.install_command(method)
+        if cmd is None:
+            QDesktopServices.openUrl(QUrl(ai.OLLAMA_DOWNLOAD_URL))
+            self.ai_status_lbl.setText(
+                "Download page opened – install Ollama, then press "
+                "⟳.")
+            return
+        ok, msg = ai.run_in_terminal(cmd)
+        self.ai_status_lbl.setText(
+            "⏳ Installing in the terminal – press ⟳ when "
+            "it is done." if ok else f"❌ {msg}")
+        self.log(f"AI install ({method}): {cmd}")
+
+    def on_ai_login(self):
+        method = self._tr_view_method()
+        argv = ai.login_command(method)
+        if argv is None:
+            self.ai_status_lbl.setText("❌ Not installed yet.")
+            return
+        ok, msg = ai.run_in_terminal(argv)
+        self.ai_status_lbl.setText(
+            "🔑 Log in in the terminal (Claude: type /login), "
+            "close it, then press ⟳." if ok else f"❌ {msg}")
+
+    def on_ai_start_ollama(self):
+        from core.constants import CONFIG_DIR
+        ok, msg = ai.start_ollama(CONFIG_DIR / "ollama.log")
+        if not ok:
+            self.ai_status_lbl.setText(f"❌ {msg}")
+            return
+        self.ai_status_lbl.setText("⏳ Starting Ollama …")
+        QTimer.singleShot(2500, lambda: self._sync_ai_ui(
+            self._tr_view_method()))
+
+    def on_ai_pull(self):
+        model = ai.model_of(ai.METHOD_OLLAMA)
+        exe = ai.find_binary("ollama")
+        if not exe:
+            QDesktopServices.openUrl(QUrl(ai.OLLAMA_LIBRARY_URL))
+            return
+        ok, msg = ai.run_in_terminal([exe, "pull", model])
+        self.ai_status_lbl.setText(
+            f"📥 Downloading “{model}” in the terminal "
+            f"– press ⟳ when it is done." if ok
+            else f"❌ {msg}")
+
+    def _update_tr_summary(self):
+        """Short "service -> language" line in the Translation card head,
+        readable while the card is collapsed."""
+        lbl = getattr(self, "tr_summary_lbl", None)
+        if lbl is None:
+            return
+        combo = getattr(self, "tr_active_combo", None)
+        if combo is None:
+            return
+        service = combo.currentText().split(" (")[0]
+        model = ai.model_of(combo.currentData() or "")
+        if model:
+            service = f"{service} \u00b7 {model}"
+        if self.stt_out_combo.currentData():
+            text = f"{service} \u2192 {self.stt_out_combo.currentText()}"
+        else:
+            text = f"{service} \u00b7 no translation"
+        lbl.setText(text)
 
     def _fill_mic_combo(self, force=False):
         """(Re)populates the microphone dropdown; keeps the configured
@@ -1763,10 +2201,10 @@ class TextboxPageMixin:
         self.mic_meter.set_threshold(0 if auto else threshold)
 
     def on_tr_test(self):
-        """Tests the currently selected translation service with a
+        """Tests the service shown in the Translation card with a
         short phrase and shows the translation or the EXACT error in
         the hint line – no more guessing why the fallback kicked in."""
-        method = self.cfg.get("stt_method", METHOD_LINGVA)
+        method = self._tr_view_method()
         self.tr_test_btn.setEnabled(False)
         self.tr_method_hint.setText(
             f"\U0001F9EA Testing '{method}' \u2026")
@@ -2356,6 +2794,8 @@ class TextboxPageMixin:
             out = f"{source_text} \u2192 {final_text}"
         else:
             out = final_text or source_text
+        if final_text and final_text != source_text:
+            self.notify_next_send()     # "Only on translations / AFK"
         self.log(f"{origin} to Text: sending \"{out}\"")
         self.stt_status_lbl.setText(f"Sent: {out}")
         # source_text is what was typed/spoken, out is what actually goes
@@ -2425,8 +2865,20 @@ class TextboxPageMixin:
             self.chat_text_until = (time.time() + val) if val else 0.0
         self.update_preview()
 
+    def _send_opts_label(self):
+        """Arrow text of the Send-as expander: shows the active route,
+        so it can stay collapsed."""
+        mode = self.cfg.get("stt_send_mode", CHAT_MODE_DIRECT)
+        name = next((lbl for lbl, val in CHAT_SEND_MODES if val == mode),
+                    CHAT_SEND_MODES[0][0])
+        return f"Send as: {name}"
+
     def _update_chat_mode_ui(self):
         mode = self.cfg.get("stt_send_mode", CHAT_MODE_DIRECT)
+        exp = getattr(self, "send_opts_expander", None)
+        if exp is not None:
+            self.set_expanded(exp, self.send_opts_box, exp.isChecked(),
+                              self._send_opts_label())
         self.chat_anchor_w.setVisible(mode == CHAT_MODE_LINE)
         self.chat_hold_w.setVisible(mode != CHAT_MODE_DIRECT)
         self.chat_mode_hint.setText(CHAT_MODE_HINTS.get(mode, ""))
@@ -2518,7 +2970,9 @@ class TextboxPageMixin:
         else:
             payload = text[:CHATBOX_LIMIT]
         try:
-            self.osc_client.send_message(CHATBOX_INPUT, [payload, True, False])
+            self.osc_client.send_message(
+                CHATBOX_INPUT, [payload, True, self.chatbox_notify_flag()])
+            self.chatbox_sent()
             pause = self.cfg["textbox_pause_sec"]
             self.manual_pause_until = time.time() + pause
             self.last_manual_text = text

@@ -375,6 +375,9 @@ Type it or speak it — either way it goes to VRChat, optionally translated on t
 - **Microphone selection** dropdown (system default or any input device)
 - 15 input languages, **live translation** to 13 output languages
 - **Translation services**: LibreTranslate Online (default since v1.6.2 — `translate.adminforge.de`, no key, no Google tracking, open source), Lingva Translate (anonymous proxy, currently broken upstream), Google Translate direct (fastest, key optional), LibreTranslate (local instance, 100 % offline — install once, then a **Start/Stop server button** appears right in the UI and the server is shut down when the app closes) or the official **DeepL API** (own key, typed error handling). A hosted LibreTranslate is there too if you don't want to install one
+- **AI translation** — **Local AI with Ollama** (offline; install / start / download-model buttons, pick any model), **Claude Code**, **Gemini CLI** and **ChatGPT (Codex CLI)** with your normal account login (install + log-in buttons, model dropdown), or a **Custom AI** command / curl call (`{prompt}`, `{model}`)
+- **Favorite services** — mark services as ★ Favorite in the Translation card; the service dropdown in To Text then shows only your favorites
+- **Translation card** — service settings, API key and chatbox display (original + translation, "Translate …" notice) in their own collapsible card between To Text and Presets; the header shows the active service while collapsed
 - Automatic fallback chain if the chosen service fails: **Lingva, then direct Google, then LibreTranslate on translate.adminforge.de** (e.g. DeepL monthly limit reached or local instance down)
 - **"Say when a translation is running"** — the gap between speaking and the translation arriving says `Translate …` instead of leaving the previous message up
 - **Send as**: Standard (message takes over, apps pause), or routed into your own placeholders — `{stt_input}` / `{stt_output}` carry a spoken message, `{ttt_input}` / `{ttt_output}` a typed one, `{text_input}` / `{text_output}` whichever sent last
@@ -430,6 +433,8 @@ Own **Plugins** page with two tabs: **Installed** and **Store**.
 **Slim Chatbox (default ON)** — appends the invisible characters `\u0003\u001f` so VRChat renders a **slim bar instead of the huge box** (the hidden "BlankEgg" trick from MagicChatbox — here it's just a normal setting). The suffix is guaranteed to survive even at the 144-char limit.
 
 **Send changes instantly** — a changed text goes to VRChat right away instead of waiting for the interval, while staying inside VRChat's rate limit (5 messages per 5 s, min 1.5 s apart). Extra sends are delayed, never dropped.
+
+**Notification** (Options → OSC) — when the chatbox plays VRChat's notification sound: *Never* (default), *When the chatbox appears* (nothing → message) or *Only on translations and AFK* (every service, AI included) — played by **VRChat** (everyone nearby hears it), by **OSC-DreamChatbox** (only you; built-in chime or your own .wav) or **both**, with a ▶ Test button. Optional **custom avatar parameter** (Bool, default `DreamNotify`, true for 1 s) for an avatar with its own sound — set it up in Unity: add the Bool to the expression parameters, an animator layer that enables an Audio Source while it is true.
 
 **Clear chatbox when there is nothing to send** — once nothing is left to show, one empty message removes the old text right away instead of VRChat keeping it ~30 s. A message you typed yourself is never cleared by this.
 

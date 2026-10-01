@@ -65,7 +65,10 @@ _ANSWER_PATHS = ("translatedText", "translation", "translated_text",
                  "translated", "result", "text", "output",
                  "translations.0.text", "translations.0.translatedText",
                  "data.translations.0.translatedText", "data.translation",
-                 "0.translatedText", "0.text")
+                 "0.translatedText", "0.text",
+                 # v1.6.5 Custom AI: OpenAI-compatible / Ollama chat
+                 "choices.0.message.content", "choices.0.text",
+                 "message.content", "response")
 
 
 class CustomError(Exception):
@@ -220,7 +223,7 @@ def extract_answer(body: str, path: str = ""):
 
 
 # -------------------------------------------------------------- running
-def _run_curl(cmd, resp_path, text, src, tgt):
+def _run_curl(cmd, resp_path, text, src, tgt, timeout=TIMEOUT):
     spec = parse_curl(cmd)
     url_has_ph = any(p in spec["url"] for p in ("{text}", "{source}",
                                                 "{target}"))
@@ -259,7 +262,7 @@ def _run_curl(cmd, resp_path, text, src, tgt):
     req = urllib.request.Request(url, data=body, headers=headers,
                                  method=spec["method"])
     try:
-        with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
             answer = r.read().decode("utf-8", errors="replace")
     except urllib.error.HTTPError as e:
         try:
@@ -272,7 +275,7 @@ def _run_curl(cmd, resp_path, text, src, tgt):
     return extract_answer(answer, resp_path)
 
 
-def _run_command(cmd, text, src, tgt):
+def _run_command(cmd, text, src, tgt, timeout=TIMEOUT):
     try:
         argv = shlex.split(cmd)
     except ValueError as e:
@@ -286,11 +289,11 @@ def _run_command(cmd, text, src, tgt):
         res = subprocess.run(argv, input=None if uses_text else text,
                              capture_output=True, text=True,
                              encoding="utf-8", errors="replace",
-                             timeout=TIMEOUT, **subprocess_flags())
+                             timeout=timeout, **subprocess_flags())
     except FileNotFoundError:
         raise CustomError(f"command not found: {argv[0]}")
     except subprocess.TimeoutExpired:
-        raise CustomError(f"{argv[0]} took longer than {TIMEOUT} s")
+        raise CustomError(f"{argv[0]} took longer than {timeout} s")
     if res.returncode != 0:
         err = (res.stderr or "").strip().splitlines()
         raise CustomError(f"{argv[0]} exited with {res.returncode}"
@@ -315,7 +318,7 @@ def _run_python(path, text, src, tgt):
 
 
 def translate(snippet: str, file_path: str, text: str, src: str,
-              tgt: str):
+              tgt: str, timeout: float = TIMEOUT):
     """The one entry point. Raises CustomError with a readable reason."""
     file_path = (file_path or "").strip()
     if file_path:
@@ -330,5 +333,5 @@ def translate(snippet: str, file_path: str, text: str, src: str,
         raise CustomError("no command set - paste one or choose a file")
     first = cmd.split(None, 1)[0].strip("'\"")
     if Path(first).name.lower() in ("curl", "curl.exe"):
-        return _run_curl(cmd, resp, text, src, tgt)
-    return _run_command(cmd, text, src, tgt)
+        return _run_curl(cmd, resp, text, src, tgt, timeout)
+    return _run_command(cmd, text, src, tgt, timeout)

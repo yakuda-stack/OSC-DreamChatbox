@@ -125,14 +125,11 @@ class TwoWayMixin:
         tw.setSpacing(6)
 
         intro = QLabel(
-            "Translates the OTHER players for you: the app listens to "
-            "what VRChat plays, transcribes it and shows the translation "
-            "here. By default only you see it \u2013 switch on \u201cSend "
-            "to chatbox\u201d at the bottom to share it. The apps keep "
-            "running. Uses the translation service selected above. Works "
-            "best with one speaker at a time: several voices at once, or "
-            "loud music, confuse the recogniser \u2013 VRChat's Earmuffs "
-            "mode and a higher threshold help.")
+            "Translates the OTHER players for you: listens to what "
+            "VRChat plays and shows the translation here (only you see "
+            "it, unless \u201cSend to chatbox\u201d is on). Uses the "
+            "service from the Translation card. Best with one speaker at "
+            "a time.")
         intro.setObjectName("dim")
         intro.setWordWrap(True)
         tw.addWidget(intro)
@@ -1060,6 +1057,8 @@ class TwoWayMixin:
         out = translated or source
         if not out:
             return
+        if translated and translated != source:
+            self.notify_next_send()
         self.send_manual_text(out, source_text=source, origin=ORIGIN_TWOWAY)
 
     def _twoway_append(self, source, translated):

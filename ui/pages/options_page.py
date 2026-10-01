@@ -18,13 +18,13 @@ from pathlib import Path
 from PyQt6.QtCore import QUrl, Qt
 from PyQt6.QtGui import QColor, QDesktopServices, QPainter, QPixmap
 from PyQt6.QtWidgets import (
-    QButtonGroup, QColorDialog, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget, QMessageBox, QPushButton, QSlider, QSpinBox, QVBoxLayout, QWidget)
+    QButtonGroup, QColorDialog, QComboBox, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget, QMessageBox, QPushButton, QSlider, QSpinBox, QVBoxLayout, QWidget)
 from core import desktop_integration, profiles, queryfix, vrc_pictures
 from core.theming import (
     TOKEN_LABELS, import_background, list_backgrounds, remove_background,
     resolve_tokens, theme_ids, theme_name)
 from core.constants import (
-    CHATBOX_INPUT, DISCORD_URL, DONATE_URL, GITHUB_REPO, OSC_MIN_SEND_GAP_SEC, OSC_RATE_MAX_SENDS, OSC_RATE_WINDOW_SEC, VERSION, VRCHAT_GROUP_URL)
+    CHATBOX_INPUT, NOTIFY_MODES, NOTIFY_NEVER, NOTIFY_OUTPUTS, NOTIFY_OUT_VRCHAT, NOTIFY_OUT_APP, DEFAULT_NOTIFY_PARAM, SLIM_SUFFIX, DISCORD_URL, DONATE_URL, GITHUB_REPO, OSC_MIN_SEND_GAP_SEC, OSC_RATE_MAX_SENDS, OSC_RATE_WINDOW_SEC, VERSION, VRCHAT_GROUP_URL)
 from core.oscin import DEFAULT_IN_PORT
 from core.oscquery import HAS_ZEROCONF
 from core.plugin_store import compare_versions
@@ -398,6 +398,95 @@ class OptionsPageMixin:
         c.addWidget(hint2)
 
         osc_lay.addWidget(card)
+
+        # ---- v1.6.5: notification sound (community wish) ---------------
+        ncard = QFrame()
+        ncard.setObjectName("card")
+        nc = QVBoxLayout(ncard)
+        nc.setContentsMargins(16, 14, 16, 16)
+        nc.setSpacing(10)
+        ntitle = QLabel("Notification")
+        ntitle.setObjectName("cardtitle")
+        nc.addWidget(ntitle)
+        n_row = QHBoxLayout()
+        n_row.addWidget(QLabel("Chatbox notification sound:"))
+        self.notify_combo = QComboBox()
+        for label, val in NOTIFY_MODES:
+            self.notify_combo.addItem(label, val)
+        self.notify_combo.currentIndexChanged.connect(self.on_notify_mode)
+        n_row.addWidget(self.notify_combo, 1)
+        nc.addLayout(n_row)
+        # who plays it - VRChat's own sound, the app's, or both
+        self.notify_out_w = QWidget()
+        no_row = QHBoxLayout(self.notify_out_w)
+        no_row.setContentsMargins(0, 0, 0, 0)
+        no_row.addWidget(QLabel("Play the sound in:"))
+        self.notify_out_combo = QComboBox()
+        for label, val in NOTIFY_OUTPUTS:
+            self.notify_out_combo.addItem(label, val)
+        self.notify_out_combo.currentIndexChanged.connect(
+            self.on_notify_output)
+        no_row.addWidget(self.notify_out_combo, 1)
+        # tests exactly what is selected: VRChat, the app, or both
+        n_test = QPushButton("\u25B6  Test")
+        n_test.setObjectName("linkbtn")
+        n_test.setFixedHeight(30)
+        n_test.setCursor(Qt.CursorShape.PointingHandCursor)
+        n_test.setToolTip(
+            "VRChat: sends a short test message with the sound "
+            "(everyone nearby hears it). OSC-DreamChatbox: plays the "
+            "sound here. Both: both at once.")
+        n_test.clicked.connect(lambda _=False: self.on_notify_test())
+        no_row.addWidget(n_test)
+        nc.addWidget(self.notify_out_w)
+        # the app's own sound: a WAV of your choice or the built-in chime
+        # VRChat / Both: also flip an avatar parameter, so an avatar
+        # with its own sound (Audio Source on that Bool) plays it
+        self.notify_param_w = QWidget()
+        np_row = QHBoxLayout(self.notify_param_w)
+        np_row.setContentsMargins(0, 0, 0, 0)
+        self.toggle_notify_param = ToggleSwitch()
+        self.toggle_notify_param.toggled.connect(self.on_notify_param_on)
+        np_row.addWidget(self.toggle_notify_param)
+        np_row.addWidget(ToggleLabel("Custom avatar parameter",
+                                     self.toggle_notify_param))
+        self.notify_param_input = QLineEdit()
+        self.notify_param_input.setPlaceholderText(DEFAULT_NOTIFY_PARAM)
+        self.notify_param_input.setToolTip(
+            "Bool parameter on your avatar. It is set to true for one "
+            "second, then back to false \u2013 an animator layer with an "
+            "Audio Source on it plays your own sound for everyone.")
+        self.notify_param_input.textChanged.connect(self.on_notify_param)
+        np_row.addWidget(self.notify_param_input, 1)
+        nc.addWidget(self.notify_param_w)
+        self.notify_file_w = QWidget()
+        nf_row = QHBoxLayout(self.notify_file_w)
+        nf_row.setContentsMargins(0, 0, 0, 0)
+        nf_row.addWidget(QLabel("Sound file:"))
+        self.notify_file_input = QLineEdit()
+        self.notify_file_input.setPlaceholderText(
+            "(built-in chime) \u2013 or pick a .wav")
+        self.notify_file_input.textChanged.connect(self.on_notify_file)
+        nf_row.addWidget(self.notify_file_input, 1)
+        nf_pick = QPushButton("\U0001F4C2")
+        nf_pick.setObjectName("iconbtn")
+        nf_pick.setFixedSize(30, 30)
+        nf_pick.setCursor(Qt.CursorShape.PointingHandCursor)
+        nf_pick.setToolTip("Choose a .wav file")
+        nf_pick.clicked.connect(lambda _=False: self.on_notify_pick())
+        nf_row.addWidget(nf_pick)
+        nc.addWidget(self.notify_file_w)
+        n_hint = QLabel(
+            "VRChat: its chatbox sound, everyone nearby hears it. "
+            "OSC-DreamChatbox: a sound on your PC only. "
+            "\u201cAppears\u201d: only the first message after the chatbox "
+            "was empty (cleared or ~30 s without a message), not every "
+            "update. \u201cTranslations and AFK\u201d: a translated "
+            "message (any service, AI included) or going AFK.")
+        n_hint.setObjectName("dim")
+        n_hint.setWordWrap(True)
+        nc.addWidget(n_hint)
+        osc_lay.addWidget(ncard)
         design_lay.addWidget(self.build_customization_card())
 
         # ----- General: three cards, one job each ---------------------
@@ -1111,6 +1200,7 @@ class OptionsPageMixin:
             return
         try:
             self.osc_client.send_message(CHATBOX_INPUT, ["", True, False])
+            self.chatbox_sent(empty=True)
             # counts against VRChat's chatbox budget like any other
             # message, and there is nothing on screen afterwards - so the
             # next payload is always "different" and goes out at once
@@ -1130,6 +1220,79 @@ class OptionsPageMixin:
             self.log("Debug mode ON – console opened")
         else:
             self.debug_console.hide()
+
+    def on_notify_mode(self, idx):
+        val = self.notify_combo.itemData(idx) or NOTIFY_NEVER
+        self.cfg["chatbox_notify"] = val
+        self.save_config()
+        self._sync_notify_ui()
+        self.log(f"Chatbox notification sound: {val}")
+
+    def on_notify_output(self, idx):
+        val = self.notify_out_combo.itemData(idx) or NOTIFY_OUT_VRCHAT
+        self.cfg["chatbox_notify_output"] = val
+        self.save_config()
+        self._sync_notify_ui()
+        self.log(f"Notification sound plays in: {val}")
+
+    def _sync_notify_ui(self):
+        """Output only matters when there is a sound at all, the file
+        only when the app plays it."""
+        on = self.cfg.get("chatbox_notify", NOTIFY_NEVER) != NOTIFY_NEVER
+        app = self.cfg.get("chatbox_notify_output",
+                           NOTIFY_OUT_VRCHAT) != NOTIFY_OUT_VRCHAT
+        vrc = self.cfg.get("chatbox_notify_output",
+                           NOTIFY_OUT_VRCHAT) != NOTIFY_OUT_APP
+        self.notify_out_w.setVisible(on)
+        self.notify_file_w.setVisible(on and app)
+        self.notify_param_w.setVisible(on and vrc)
+        self.notify_param_input.setEnabled(
+            bool(self.cfg.get("chatbox_notify_param_on")))
+
+    def on_notify_param_on(self, on):
+        self.cfg["chatbox_notify_param_on"] = bool(on)
+        self.save_config()
+        self._sync_notify_ui()
+
+    def on_notify_param(self, text):
+        self.cfg["chatbox_notify_param"] = text.strip()
+        self.save_config_later()
+
+    def on_notify_file(self, text):
+        self.cfg["chatbox_notify_file"] = text.strip()
+        self.save_config_later()
+
+    def on_notify_pick(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Notification sound", "", "WAV sound (*.wav)")
+        if path:
+            self.notify_file_input.setText(path)
+
+    def on_notify_test(self):
+        """Plays the sound the way the "Play the sound in" setting says."""
+        out = self.cfg.get("chatbox_notify_output", NOTIFY_OUT_VRCHAT)
+        if out != NOTIFY_OUT_VRCHAT:
+            from core import notifysound
+            notifysound.play(self.cfg.get("chatbox_notify_file", ""),
+                             log=self.log)
+        if out == NOTIFY_OUT_APP:
+            return
+        self.pulse_notify_param()
+        # VRChat only plays its sound together with a chatbox message
+        if self.osc_client is None:
+            self.log("Notification test: OSC is not connected")
+            return
+        text = "\U0001F514 Notification test"
+        payload = text + SLIM_SUFFIX if self.cfg.get("slim_chatbox") \
+            else text
+        try:
+            self.osc_client.send_message(CHATBOX_INPUT, [payload, True, True])
+            self._send_times.append(time.time())
+            self._last_sent_payload = payload
+            self.chatbox_sent()
+            self.log(f"-> OSC {CHATBOX_INPUT} notification test (sound on)")
+        except Exception as e:
+            self.log(f"ERROR while sending the notification test: {e}")
 
     def on_clear_empty_toggled(self, on):
         self.cfg["clear_when_empty"] = bool(on)

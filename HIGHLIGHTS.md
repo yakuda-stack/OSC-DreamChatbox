@@ -3,6 +3,13 @@
 The short version of every release — what you will actually notice.
 The full details are in the changelog.
 
+## v1.6.5 – 2026-10-01
+
+- **Translate with an AI:** local with **Ollama** (offline, install button + model choice) or online with **Claude**, **Gemini** or **ChatGPT** using your normal login – or your own AI.
+- **Favorite services:** mark them with ★ – the dropdown in To Text then only shows your favorites, grouped into Translator / AI Translation.
+- **Notification sound** (Options → OSC): when the chatbox appears or on translations / AFK – played by VRChat, the app (own .wav) or both, plus an optional avatar parameter for your own avatar sound.
+- **Tidier Textbox page:** Translation has its own card, To Text is shorter.
+
 ## v1.6.4 – 2026-09-29
 
 - **AppImage starts on Ubuntu 22.04 / Mint 21 for real now** – two more missing Qt libraries are included. Nothing changes in the app itself.

@@ -7,6 +7,7 @@ window class stays small. All `self.*` refer to the MainWindow instance.
 
 import json
 import shutil
+from core.ai_translator import DEFAULTS as AI_DEFAULTS
 from core.atomicfile import write_text_atomic
 from core.theming import THEMES
 from core.audiolevel import THRESHOLD_DEFAULT, clamp_threshold
@@ -282,7 +283,7 @@ class ConfigMixin:
                                 "PEANUTBUTTER"] + [""] * 14,
             "textbox_preset_count": 6,
             "textbox_pause_sec": 10,
-            "textbox_order": ["chat", "stt", "presets"],
+            "textbox_order": ["chat", "stt", "translate", "presets"],
             "stt_language": "de-DE",
             "stt_block": False,
             "stt_output": "",
@@ -290,6 +291,12 @@ class ConfigMixin:
             # Lingva is broken upstream, Google keyless tracks and
             # rate-limits. lingva | google | libre | libre_online | deepl
             "stt_method": METHOD_LIBRE_ONLINE,
+            # v1.6.5: favorite services - only these are offered in the
+            # To Text dropdown; empty = all
+            "stt_tr_favorites": [],
+            # v1.6.5: AI translation (core/ai_translator.py) - model per
+            # service, Ollama server, Custom AI command
+            **AI_DEFAULTS,
             "stt_mic": "",   # microphone name, "" = system default
             "stt_deepl_key": "",
             "stt_google_key": "",   # optional Google Cloud Translation key
@@ -525,6 +532,13 @@ class ConfigMixin:
             # to show, instead of VRChat keeping the last text ~30 s.
             # A typed (manual) message is never cleared by this.
             "clear_when_empty": False,
+            # v1.6.5: never | appear | events (core/constants.NOTIFY_*)
+            "chatbox_notify": "never",
+            "chatbox_notify_output": "vrchat",   # vrchat | app | both
+            "chatbox_notify_file": "",           # "" = built-in chime
+            # VRChat/Both: also pulse this Bool avatar parameter
+            "chatbox_notify_param_on": False,
+            "chatbox_notify_param": "",          # "" = DreamNotify
             "slim_chatbox": True,   # slim bar instead of big box, default ON
             "osc_ip": "127.0.0.1",
             "osc_port": 9000,
@@ -706,8 +720,12 @@ class ConfigMixin:
         defaults["textbox_presets"] = presets + [""] * (20 - len(presets))
         defaults["textbox_preset_count"] = min(20, max(1, int(
             defaults.get("textbox_preset_count", 5))))
-        tvalid = ["chat", "stt", "presets"]
+        tvalid = ["chat", "stt", "translate", "presets"]
         torder = [k for k in defaults.get("textbox_order", []) if k in tvalid]
+        # v1.6.5: the Translation card is new - slot it in right below
+        # To Text, where its settings used to live, not at the very end
+        if "translate" not in torder and "stt" in torder:
+            torder.insert(torder.index("stt") + 1, "translate")
         torder += [k for k in tvalid if k not in torder]
         defaults["textbox_order"] = torder
         aio = defaults.get("aio_templates")
@@ -749,6 +767,13 @@ class ConfigMixin:
                 defaults["stt_libre_online_url"] = ADMINFORGE_LIBRE_URL
                 defaults["stt_libre_online_custom"] = False
             defaults["stt_migrated_v162"] = True
+        for key, val in AI_DEFAULTS.items():
+            got = defaults.get(key, val)
+            defaults[key] = got if isinstance(got, str) else val
+        favs = defaults.get("stt_tr_favorites")
+        defaults["stt_tr_favorites"] = list(dict.fromkeys(
+            m for m in (favs if isinstance(favs, list) else [])
+            if isinstance(m, str)))
         for key in ("stt_libre_online_url", "stt_libre_online_key",
                     "stt_twoway_source", "stt_twoway_target",
                     "stt_custom_file"):
@@ -937,6 +962,18 @@ class ConfigMixin:
             defaults.get("media_show_volume", False))
         if defaults.get("media_pause_scope") not in ("media", "aio"):
             defaults["media_pause_scope"] = "media"
+        if defaults.get("chatbox_notify") not in ("never", "appear",
+                                                  "events"):
+            defaults["chatbox_notify"] = "never"
+        if defaults.get("chatbox_notify_output") not in ("vrchat", "app",
+                                                         "both"):
+            defaults["chatbox_notify_output"] = "vrchat"
+        if not isinstance(defaults.get("chatbox_notify_file"), str):
+            defaults["chatbox_notify_file"] = ""
+        defaults["chatbox_notify_param_on"] = bool(
+            defaults.get("chatbox_notify_param_on", False))
+        if not isinstance(defaults.get("chatbox_notify_param"), str):
+            defaults["chatbox_notify_param"] = ""
         defaults["clear_when_empty"] = bool(
             defaults.get("clear_when_empty", False))
         gw = defaults.get("graph_panel_widths")

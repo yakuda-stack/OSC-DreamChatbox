@@ -6,6 +6,72 @@ All notable changes to OSC-DreamChatbox are documented here.
 
 🟢 Linux Support: Complete & Stable (v1.2.6)
 
+## [v1.6.5] – 2026-10-01
+
+### Changed
+
+- **Textbox page tidied up.** Translation has its own collapsible
+  card between To Text and Presets (service, keys, test, plus a
+  "Chatbox display" section with *Show original + translation* and
+  *Say when a translation is running*). The card head shows the active
+  service and target language while collapsed.
+- **To Text is shorter:** the record button / text field now come right
+  after language and microphone; *Send as* (shorter labels: Standard /
+  Line / Variables) lives in a collapsible section whose arrow shows the
+  current route. Long hint texts shortened or moved into tooltips.
+
+### Added
+
+- **Favorite translation services.** The service is now picked in the
+  To Text card (above the input language). The Translation card only
+  holds the settings (*Settings for* – follows the active service, *Test*
+  checks the one shown), with a *★ Favorite* toggle per service – once
+  you have favorites, the dropdown shows just those. If the active
+  service is no favorite, the first favorite takes over.
+- Both service dropdowns are grouped under **Translator** and
+  **AI Translation** headers.
+- **Translate with an AI** (`core/ai_translator.py`) – five new
+  services in the dropdown:
+  - **Local AI – Ollama**: offline on your own PC. *Install* (Arch:
+    `ollama` / `-cuda` / `-rocm` package matching the GPU, other distros:
+    the official script, Windows: download page), *Start Ollama*,
+    *Download model* (`ollama pull`), Ollama URL for a server elsewhere.
+  - **Claude Code**, **Gemini CLI**, **ChatGPT (Codex CLI)**: use the
+    vendor's own program with your normal account login – no API key
+    typed into the app. *Install* (Claude: official installer, Gemini /
+    Codex: npm into `~/.local`, no sudo) and *Log in* open a terminal;
+    the card shows whether the program is installed and logged in.
+  - **Custom AI**: your own command or curl call (LM Studio, llama.cpp,
+    vLLM, a remote Ollama …); `{prompt}` is the finished request,
+    `{model}` the model field. Button for an OpenAI-compatible example.
+  - Editable **model dropdown** per service (Ollama lists the installed
+    models first). Defaults: `gemma3:4b`, `haiku`, `flash`,
+    `gpt-5.6-luna` – the fast ones, a chat line should not wait.
+  - Works everywhere a translation happens (Speech to Text, Text to
+    Text, Two-way). If the AI fails, the normal fallback chain
+    (Lingva → Google → adminForge) takes over; *Test* shows the exact
+    reason (e.g. not logged in, model not downloaded).
+- **Notification sound** (Options → OSC → new *Notification* card,
+  community wish):
+  - *When*: **Never** (default), **When the chatbox appears** (first
+    message after the chatbox was empty – cleared or ~30 s without a
+    message, not every update) or **Only on translations and AFK** (a
+    translated message from any service, AI and Two-way included, or
+    going AFK).
+  - *Play the sound in*: **VRChat** (default – its chatbox sound via the
+    third argument of `/chatbox/input`, everyone nearby hears it),
+    **OSC-DreamChatbox** (only on your PC – built-in chime or your own
+    .wav; pw-play / paplay / aplay, winsound on Windows, no new
+    dependency) or **Both**.
+  - **▶ Test** next to it tests exactly what is selected (VRChat: a short
+    "🔔 Notification test" message with sound).
+  - **Custom avatar parameter** (VRChat / Both, default `DreamNotify`):
+    a Bool set true for one second on every notification, for avatars
+    with their own sound (set up in Unity – see README).
+- Custom translator: answers of OpenAI-compatible / Ollama chat APIs
+  (`choices[0].message.content`, `message.content`, `response`) are
+  found without a `# response:` line.
+
 ## [v1.6.4] – 2026-09-29
 
 AppImage-only release – the app itself is unchanged from v1.6.3.

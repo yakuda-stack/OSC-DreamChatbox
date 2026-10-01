@@ -15,7 +15,7 @@ from core.osinfo import (  # noqa: F401  (IS_WINDOWS/OS_NAME re-exported)
     IS_WINDOWS, OS_NAME, config_dir, legacy_config_dir, resource_root)
 
 APP_NAME = "OSC-DreamChatbox"
-VERSION = "v1.6.4"
+VERSION = "v1.6.5"
 
 #: how many All-in-one strings there can be. Raised from 5 in v1.4.0;
 #: every list that is "one entry per AIO string" is sized from here.
@@ -66,6 +66,26 @@ STORE_SOURCES_FILE = APP_ROOT / "config" / "plugins.json"
 # (Same trick as the hidden BlankEgg/BoiHanny feature in MagicChatbox)
 SLIM_SUFFIX = "\u0003\u001f"
 CHATBOX_INPUT = "/chatbox/input"
+#: v1.6.5: when the chatbox plays VRChat's notification sound
+NOTIFY_NEVER = "never"        # default
+NOTIFY_APPEAR = "appear"      # nothing on screen -> a message
+NOTIFY_EVENTS = "events"      # only translations and going AFK
+NOTIFY_MODES = (
+    ("Never", NOTIFY_NEVER),
+    ("When the chatbox appears (nothing \u2192 message)", NOTIFY_APPEAR),
+    ("Only on translations and AFK", NOTIFY_EVENTS),
+)
+#: who plays it: VRChat (everyone nearby hears it), the app (only you)
+#: Bool avatar parameter pulsed on a notification (option, VRChat/Both)
+DEFAULT_NOTIFY_PARAM = "DreamNotify"
+NOTIFY_OUT_VRCHAT = "vrchat"      # default
+NOTIFY_OUT_APP = "app"
+NOTIFY_OUT_BOTH = "both"
+NOTIFY_OUTPUTS = (
+    ("VRChat (everyone nearby hears it)", NOTIFY_OUT_VRCHAT),
+    ("OSC-DreamChatbox (only you)", NOTIFY_OUT_APP),
+    ("Both", NOTIFY_OUT_BOTH),
+)
 # a status text below this is unreadable in VRChat and burns a send each
 # time it flips, so the UI and the config validator both enforce it
 MIN_STATUS_CYCLE_SEC = 10

@@ -68,6 +68,14 @@ METHODS = [
     ("Custom (own API / installed translator)", METHOD_CUSTOM),
 ]
 
+# v1.6.5: AI services (core/ai_translator.py) - local Ollama, Claude
+# Code, Gemini CLI, ChatGPT (Codex CLI) and a custom AI command
+from core import ai_translator as _ai  # noqa: E402
+from core.ai_translator import (  # noqa: E402,F401
+    METHOD_OLLAMA, METHOD_CLAUDE, METHOD_GEMINI, METHOD_CHATGPT,
+    METHOD_AI_CUSTOM, AI_METHODS)
+METHODS += _ai.LABELS
+
 #: v1.6.2: lingva.adminforge.de is gone - it now redirects to adminForge's
 #: LibreTranslate (translate.adminforge.de, see LIBRE_ONLINE_SERVERS).
 #: lingva.ml is the project's own instance. NOTE (2026-09): every Lingva
@@ -607,6 +615,30 @@ class CustomTranslator(Translator):
         return None
 
 
+class AITranslator(Translator):
+    """Any of the AI services - settings come from ai_translator's
+    config (use_config), so the call sites stay unchanged."""
+
+    def __init__(self, method: str):
+        self.method = method
+        self.name = dict((m, lbl.split(" (")[0]) for lbl, m in
+                         _ai.LABELS).get(method, "AI")
+
+    def translate(self, text, source_lang, target_lang):
+        self.last_error = ""
+        tgt = (target_lang or "").strip()
+        if not tgt:
+            return None
+        src = (source_lang or "").strip()
+        try:
+            return _ai.translate(self.method, text, src, tgt)
+        except _ai.AIError as e:
+            self.last_error = f"{self.name}: {e}"
+        except Exception as e:      # noqa: BLE001
+            self.last_error = f"{self.name}: {type(e).__name__}: {e}"
+        return None
+
+
 # ----------------------------------------------------------------------------
 # factory + fallback chain
 # ----------------------------------------------------------------------------
@@ -620,6 +652,8 @@ def get_translator(method: str, deepl_key: str = "",
                    custom_snippet: str = "",
                    custom_file: str = "") -> Translator:
     """Builds the translator for the configured method."""
+    if method in AI_METHODS:
+        return AITranslator(method)
     if method == METHOD_CUSTOM:
         return CustomTranslator(custom_snippet, custom_file)
     if method == METHOD_DEEPL:
