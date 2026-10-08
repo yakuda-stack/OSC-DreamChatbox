@@ -273,6 +273,103 @@ def needs_npm(method: str) -> bool:
     return method in (METHOD_GEMINI, METHOD_CHATGPT)
 
 
+# ------------------------------------------ v1.6.6: install in the app
+# Like LinuxVR-ViewShot: the install button runs the steps itself
+# (QProcess in the UI) instead of opening a terminal. npm packages go to
+# ~/.local (no sudo); if npm itself is missing it is installed first
+# through pkexec, which asks for the password in a normal window.
+#: (os-release ids, package manager, install argv) - pkexec is put in
+#: front by pkexec_install_argv()
+_PKG_MANAGERS = [
+    (("arch", "cachyos", "endeavouros", "manjaro"), "pacman",
+     ["pacman", "-S", "--needed", "--noconfirm"]),
+    (("fedora", "nobara", "bazzite", "rhel"), "dnf", ["dnf", "install", "-y"]),
+    (("debian", "ubuntu", "linuxmint", "pop"), "apt-get",
+     ["apt-get", "install", "-y"]),
+    (("opensuse", "suse"), "zypper", ["zypper", "--non-interactive",
+                                      "install"]),
+]
+_PKG_NAMES = {("dnf", "npm"): "nodejs-npm"}
+
+
+def _pkg_manager(ids=None):
+    ids = _distro_ids() if ids is None else ids
+    for names, binary, cmd in _PKG_MANAGERS:
+        if any(i.startswith(n) for i in ids for n in names):
+            return binary, cmd
+    for _names, binary, cmd in _PKG_MANAGERS:
+        if shutil.which(binary):
+            return binary, cmd
+    return None
+
+
+def pkexec_install_argv(package: str, ids=None) -> list[str] | None:
+    """["pkexec", "/usr/bin/pacman", "-S", ..., package] or None when
+    that cannot work (Windows, no pkexec, rpm-ostree, unknown distro)."""
+    if IS_WINDOWS or not shutil.which("pkexec"):
+        return None
+    if Path("/run/ostree-booted").exists():
+        return None
+    found = _pkg_manager(ids)
+    if found is None:
+        return None
+    binary, cmd = found
+    exe = shutil.which(binary)
+    if not exe:
+        return None
+    return ["pkexec", exe] + cmd[1:] + [_PKG_NAMES.get((binary, package),
+                                                       package)]
+
+
+def npm_install_argv(method: str) -> list[str] | None:
+    """npm install into ~/.local (no sudo). --include=optional: without
+    it Codex & co. miss their actual program on some npm setups."""
+    npm = shutil.which("npm")
+    pkg = NPM_PACKAGES.get(method)
+    if npm is None or pkg is None:
+        return None
+    return [npm, "install", "-g", "--prefix", str(NPM_PREFIX),
+            "--include=optional", pkg]
+
+
+def can_install_in_app(method: str) -> bool:
+    """True when the install button can do it without a terminal
+    (Linux, and npm present or installable through pkexec). Ollama
+    needs a system service, so it keeps the terminal."""
+    if IS_WINDOWS or method not in CLI_METHODS:
+        return False
+    if method == METHOD_CLAUDE and shutil.which("curl"):
+        return True
+    return bool(shutil.which("npm") or pkexec_install_argv("npm"))
+
+
+def install_steps(method: str) -> list:
+    """The steps of the install button, each a function that returns
+    an argv list (built only when it runs, because npm may only exist
+    after the step before). An argv of None = step not possible."""
+    steps = []
+    if method == METHOD_CLAUDE and shutil.which("curl"):
+        # official installer - own program in ~/.local/bin, no npm
+        return [lambda: ["bash", "-c", CLAUDE_INSTALLER]]
+    if method in NPM_PACKAGES:
+        if not shutil.which("npm"):
+            steps.append(lambda: pkexec_install_argv("npm"))
+        steps.append(lambda: npm_install_argv(method))
+    return steps
+
+
+def configured(method: str) -> bool:
+    """Set up = usable right now: program installed (Ollama: or an own
+    server URL), Custom AI: a command entered. Only those are offered
+    in the To Text dropdown - like the Main page in LinuxVR-ViewShot."""
+    if method == METHOD_AI_CUSTOM:
+        return bool(setting("stt_ai_custom_cmd").strip())
+    if method == METHOD_OLLAMA:
+        return installed(method) or bool(
+            (_CFG.get("stt_ai_ollama_url") or "").strip())
+    return installed(method)
+
+
 def run_in_terminal(command: str | list) -> tuple[bool, str]:
     """Opens a terminal window running `command` (a shell string or an
     argv list). The window stays open afterwards so errors can be read.

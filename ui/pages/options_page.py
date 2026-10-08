@@ -15,16 +15,16 @@ import shutil
 import sys
 import time
 from pathlib import Path
-from PyQt6.QtCore import QUrl, Qt
+from PyQt6.QtCore import QTimer, QUrl, Qt
 from PyQt6.QtGui import QColor, QDesktopServices, QPainter, QPixmap
 from PyQt6.QtWidgets import (
     QButtonGroup, QColorDialog, QComboBox, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget, QMessageBox, QPushButton, QSlider, QSpinBox, QVBoxLayout, QWidget)
-from core import desktop_integration, profiles, queryfix, vrc_pictures
+from core import desktop_integration, profiles, queryfix, selfupdate, vrc_pictures
 from core.theming import (
     TOKEN_LABELS, import_background, list_backgrounds, remove_background,
     resolve_tokens, theme_ids, theme_name)
 from core.constants import (
-    CHATBOX_INPUT, NOTIFY_MODES, NOTIFY_NEVER, NOTIFY_OUTPUTS, NOTIFY_OUT_VRCHAT, NOTIFY_OUT_APP, DEFAULT_NOTIFY_PARAM, SLIM_SUFFIX, DISCORD_URL, DONATE_URL, GITHUB_REPO, OSC_MIN_SEND_GAP_SEC, OSC_RATE_MAX_SENDS, OSC_RATE_WINDOW_SEC, VERSION, VRCHAT_GROUP_URL)
+    CHATBOX_INPUT, NOTIFY_MODES, NOTIFY_NEVER, NOTIFY_OUTPUTS, NOTIFY_OUT_VRCHAT, NOTIFY_OUT_APP, DEFAULT_NOTIFY_PARAM, SLIM_SUFFIX, DISCORD_URL, DONATE_URL, GITHUB_REPO, OSC_MIN_SEND_GAP_SEC, CLEAR_RETRY_SEC, OSC_RATE_MAX_SENDS, OSC_RATE_WINDOW_SEC, VERSION, VRCHAT_GROUP_URL)
 from core.oscin import DEFAULT_IN_PORT
 from core.oscquery import HAS_ZEROCONF
 from core.plugin_store import compare_versions
@@ -152,6 +152,16 @@ class OptionsPageMixin:
         self.osc_in_port.valueChanged.connect(self.on_osc_input_port)
         itog_row.addWidget(self.osc_in_port)
         itog_row.addStretch()
+        # v1.6.6: which parameters does my avatar send? Own window, the
+        # app stays usable while it is open
+        plog_btn = QPushButton("\U0001F4CB  Parameter log")
+        plog_btn.setObjectName("linkbtn")
+        plog_btn.setFixedHeight(30)
+        plog_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        plog_btn.setToolTip("Opens a separate window that lists every "
+                            "OSC parameter your avatar sends, live.")
+        plog_btn.clicked.connect(self.on_osc_param_log)
+        itog_row.addWidget(plog_btn)
         qc.addLayout(itog_row)
 
         idesc = QLabel(
@@ -519,6 +529,20 @@ class OptionsPageMixin:
         self.update_lbl.setWordWrap(True)
         self.update_lbl.setOpenExternalLinks(True)
         upd.addWidget(self.update_lbl)
+        # v1.6.6: Windows only - download the new setup and start it
+        self.update_install_btn = self._opt_button(
+            "\u2B07  Download & install", "sendbtn",
+            self.on_update_install,
+            "Downloads the new installer and starts it. The app closes "
+            "so the installer can replace its files - your settings, "
+            "profiles and plugins stay.")
+        self.update_install_btn.setVisible(False)
+        upd_inst_row = QHBoxLayout()
+        upd_inst_row.addWidget(self.update_install_btn)
+        upd_inst_row.addStretch()
+        upd.addLayout(upd_inst_row)
+        self._update_asset = None
+        self._update_dl = None
         general_lay.addWidget(upd_card)
 
         # 2 ---- Community
@@ -1056,9 +1080,12 @@ class OptionsPageMixin:
 
     def _install_kind(self):
         """How this instance was installed – decides the update guidance.
-        'appimage' | 'aur' (system package) | 'source' (script/git)."""
+        'appimage' | 'windows' (installed .exe) | 'aur' (system package)
+        | 'source' (script/git)."""
         if os.environ.get("APPIMAGE"):
             return "appimage"
+        if selfupdate.is_installed_windows_build():
+            return "windows"
         try:
             if desktop_integration.system_entry_present():
                 return "aur"
@@ -1080,16 +1107,21 @@ class OptionsPageMixin:
                     url, headers={"User-Agent": "OSC-DreamChatbox"})
                 with urllib.request.urlopen(req, timeout=6) as r:
                     data = json.loads(r.read().decode("utf-8"))
-                return (data.get("tag_name", ""), data.get("html_url", ""))
+                return (data.get("tag_name", ""), data.get("html_url", ""),
+                        selfupdate.find_setup_asset(data))
             except Exception as e:
-                return ("__error__", str(e))
+                return ("__error__", str(e), None)
         self.run_async(work, self._on_update_result, interval=250)
         # plugins live in their own repos, so they get their own check -
         # both run in parallel, neither blocks the window
         self.check_plugin_updates()
 
     def _on_update_result(self, result):
-        tag, info = result
+        tag, info = result[0], result[1]
+        asset = result[2] if len(result) > 2 else None
+        self._update_asset = None
+        if not (self._update_dl and self._update_dl.get("running")):
+            self.update_install_btn.setVisible(False)
         if tag == "__error__":
             self.update_lbl.setText(
                 f"Update check failed (no releases yet or offline). "
@@ -1102,7 +1134,18 @@ class OptionsPageMixin:
                 f"({VERSION}, latest is {tag}).")
         elif tag and compare_versions(tag, VERSION) > 0:
             kind = self._install_kind()
-            if kind == "appimage":
+            if kind == "windows" and asset:
+                # v1.6.6: one click, no browser
+                self._update_asset = (tag,) + tuple(asset)
+                self.update_install_btn.setText(
+                    f"\u2B07  Download & install {tag}")
+                self.update_install_btn.setEnabled(True)
+                self.update_install_btn.setVisible(True)
+                mb = asset[2] / 1048576 if asset[2] else 0
+                how = (" \u2013 click <b>Download &amp; install</b>"
+                       + (f" ({mb:.0f} MB)" if mb else "")
+                       + f" or open the <a href=\"{info}\">release page</a>")
+            elif kind == "appimage":
                 how = (f" \u2013 <a href=\"{info}\">download the new "
                        "AppImage from the release page</a>")
             elif kind == "aur":
@@ -1124,6 +1167,79 @@ class OptionsPageMixin:
         else:
             self.update_lbl.setText(
                 f"\u2705 You are up to date ({VERSION}).")
+
+    # ---- v1.6.6: in-app update (Windows) -----------------------------
+    def on_update_install(self):
+        """Download the new setup, then start it and close the app."""
+        if not self._update_asset:
+            return
+        if self._update_dl and self._update_dl.get("running"):
+            # second click while downloading = cancel
+            self._update_dl["cancel"] = True
+            return
+        tag, name, url, size = self._update_asset
+        if QMessageBox.question(
+                self, "Update",
+                f"Download {name} and install {tag}?\n\n"
+                "When the download is done the installer starts and "
+                "this app closes. Your settings, profiles and plugins "
+                "stay.") != QMessageBox.StandardButton.Yes:
+            return
+        st = self._update_dl = {"running": True, "cancel": False,
+                                "done": 0, "total": size}
+        self.update_install_btn.setText("\u2716  Cancel download")
+
+        def progress(done, total):
+            st["done"], st["total"] = done, total
+
+        def work():
+            return selfupdate.download(
+                url, name, size, progress=progress,
+                cancelled=lambda: st["cancel"])
+
+        def tick():
+            if not st.get("running"):
+                timer.stop()
+                timer.deleteLater()
+                return
+            done, total = st["done"], st["total"]
+            if total:
+                self.update_lbl.setText(
+                    f"Downloading {tag} \u2026 {done * 100 // total}% "
+                    f"({done / 1048576:.0f} / {total / 1048576:.0f} MB)")
+            else:
+                self.update_lbl.setText(
+                    f"Downloading {tag} \u2026 {done / 1048576:.0f} MB")
+        timer = QTimer(self)
+        timer.timeout.connect(tick)
+        timer.start(250)
+
+        def failed(e):
+            st["running"] = False
+            self.update_install_btn.setText(
+                f"\u2B07  Download & install {tag}")
+            if isinstance(e, selfupdate.UpdateCancelled):
+                self.update_lbl.setText("Download cancelled.")
+            else:
+                self.update_lbl.setText(f"\u26A0\uFE0F Download failed: {e}")
+                self.log(f"Update download failed: {e}")
+        self.run_async(work, lambda path: self._on_update_downloaded(
+            tag, path), interval=300, on_error=failed)
+
+    def _on_update_downloaded(self, tag, path):
+        self._update_dl["running"] = False
+        self.update_install_btn.setVisible(False)
+        try:
+            selfupdate.launch_setup(path)
+        except Exception as e:      # noqa: BLE001
+            self.update_lbl.setText(
+                f"\u26A0\uFE0F Could not start the installer: {e}<br>"
+                f"It is here: {path}")
+            return
+        self.log(f"Update {tag}: installer started, closing ...")
+        self.close()
+        from PyQt6.QtWidgets import QApplication
+        QApplication.quit()
 
     def run_app_tray_fix(self):
         """Leaves a correct entry alone (AUR entry, or an already-current
@@ -1191,7 +1307,29 @@ class OptionsPageMixin:
         else:
             # clear the chatbox in VRChat right away – otherwise the
             # last text keeps hanging there for minutes
-            self.clear_chatbox()
+            self.clear_chatbox_retry()
+
+    def clear_chatbox_retry(self):
+        """v1.6.6: clear now and once more after CLEAR_RETRY_SEC - VRChat
+        sometimes drops the first empty message. The second one is
+        skipped if sending was switched back on in the meantime."""
+        self.clear_chatbox()
+
+        def again():
+            if not self.cfg.get("send_to_vrchat"):
+                self.clear_chatbox()
+        QTimer.singleShot(int(CLEAR_RETRY_SEC * 1000), again)
+
+    def on_clear_chatbox_btn(self):
+        """v1.6.6: the "Clear chatbox" button under the preview. Also
+        sends twice, for the same reason as above - unless sending is
+        on, then the next frame would refill it anyway."""
+        self.pending_send_timer.stop()
+        self.clear_chatbox()
+        if not self.cfg.get("send_to_vrchat"):
+            QTimer.singleShot(int(CLEAR_RETRY_SEC * 1000),
+                              lambda: (not self.cfg.get("send_to_vrchat"))
+                              and self.clear_chatbox())
 
     def clear_chatbox(self):
         """Sends one empty chatbox message so VRChat removes the
@@ -1471,6 +1609,10 @@ class OptionsPageMixin:
         self.cfg["osc_input_enabled"] = bool(on)
         self.save_config()
         self.update_osc_input()
+
+    def on_osc_param_log(self):
+        from ui.osc_param_log import open_param_log
+        open_param_log(self)
 
     def on_osc_input_port(self, val):
         if getattr(self, "_block_updating", False):

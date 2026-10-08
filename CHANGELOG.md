@@ -6,6 +6,73 @@ All notable changes to OSC-DreamChatbox are documented here.
 
 🟢 Linux Support: Complete & Stable (v1.2.6)
 
+
+## [v1.6.7] – 2026-10-08
+
+### Added
+
+- **Clear and aur fix** 
+
+## [v1.6.6] – 2026-10-06
+
+### Added
+
+- **Message history in the text fields.** Arrow **Up** in the Chat field
+  (and in Text to Text) brings back the last sent message, Up again the
+  one before; **Down** walks forward and finally restores what you had
+  typed. Up to 50 messages per field, kept in memory only
+  (`core/inputhistory.py`, `ui/history_edit.py`).
+- **Update directly in the app (Windows).** When *Check for updates*
+  finds a newer release, the installed Windows build shows **Download &
+  install**: it downloads `OSC-DreamChatbox-<ver>-setup.exe` from the
+  release to `%TEMP%` (progress in the update line, second click
+  cancels), starts it and closes the app so the installer can replace
+  the files. Settings, profiles and plugins stay. Linux (AUR / AppImage)
+  is unchanged (`core/selfupdate.py`).
+- **All in one: Scroll to the next string** (Star Wars style). Instead of
+  swapping the text in one jump, the old string moves up one line at a
+  time and the next one comes in from below. *sec per line* 2–30 (every
+  step is one chatbox message, 2 s is the rate-limit floor). The same
+  option sits on the node canvas (Advanced page) – one setting, two
+  places (`core/aioscroll.py`).
+- **OSC avatar parameter log** (Options → OSC → *Parameter log*). A
+  separate, non-modal window: table of every parameter your avatar sends
+  (name, type, current value, filter field) plus a change log with the
+  time, newest on top. *Pause*, *Clear log*, *All addresses* (also
+  non-avatar OSC addresses). The app stays fully usable while it is open
+  (`ui/osc_param_log.py`).
+- **🧹 Clear chatbox** button right under the preview.
+- **Custom Box animation:** *Blink*, *Loading* (`▓▓▓░░░`, fills up
+  in 6 steps) or *Rotate* (a ◆ runs round the box – top line to the
+  right, bottom line to the left), every 2–30 s. Only the fill moves;
+  caps, middle text and the width of the box stay put. Works with
+  `{box_start}` / `{box_stop}` in All in one as well
+  (`core/boxanim.py`).
+- **AI services: install in the app, like LinuxVR-ViewShot.**
+  - *Install* for Claude Code / Gemini CLI / Codex now runs right in
+    the app (Linux) – Claude with its official installer, Gemini / Codex
+    with npm into `~/.local` (no sudo). If npm is missing it is
+    installed first through pkexec (password window; pacman / dnf /
+    apt / zypper). Ollama and Windows still open a terminal.
+  - After *Log in* the app checks every 2 s (max. 5 min) and notices
+    the login by itself – no more ⟳.
+  - The *Settings for* dropdown marks the AI services **✔** (ready),
+    **📦 install** or **⚙ set up** (Custom AI).
+  - The **To Text dropdown only lists AI services that are set up**
+    (installed / command entered); the service in use always stays.
+
+### Changed
+
+- **Lingva left the fallback chain.** It is broken upstream (every
+  instance returns the text untranslated) and cost time on every
+  failure. New chain: chosen service → LibreTranslate on
+  translate.adminforge.de → direct Google. Picking Lingva by hand still
+  works.
+- **Turning SendToVRChat off clears the chatbox twice** – right away and
+  again after 3 s (`CLEAR_RETRY_SEC`), because VRChat does not always
+  take the first empty message. The second clear is skipped if sending
+  was switched back on. Same in terminal mode (`DCB-sendvrc`).
+
 ## [v1.6.5] – 2026-10-01
 
 ### Changed

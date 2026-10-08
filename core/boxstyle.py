@@ -204,7 +204,8 @@ def cells(text: str) -> int:
 
 
 def build_line(tpl: dict, side: str, width: int, middle: str = "",
-               extra_left: int = 0, extra_right: int = 0) -> str:
+               extra_left: int = 0, extra_right: int = 0,
+               fill_fn=None) -> str:
     """One frame line.
 
     Without a middle text the fill is repeated ``width`` times. With one,
@@ -212,6 +213,9 @@ def build_line(tpl: dict, side: str, width: int, middle: str = "",
     units per side, which is exactly the ``┌─── 18:01 ───┐`` shape.
     ``extra_left`` / ``extra_right`` are what the aligner adds on top;
     nothing else should pass them.
+
+    ``fill_fn(n, offset, total)`` (v1.6.6, core/boxanim.py) replaces the
+    plain ``fill * n`` for an animated frame.
     """
     left, fill, right = parts(tpl, side)
     width = max(0, int(width))
@@ -222,28 +226,35 @@ def build_line(tpl: dict, side: str, width: int, middle: str = "",
         fill = " "
     middle = (middle or "").strip()
     if not middle:
-        return left + fill * (width + max(0, extra_left)
-                              + max(0, extra_right)) + right
+        n = width + max(0, extra_left) + max(0, extra_right)
+        body = fill_fn(n, 0, n) if fill_fn else fill * n
+        return left + body + right
     half = width // 2
-    return (left + fill * (half + max(0, extra_left))
-            + " " + middle + " "
-            + fill * (half + max(0, extra_right)) + right)
+    ln = half + max(0, extra_left)
+    rn = half + max(0, extra_right)
+    if fill_fn:
+        lseg, rseg = fill_fn(ln, 0, ln + rn), fill_fn(rn, ln, ln + rn)
+    else:
+        lseg, rseg = fill * ln, fill * rn
+    return left + lseg + " " + middle + " " + rseg + right
 
 
-def _grow_to(tpl, side, width, middle, target, guard=120) -> str:
+def _grow_to(tpl, side, width, middle, target, guard=120,
+             fill_fn=None) -> str:
     """Adds fill units (alternating left/right) until the line is at
     least ``target`` cells wide. Stops at the first line that reaches or
     passes the target, so a wide fill character overshoots by at most one
     unit instead of looping forever."""
     left = right = 0
-    line = build_line(tpl, side, width, middle)
+    line = build_line(tpl, side, width, middle, fill_fn=fill_fn)
     steps = 0
     while cells(line) < target and steps < guard:
         if left <= right:
             left += 1
         else:
             right += 1
-        line = build_line(tpl, side, width, middle, left, right)
+        line = build_line(tpl, side, width, middle, left, right,
+                          fill_fn=fill_fn)
         steps += 1
     return line
 
@@ -251,7 +262,7 @@ def _grow_to(tpl, side, width, middle, target, guard=120) -> str:
 def render_pair(tpl: dict, width_top: int, width_bottom: int = None,
                 top_middle: str = "", bottom_middle: str = "",
                 top_on: bool = True, bottom_on: bool = True,
-                align: bool = True):
+                align: bool = True, anim: str = "off", frame: int = 0):
     """(top line, bottom line) – either may be "" when that side is off.
 
     The two sides have their own width because their middle texts rarely
@@ -264,19 +275,40 @@ def render_pair(tpl: dict, width_top: int, width_bottom: int = None,
     with extra fill until both are about the same width. The widths stay
     the starting point – align only ever adds, it never trims – so for
     two deliberately different lines, switch it off.
+
+    ``anim`` / ``frame`` (v1.6.6): animated fill, see core/boxanim.py.
+    Alignment is measured on the plain frame, so the box does not
+    change width from one animation step to the next.
     """
+    from core.boxanim import fill_function
     if width_bottom is None:
         width_bottom = width_top
+    fn_top = fill_function(anim, frame, parts(tpl, SIDE_TOP)[1])
+    fn_bottom = fill_function(anim, frame, parts(tpl, SIDE_BOTTOM)[1],
+                              bottom=True)
     top = build_line(tpl, SIDE_TOP, width_top, top_middle) if top_on else ""
     bottom = (build_line(tpl, SIDE_BOTTOM, width_bottom, bottom_middle)
               if bottom_on else "")
+    grow_top = grow_bottom = None
     if align and top and bottom:
         target = max(cells(top), cells(bottom))
         if cells(top) < target:
             top = _grow_to(tpl, SIDE_TOP, width_top, top_middle, target)
+            grow_top = target
         if cells(bottom) < target:
             bottom = _grow_to(tpl, SIDE_BOTTOM, width_bottom,
                               bottom_middle, target)
+            grow_bottom = target
+    if fn_top and top:
+        top = (_grow_to(tpl, SIDE_TOP, width_top, top_middle, grow_top,
+                        fill_fn=fn_top) if grow_top
+               else build_line(tpl, SIDE_TOP, width_top, top_middle,
+                               fill_fn=fn_top))
+    if fn_bottom and bottom:
+        bottom = (_grow_to(tpl, SIDE_BOTTOM, width_bottom, bottom_middle,
+                           grow_bottom, fill_fn=fn_bottom) if grow_bottom
+                  else build_line(tpl, SIDE_BOTTOM, width_bottom,
+                                  bottom_middle, fill_fn=fn_bottom))
     return top, bottom
 
 

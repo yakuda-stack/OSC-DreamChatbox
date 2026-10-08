@@ -80,7 +80,9 @@ def test_ai_failure_falls_back(monkeypatch):
     def boom(*a, **k):
         raise ai.AIError("not logged in")
     monkeypatch.setattr(ai, "translate", boom)
-    monkeypatch.setattr(tr.LingvaTranslator, "translate",
+    # v1.6.6: chain is AI -> adminForge (LibreOnline) -> Google; no
+    # network in tests, so adminForge has to fail here too
+    monkeypatch.setattr(tr.LibreOnlineTranslator, "translate",
                         lambda self, *a: None)
     monkeypatch.setattr(tr.GoogleTranslator, "translate",
                         lambda self, *a: "fallback")

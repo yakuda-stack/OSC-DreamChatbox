@@ -302,6 +302,7 @@ Combine **everything into one master string** instead of one line per card.
 - Up to **10 rotating layouts**, and **10 switchable AIO templates**, each with its own set of strings — flip between a gaming, a music and a minimal layout with one click
 - **Multi-line fields**: each string field is 3 rows tall and shows the message the way it comes out. **Shift+Enter** starts a new chatbox line (stored as `\n`, so existing strings keep working). The field grows with the text; drag the bottom edge to pin a height, double-click it to grow again
 - **Custom time per string**: tick it on a field and that one string stays on screen for its own number of seconds instead of the shared *Rotate strings every N sec*
+- **Scroll to the next string** (Star Wars style): instead of a hard swap the old text moves up line by line and the next one comes in from below — 2–30 s per line, also on the node canvas
 - All placeholders from every app work here, incl. `{text_1}…{text_20}`, `{time_status}`, `{time_end}`, plus every active plugin as `{plugin_id}`
 - **Parameters** — an expander at the bottom of the card listing the complete vocabulary: **Software parameters** (everything the app produces, grouped by app) and **External parameters** (every installed plugin with its `{<id>}` and `{<id>_<key>}` values). Rebuilt whenever the plugin list changes
 - **Text styles inline**: `{super/"word"}` and `{sub/"word"}` make one part of any custom string small — `GPU {gpu_usage} {super/"vram"} {vram_usage}` → `GPU 68% ⱽᴿᴬᴹ 9/16GB`. Works in Hardware, All in one, MediaPlay, the status texts, a Custom Box middle and plugin strings, and the content may be a placeholder: `{super/{cpu_temp}}`
@@ -324,6 +325,8 @@ A **Mode switch** on the All in one card: *Normal* is the text fields, *Advanced
 - **34 blocks**: Sources (Text, Placeholder, Personal Status, GPU, CPU, RAM & System, MediaPlay, Chat/STT, Clock, Custom Box), Text (Join with 2–10 inputs, Format, Info, Style, Truncate, Line break), Logic (If/Else, Compare, Has value), Flow (Timer, Step, Button, Change AIO), OSC, Output, System and Hotkeys
 - Every placeholder a typed string can use is **draggable out of a grouped Variables list**, plugins included
 - **OSC input**: a listener that keeps the last value of every avatar parameter, with a picker so names are chosen rather than typed, plus blocks to read them and to write bool/int/float back
+- **Parameter log** (Options → OSC): a separate window that lists live which OSC parameters your avatar sends, plus a change log — the app keeps working while it is open
+- **Scroll** between the AIO strings (Star Wars style) — the same option as on the All in one card
 - **External OSC in/out** for any address, so other tools on the machine can drive the chatbox and be driven by it
 - **Send Hotkey / Get Hotkey**: press a key combination at the operating system, or react to one pressed anywhere. SendInput on Windows; xdotool, wtype or ydotool on Linux, python-evdev for watching
 - **Program running / Start program**: notice that VRChat came up and launch things with it
@@ -353,6 +356,7 @@ now playing …  ->   now playing …
 - **Own width per line** — a short clock on top and a long hardware line underneath can each get the fill they need
 - Each line switchable on its own, plus **Align top & bottom** which pads the shorter line when you *do* want them even
 - Every line can carry a **middle text**: nothing, a **clock** (four formats), or your **own string with all the All-in-one placeholders** — `{cpu_usage}`, `{title}`, plugins, everything
+- **Animation** — *Blink*, *Loading* (`▓▓▓░░░`) or *Rotate* (a dot runs round the box) to catch the eye; only the frame moves, 2–30 s per step
 - **Realtime clock is a toggle and off by default** — it is the only part that costs anything, and it only ticks while a line is actually set to Clock
 - Prefer to place the frame yourself? `{box_start}`, `{box_stop}` and `{box_text}` work in any **All in one** string and are not added twice
 
@@ -370,15 +374,18 @@ Type it or speak it — either way it goes to VRChat, optionally translated on t
 <summary><b>Details</b></summary>
 
 - Free chat field → sends straight to VRChat, apps pause briefly so nothing overwrites your message
+- **Message history**: **↑ / ↓** in the chat and Text-to-Text field bring back your last messages (kept until the app closes)
 - **Editable presets** (default 5, expandable to 20) with one-click send
 - **Speech to Text** 🎤 — speak, it transcribes in realtime and sends to VRChat
 - **Microphone selection** dropdown (system default or any input device)
 - 15 input languages, **live translation** to 13 output languages
 - **Translation services**: LibreTranslate Online (default since v1.6.2 — `translate.adminforge.de`, no key, no Google tracking, open source), Lingva Translate (anonymous proxy, currently broken upstream), Google Translate direct (fastest, key optional), LibreTranslate (local instance, 100 % offline — install once, then a **Start/Stop server button** appears right in the UI and the server is shut down when the app closes) or the official **DeepL API** (own key, typed error handling). A hosted LibreTranslate is there too if you don't want to install one
-- **AI translation** — **Local AI with Ollama** (offline; install / start / download-model buttons, pick any model), **Claude Code**, **Gemini CLI** and **ChatGPT (Codex CLI)** with your normal account login (install + log-in buttons, model dropdown), or a **Custom AI** command / curl call (`{prompt}`, `{model}`)
+- **AI translation** — **Local AI with Ollama** (offline; install / start / download-model buttons, pick any model), **Claude Code**, **Gemini CLI** and **ChatGPT (Codex CLI)** with your normal account login (**install right in the app** like in LinuxVR-ViewShot — no terminal, npm into `~/.local`, a missing npm is installed via a password window; the login is noticed by itself; model dropdown), or a **Custom AI** command / curl call (`{prompt}`, `{model}`)
 - **Favorite services** — mark services as ★ Favorite in the Translation card; the service dropdown in To Text then shows only your favorites
+- **Only what is set up**: AI services appear in the To Text dropdown once they are installed; in *Settings for* they are marked ✔ (ready) or 📦 install
 - **Translation card** — service settings, API key and chatbox display (original + translation, "Translate …" notice) in their own collapsible card between To Text and Presets; the header shows the active service while collapsed
-- Automatic fallback chain if the chosen service fails: **Lingva, then direct Google, then LibreTranslate on translate.adminforge.de** (e.g. DeepL monthly limit reached or local instance down)
+- Automatic fallback chain if the chosen service fails: **LibreTranslate on translate.adminforge.de, then direct Google** (e.g. DeepL monthly limit reached or local instance down). Lingva is no longer part of it since v1.6.6 — it is broken upstream and only cost time
+
 - **"Say when a translation is running"** — the gap between speaking and the translation arriving says `Translate …` instead of leaving the previous message up
 - **Send as**: Standard (message takes over, apps pause), or routed into your own placeholders — `{stt_input}` / `{stt_output}` carry a spoken message, `{ttt_input}` / `{ttt_output}` a typed one, `{text_input}` / `{text_output}` whichever sent last
 - **"Block apps"** toggle that pauses every automatic sender while you talk, with per-app exceptions
@@ -436,7 +443,11 @@ Own **Plugins** page with two tabs: **Installed** and **Store**.
 
 **Notification** (Options → OSC) — when the chatbox plays VRChat's notification sound: *Never* (default), *When the chatbox appears* (nothing → message) or *Only on translations and AFK* (every service, AI included) — played by **VRChat** (everyone nearby hears it), by **OSC-DreamChatbox** (only you; built-in chime or your own .wav) or **both**, with a ▶ Test button. Optional **custom avatar parameter** (Bool, default `DreamNotify`, true for 1 s) for an avatar with its own sound — set it up in Unity: add the Bool to the expression parameters, an animator layer that enables an Audio Source while it is true.
 
+**Turning SendToVRChat off clears the chatbox twice** (now and again after 3 s), because VRChat does not always take the first empty message. A **🧹 Clear chatbox** button sits right under the preview.
+
 **Clear chatbox when there is nothing to send** — once nothing is left to show, one empty message removes the old text right away instead of VRChat keeping it ~30 s. A message you typed yourself is never cleared by this.
+
+**Update directly in the app (Windows):** *Check for updates* finds a new version → **Download & install** fetches the setup, starts it and closes the app. Settings, profiles and plugins stay.
 
 **Also here:** update checker, Discord / Ko-fi / VRChat group links, app tray fix, VRC picture folder fix, avatar parameter input, external OSC target, keyboard watching for the Get Hotkey block, debug console.
 
@@ -582,6 +593,10 @@ OSC-DreamChatbox/
 │   ├── textutils.py      #   time format, songbar styles, templates
 │   ├── textstyle.py      #   superscript / subscript rendering
 │   ├── boxstyle.py       #   Custom Box frame templates + line building
+│   ├── boxanim.py        #   Custom Box animation (blink / loading / rotate)
+│   ├── aioscroll.py      #   Star Wars scroll between AIO strings
+│   ├── inputhistory.py   #   ↑ / ↓ message history of the text fields
+│   ├── selfupdate.py     #   in-app update (Windows setup download)
 │   ├── emojis.py         #   emoji picker palette (12 categories, incl. flags)
 │   ├── queryfix.py       #   OSCQuery fixer (supported programs list)
 │   ├── oscquery.py       #   native OSCQuery (mDNS + dynamic ports)
@@ -617,6 +632,8 @@ OSC-DreamChatbox/
 │   ├── config_mixin.py   #   config load/save/validation
 │   ├── nodegraph.py      #   Advanced mode canvas
 │   ├── aio_edit.py       #   multi-line AIO string editor
+│   ├── history_edit.py   #   ↑ / ↓ history for a text field
+│   ├── osc_param_log.py  #   live OSC avatar parameter log window
 │   ├── pages/            #   one file per page
 │   │   ├── apps_page.py
 │   │   ├── custom_box.py
@@ -678,8 +695,8 @@ has no server of its own to send anything to.
 | **UDP 9001 (listening)** | avatar parameters back from VRChat | only with OSCQuery off |
 | **UDP 5353, mDNS (LAN)** | finding VRChat's real OSC port via OSCQuery | with OSCQuery on (default) |
 | **HTTP on 127.0.0.1, random port** | the OSCQuery endpoint VRChat reads | with OSCQuery on (default) |
-| `translate.adminforge.de` | translation, default backend (and last fallback) | only when translation is on |
-| `lingva.ml` *(or your own instance)* | translation, if you pick Lingva – and as fallback | only when translation is on |
+| `translate.adminforge.de` | translation, default backend (and first fallback) | only when translation is on |
+| `lingva.ml` *(or your own instance)* | translation, if you pick Lingva (no longer a fallback since v1.6.6) | only when selected |
 | `lt.pyrine.net` | translation, if you pick it under LibreTranslate Online | only when selected |
 | `translate.googleapis.com` / `translation.googleapis.com` | translation, if you pick Google | only when selected |
 | `libretranslate.com` *(or your own URL / `localhost:5000`)* | translation, if you pick LibreTranslate | only when selected |
@@ -693,6 +710,7 @@ has no server of its own to send anything to.
 | `apic-desktop.musixmatch.com` | lyrics via a guest token | only when you tick Musixmatch |
 | `raw.githubusercontent.com` / `codeload.github.com` | plugin catalogue and plugin downloads | opening the Plugins page, and on install/update |
 | `api.github.com` | version check | only when you press **Check for updates** |
+| `github.com` / `objects.githubusercontent.com` | the new setup *(Windows)* | only when you press **Download & install** |
 | `pypi.org` | installing SpeechRecognition into the app's own folder | only when you press that button |
 | `localhost:8085` | LibreHardwareMonitor sensors *(Windows)* | only with the temperature helper on |
 

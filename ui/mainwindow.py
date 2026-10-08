@@ -26,6 +26,7 @@ from core.lyrics import LyricsFetcher
 from core.mediafetch import MediaFetcher
 from core.hotkeywatch import HotkeyListener
 from core.oscin import DEFAULT_IN_PORT, OscParameterListener
+from core.aioscroll import ScrollTransition
 from core.procwatch import ProcessWatcher
 from core.oscquery import HAS_ZEROCONF, OSCQueryService
 from core.theming import build_style, resolve_tokens
@@ -184,10 +185,18 @@ class MainWindow(ConfigMixin, AppsPageMixin, AdvancedPageMixin,
         self.graph_timer.timeout.connect(self.tick_graph)
         self.aio_timer = QTimer(self)
         self.aio_timer.timeout.connect(self.advance_aio)
+        # v1.6.6: "Star Wars" scroll between AIO strings (core/aioscroll.py)
+        self.aio_scroll = ScrollTransition()
+        self.aio_scroll_timer = QTimer(self)
+        self.aio_scroll_timer.timeout.connect(self.advance_aio_scroll)
         # Custom Box clock. Only ever runs while the realtime toggle is
         # on AND a side is set to Clock - see _update_box_timer().
         self.box_timer = QTimer(self)
         self.box_timer.timeout.connect(self._box_tick)
+        # v1.6.6: animated frame - its own tick (core/boxanim.py)
+        self.box_anim_timer = QTimer(self)
+        self.box_anim_timer.timeout.connect(self._box_anim_tick)
+        self._box_anim_frame = 0
         self._box_clock_last = None
         # Watches VRChat's AFK parameter. Only runs while Detect AFK is
         # on - the manual switch needs no polling, it already knows.
@@ -529,6 +538,17 @@ class MainWindow(ConfigMixin, AppsPageMixin, AdvancedPageMixin,
         pv_layout.addLayout(afk_row)
         r_layout.addWidget(preview_frame)
 
+        # v1.6.6: empty the chatbox in VRChat by hand
+        self.clear_chatbox_btn = QPushButton("\U0001F9F9  Clear chatbox")
+        self.clear_chatbox_btn.setObjectName("linkbtn")
+        self.clear_chatbox_btn.setFixedHeight(30)
+        self.clear_chatbox_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.clear_chatbox_btn.setToolTip(
+            "Removes the text from the VRChat chatbox right now.\n"
+            "With SendToVRChat on, the next update fills it again.")
+        self.clear_chatbox_btn.clicked.connect(self.on_clear_chatbox_btn)
+        r_layout.addWidget(self.clear_chatbox_btn)
+
         # SendToVRChat (below Preview, above Debug)
         row1 = QHBoxLayout()
         self.toggle_send = ToggleSwitch()
@@ -863,6 +883,8 @@ class MainWindow(ConfigMixin, AppsPageMixin, AdvancedPageMixin,
         self.aio_count_spin.setValue(self.cfg["aio_count"])
         self.chk_aio_rotate.setChecked(self.cfg["aio_rotate"])
         self.aio_rotate_spin.setValue(self.cfg["aio_rotate_sec"])
+        self.chk_aio_scroll.setChecked(self.cfg["aio_scroll"])
+        self.aio_scroll_spin.setValue(self.cfg["aio_scroll_sec"])
         for i, edit in enumerate(self.aio_edits):
             edit.setValue(self.cfg["aio_templates"][i])
             edit.setManualHeight(self.cfg["aio_heights"][i])

@@ -3,6 +3,17 @@
 The short version of every release — what you will actually notice.
 The full details are in the changelog.
 
+## v1.6.7 – 2026-10-08
+
+- **Clear and aur fix** 
+
+## v1.6.6 – 2026-10-06
+
+- **Smoother chatbox:** All in one can **scroll** to the next string like the Star Wars intro, the Custom Box can **blink, load or rotate**, and **↑** in the text field brings back your last message.
+- **Parameter log** (Options → OSC): see live which OSC parameters your avatar sends – in its own window, the app keeps working.
+- **AI translation set up in one click:** Claude Code, Gemini & Codex install right in the app; only ready services show up in To Text.
+- **Windows: update straight from the app**, plus fixes: Lingva is out of the fallback chain (faster), switching off clears the chatbox reliably, new **🧹 Clear chatbox** button.
+
 ## v1.6.5 – 2026-10-01
 
 - **Translate with an AI:** local with **Ollama** (offline, install button + model choice) or online with **Claude**, **Gemini** or **ChatGPT** using your normal login – or your own AI.

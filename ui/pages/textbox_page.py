@@ -5,6 +5,7 @@ Mixin for MainWindow; see ui/mainwindow.py. Kept separate so the
 window class stays small. All `self.*` refer to the MainWindow instance.
 """
 
+import os
 import time
 from PyQt6.QtCore import QTimer, Qt, QUrl
 from PyQt6.QtGui import QDesktopServices
@@ -24,6 +25,7 @@ from core.speechtotext import (
     missing_dependency, reload_sr, resolve_entry, has_microphone_driver,
     reload_mic_driver)
 from ui.miclevel import LevelMeter
+from ui.history_edit import attach_history
 from core.plugins import ANCHOR_LABELS
 from core import pyextras
 from core.constants import EXTRAS_DIR
@@ -88,10 +90,18 @@ TR_HEADERS = ("\u2500\u2500\u2500\u2500  Translator  \u2500\u2500\u2500\u2500",
               "\u2500\u2500\u2500\u2500  AI Translation  \u2500\u2500\u2500\u2500")
 
 
-def fill_service_combo(combo, items):
+#: v1.6.6: status marks behind the AI entries of the "Settings for"
+#: dropdown - set up / still to install
+AI_MARK_OK = "  \u2714"
+AI_MARK_MISSING = "  \U0001F4E6 install"
+AI_MARK_SETUP = "  \u2699 set up"      # Custom AI: no program to install
+
+
+def fill_service_combo(combo, items, mark=False):
     """Services grouped under a "Translator" and an "AI Translation"
     header. Headers carry no data and cannot be picked; a group
-    without entries (only AI favorites, say) gets no header."""
+    without entries (only AI favorites, say) gets no header.
+    mark=True (v1.6.6): AI entries show whether they are set up."""
     groups = ([i for i in items if not ai.is_ai(i[1])],
               [i for i in items if ai.is_ai(i[1])])
     for head, group in zip(TR_HEADERS, groups):
@@ -106,6 +116,10 @@ def fill_service_combo(combo, items):
             font.setBold(True)
             item.setFont(font)
         for label, mid in group:
+            if mark and ai.is_ai(mid):
+                label += AI_MARK_OK if ai.configured(mid) else (
+                    AI_MARK_SETUP if mid == ai.METHOD_AI_CUSTOM
+                    else AI_MARK_MISSING)
             combo.addItem(label, mid)
 
 
@@ -176,6 +190,8 @@ class TextboxPageMixin:
         self.textbox_input.setPlaceholderText("Type a message \u2026")
         self.textbox_input.setMaxLength(CHATBOX_LIMIT - len(SLIM_SUFFIX))
         self.textbox_input.returnPressed.connect(self.send_manual)
+        # v1.6.6: Arrow Up = last sent message
+        self.textbox_history = attach_history(self.textbox_input)
         tb_row.addWidget(self.textbox_input, 1)
         tb_ico = QPushButton("\U0001F600")
         tb_ico.setObjectName("iconbtn")
@@ -436,6 +452,7 @@ class TextboxPageMixin:
         self.ttt_input.setPlaceholderText("Type your message \u2026")
         self.ttt_input.setMaxLength(CHATBOX_LIMIT - len(SLIM_SUFFIX))
         self.ttt_input.returnPressed.connect(self.send_ttt)
+        self.ttt_history = attach_history(self.ttt_input)
         ttt_row.addWidget(self.ttt_input, 1)
         ttt_emoji = QPushButton("\U0001F600")
         ttt_emoji.setObjectName("iconbtn")
@@ -791,7 +808,11 @@ class TextboxPageMixin:
         # chosen in the To Text card (tr_active_combo)
         method_row.addWidget(QLabel("Settings for:"))
         self.tr_method_combo = QComboBox()
-        fill_service_combo(self.tr_method_combo, TR_METHODS)
+        fill_service_combo(self.tr_method_combo, TR_METHODS, mark=True)
+        self.tr_method_combo.setToolTip(
+            "Pick a service to set it up. AI services marked "
+            "\U0001F4E6 still need installing \u2013 only services that "
+            "are set up appear in the To Text dropdown.")
         self.tr_method_combo.currentIndexChanged.connect(
             self.on_tr_method)
         method_row.addWidget(self.tr_method_combo, 1)
@@ -1019,8 +1040,10 @@ class TextboxPageMixin:
             return b
         self.ai_install_btn = _btn(
             "📦  Install", self.on_ai_install,
-            "Opens a terminal with the install command (sudo / npm may "
-            "ask there).")
+            "Installs the program right here – Claude Code with its "
+            "official installer, Gemini CLI / Codex with npm into "
+            "~/.local (no sudo; a missing npm is installed first, a "
+            "password window asks). Ollama and Windows open a terminal.")
         self.ai_login_btn = _btn(
             "🔑  Log in", self.on_ai_login,
             "Opens a terminal with the program – log in there once "
@@ -1442,8 +1465,12 @@ class TextboxPageMixin:
         """Favorites only when there are any, else every service. If the
         service in use is no favorite, the first favorite takes over."""
         favs = set(self.cfg.get("stt_tr_favorites") or [])
-        items = [(l, m) for l, m in TR_METHODS if m in favs] \
-            or list(TR_METHODS)
+        cur = self.cfg.get("stt_method", METHOD_LINGVA)
+        # v1.6.6: AI services only once they are set up (installed /
+        # command entered) - the one in use always stays
+        usable = [(l, m) for l, m in TR_METHODS
+                  if not ai.is_ai(m) or m == cur or ai.configured(m)]
+        items = [(l, m) for l, m in usable if m in favs] or usable
         c = self.tr_active_combo
         c.blockSignals(True)
         c.clear()
@@ -1503,15 +1530,16 @@ class TextboxPageMixin:
                 "Anonymous Lingva-Translate proxy (lingva.ml) \u2013 no "
                 "API key, no direct Google tracking. Currently broken on "
                 "every public instance (text comes back untranslated) "
-                "\u2013 the app notices and falls back to Google, then "
-                "LibreTranslate (translate.adminforge.de)."),
+                "\u2013 the app notices and falls back to LibreTranslate "
+                "(translate.adminforge.de), then Google. Lingva is no "
+                "longer used as an automatic fallback."),
             METHOD_LIBRE: (
                 "Local LibreTranslate instance \u2013 100% offline on "
                 "your own PC. Install it yourself once (\u201cInstallation\u201d "
                 "opens the guide), e.g.  pip install libretranslate "
                 "\u2013 afterwards the Start/Stop button appears here (default "
                 "http://127.0.0.1:5000). If it is not reachable, "
-                "Lingva is used as fallback."),
+                "the fallback chain (adminForge, then Google) takes over."),
             METHOD_LIBRE_ONLINE: (
                 "Default. LibreTranslate on somebody else's server \u2013 nothing "
                 "to install, works on Windows and Linux alike. The preset "
@@ -1520,19 +1548,20 @@ class TextboxPageMixin:
                 "without one (adminForge publishes an imprint and says it "
                 "logs nothing; lt.pyrine.net has no imprint or privacy "
                 "notice). Pick \u201cCustom server\u201d for any other "
-                "instance. If the server fails, Lingva is used as "
-                "fallback."),
+                "instance. If the server fails, the fallback chain "
+                "(adminForge, then Google) takes over."),
             METHOD_DEEPL: (
                 "Official DeepL API \u2013 free key at deepl.com (API "
                 "Free plan, 500k chars/month); keys ending in ':fx' are "
                 "detected as free-plan keys automatically. If DeepL "
-                "fails (e.g. monthly limit reached), Lingva is used as "
-                "fallback."),
+                "fails (e.g. monthly limit reached), the fallback chain "
+                "(adminForge, then Google) takes over."),
             METHOD_CUSTOM: (
                 "Your own translator: paste the API call from its "
                 "documentation (curl), a command of an installed CLI "
                 "translator, or pick a file. Press Test to check it. If it "
-                "fails, Lingva is used as fallback."),
+                "fails, the fallback chain (adminForge, then Google) "
+                "takes over."),
             ai.METHOD_OLLAMA: (
                 "A local AI on your own PC – offline, free, nothing "
                 "leaves your machine. Needs Ollama and one model "
@@ -1596,6 +1625,7 @@ class TextboxPageMixin:
                        interval=150)
 
     def _on_ai_status(self, method, st):
+        self.refresh_ai_setup()
         if method != self._tr_view_method():
             return      # switched to another service meanwhile
         inst = st.get("installed")
@@ -1642,6 +1672,23 @@ class TextboxPageMixin:
             self.ai_status_lbl.setText(
                 f"✅ {name} is installed and logged in.")
 
+    def refresh_ai_setup(self):
+        """v1.6.6: re-reads which AI services are set up - the marks
+        in "Settings for" and the entries of the To Text dropdown."""
+        c = self.tr_method_combo
+        cur = c.currentData()
+        state = tuple(ai.configured(m) for m in ai.AI_METHODS)
+        if state == getattr(self, "_ai_setup_state", None):
+            return
+        self._ai_setup_state = state
+        c.blockSignals(True)
+        c.clear()
+        fill_service_combo(c, TR_METHODS, mark=True)
+        j = c.findData(cur)
+        c.setCurrentIndex(j if j >= 0 else first_service_index(c))
+        c.blockSignals(False)
+        self._fill_tr_active_combo()
+
     def _ai_url_is_local(self):
         url = ai.ollama_url()
         return "127.0.0.1" in url or "localhost" in url
@@ -1674,9 +1721,13 @@ class TextboxPageMixin:
     def on_ai_custom_cmd(self):
         self.cfg["stt_ai_custom_cmd"] = self.ai_custom_edit.toPlainText()
         self.save_config_later()
+        self.refresh_ai_setup()     # v1.6.6: To Text dropdown follows
 
     def on_ai_install(self):
         method = self._tr_view_method()
+        if ai.can_install_in_app(method):
+            self._ai_install_in_app(method)
+            return
         cmd = ai.install_command(method)
         if cmd is None:
             QDesktopServices.openUrl(QUrl(ai.OLLAMA_DOWNLOAD_URL))
@@ -1690,6 +1741,71 @@ class TextboxPageMixin:
             "it is done." if ok else f"❌ {msg}")
         self.log(f"AI install ({method}): {cmd}")
 
+    def _ai_install_in_app(self, method):
+        """v1.6.6: runs the install steps right here (like
+        LinuxVR-ViewShot) - no terminal, no command to type. npm goes
+        to ~/.local without sudo; a missing npm is installed first via
+        pkexec (password window)."""
+        from PyQt6.QtCore import QProcess
+        if getattr(self, "_ai_install_proc", None) is not None:
+            return
+        steps = ai.install_steps(method)
+        self.ai_install_btn.setEnabled(False)
+        self.ai_install_btn.setText("⏳  Installing …")
+
+        def done(error=""):
+            self._ai_install_proc = None
+            self.ai_install_btn.setEnabled(True)
+            self.ai_install_btn.setText("📦  Install")
+            if error:
+                self.log(f"AI install ({method}) failed: {error}")
+            self._sync_ai_ui(self._tr_view_method())
+            if error:
+                QTimer.singleShot(1500, lambda: self.ai_status_lbl.setText(
+                    f"❌ Install failed: {error}\nManual: "
+                    f"{ai.install_command(method) or ''}"))
+            else:
+                self.log(f"AI install ({method}): done")
+                self.refresh_ai_setup()
+
+        def next_step():
+            if not steps:
+                done()
+                return
+            argv = steps.pop(0)()
+            if not argv:
+                done("npm is missing and could not be installed")
+                return
+            if argv[0] == "pkexec":
+                self.ai_status_lbl.setText(
+                    "🔐 A password window opens to install npm …")
+            else:
+                shown = argv[2] if argv[:2] == ["bash", "-c"] \
+                    else " ".join(argv[1:])
+                self.ai_status_lbl.setText(
+                    f"⏳ Installing: {shown}\n(can take 1–2 minutes)")
+            self.log(f"AI install ({method}): {' '.join(argv)}")
+            proc = QProcess(self)
+            proc.setWorkingDirectory(os.path.expanduser("~"))
+            self._ai_install_proc = proc
+
+            def finished(code, _status):
+                if code != 0:
+                    err = bytes(proc.readAllStandardError()).decode(
+                        errors="replace").strip()
+                    done(err.splitlines()[-1] if err else f"exit {code}")
+                    return
+                next_step()
+
+            def failed(err):
+                # finished() never comes for a program that did not start
+                if err == QProcess.ProcessError.FailedToStart:
+                    done(proc.errorString())
+            proc.finished.connect(finished)
+            proc.errorOccurred.connect(failed)
+            proc.start(argv[0], argv[1:])
+        next_step()
+
     def on_ai_login(self):
         method = self._tr_view_method()
         argv = ai.login_command(method)
@@ -1699,7 +1815,25 @@ class TextboxPageMixin:
         ok, msg = ai.run_in_terminal(argv)
         self.ai_status_lbl.setText(
             "🔑 Log in in the terminal (Claude: type /login), "
-            "close it, then press ⟳." if ok else f"❌ {msg}")
+            "close it – this updates by itself." if ok else f"❌ {msg}")
+        if ok:
+            # v1.6.6: notice the login by itself (every 2 s, max 5 min)
+            self._ai_login_polls = 0
+            self._ai_login_method = method
+            t = getattr(self, "_ai_login_timer", None)
+            if t is None:
+                t = self._ai_login_timer = QTimer(self)
+                t.setInterval(2000)
+                t.timeout.connect(self._poll_ai_login)
+            t.start()
+
+    def _poll_ai_login(self):
+        self._ai_login_polls += 1
+        method = self._ai_login_method
+        if ai.logged_in(method) or self._ai_login_polls > 150:
+            self._ai_login_timer.stop()
+            if self._tr_view_method() == method:
+                self._sync_ai_ui(method)
 
     def on_ai_start_ollama(self):
         from core.constants import CONFIG_DIR
@@ -2436,7 +2570,7 @@ class TextboxPageMixin:
                 "rate-limit or block the requests at any time (HTTP "
                 "429), and heavy use may get your IP temporarily "
                 "blocked. For reliable use enter your own API key, or "
-                "pick Lingva / LibreTranslate.")
+                "pick LibreTranslate.")
             self.google_warn_lbl.setStyleSheet("color:#e0a33e;")
 
     def on_deepl_key(self, text):
@@ -2732,6 +2866,7 @@ class TextboxPageMixin:
         text = self.ttt_input.text().strip()
         if not text or self.osc_client is None:
             return
+        self.ttt_history.push(text)
         self.ttt_input.clear()
         src = self.cfg.get("stt_language", "de-DE")
         tgt = self.cfg.get("stt_output", "")
@@ -2829,6 +2964,7 @@ class TextboxPageMixin:
         text = self.textbox_input.text().strip()
         if text:
             self.send_manual_text(text)
+            self.textbox_history.push(text)
             self.textbox_input.clear()
 
     # ================================================================

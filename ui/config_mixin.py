@@ -17,6 +17,7 @@ from core.constants import (
     AFK_PRESET_COUNT, AIO_MAX, CHAT_MODES, CHATBOX_LIMIT, DEFAULT_AFK_PARAM, DEFAULT_AFK_TEXTS, DEFAULT_AFK_TIMER_TEXT, DEFAULT_TRANSLATE_NOTICE, CHAT_MODE_DIRECT, CONFIG_DIR, CONFIG_FILE, GPU2_MODE_LINE, LYRICS_DIR, MIN_STATUS_CYCLE_SEC, normalize_gpu2_mode, STATUS_MAX_TEXTS, OLD_CONFIG_FILE, SLIM_SUFFIX, TITLE_MAX_LEN)
 from core.boxstyle import (
     CLOCK_24_HM, DEFAULT_CUSTOM_BOX, MODE_CUSTOM as BOX_MODE_CUSTOM, normalize_clock_format, normalize_custom as normalize_box_custom, normalize_mode as normalize_box_mode, normalize_template as normalize_box_template, normalize_width as normalize_box_width)
+from core.boxanim import normalize_anim as normalize_box_anim
 from core.textutils import DEFAULT_CUSTOM_BAR, TIME_POS_LINE
 from core.translators import (
     ADMINFORGE_LIBRE_URL, METHOD_LIBRE_ONLINE, METHOD_LINGVA)
@@ -423,6 +424,10 @@ class ConfigMixin:
             "aio_set_active": 0,
             "aio_rotate": False,
             "aio_rotate_sec": 10,
+            # v1.6.6: scroll line by line into the next string instead
+            # of swapping it in one jump (core/aioscroll.py)
+            "aio_scroll": False,
+            "aio_scroll_sec": 2,
             "aio_templates": (["{text} \\n {artist} : {title} | {time} \\n {bar}"]
                               + [""] * (AIO_MAX - 1)),
             # per-string dwell time: when custom_time[i] is on, AIO i+1
@@ -461,6 +466,9 @@ class ConfigMixin:
             "box_bottom_custom": "OSC-DreamChatbox",
             # on, because the default top line IS a clock - a clock that
             # only moves when something else happens looks broken
+            # v1.6.6: off | blink | load | rotate (core/boxanim.py)
+            "box_anim": "off",
+            "box_anim_sec": 2,
             "box_clock_live": True,
             "box_clock_format": CLOCK_24_HM,
             # MediaPlay: what to show between songs. On by default -
@@ -1009,6 +1017,14 @@ class ConfigMixin:
         idle = defaults.get("media_idle_text", "\u23F8")
         defaults["media_idle_text"] = idle[:20] if isinstance(idle, str) \
             else "\u23F8"
+        # v1.6.6: AIO scroll - a step below 2 s would trip VRChat's
+        # chatbox rate limit
+        defaults["aio_scroll"] = bool(defaults.get("aio_scroll", False))
+        try:
+            sec = int(defaults.get("aio_scroll_sec", 2))
+        except (TypeError, ValueError):
+            sec = 2
+        defaults["aio_scroll_sec"] = max(2, min(30, sec))
         defaults["box_active"] = bool(defaults.get("box_active", False))
         defaults["box_template"] = normalize_box_template(
             defaults.get("box_template"))
@@ -1031,6 +1047,13 @@ class ConfigMixin:
         for key in ("box_top_custom", "box_bottom_custom"):
             val = defaults.get(key, "")
             defaults[key] = val[:120] if isinstance(val, str) else ""
+        # v1.6.6: animated frame (core/boxanim.py)
+        defaults["box_anim"] = normalize_box_anim(defaults.get("box_anim"))
+        try:
+            asec = int(defaults.get("box_anim_sec", 2))
+        except (TypeError, ValueError):
+            asec = 2
+        defaults["box_anim_sec"] = max(2, min(30, asec))
         defaults["box_clock_live"] = bool(defaults.get("box_clock_live", False))
         defaults["box_clock_format"] = normalize_clock_format(
             defaults.get("box_clock_format"))

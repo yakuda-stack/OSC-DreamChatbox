@@ -475,6 +475,27 @@ echo "[5/5] Baue AppImage..."
 (cd "$OUT_DIR" && ARCH="$ARCH" "$APPIMAGETOOL" --runtime-file "$RUNTIME" \
     "${UPDATE_ARGS[@]}" "$BUILD_DIR" "$OUT")
 
+# 6b. .zsync fehlt? Selbst erzeugen. Neuere appimagetool-Builds legen sie
+# nicht immer im build/-Ordner ab (v1.6.6: "generating zsync file", aber
+# keine Datei in build/). Erst ein installiertes zsyncmake, sonst das,
+# das im appimagetool steckt.
+if [ -z "${DCB_NO_ZSYNC:-}" ] && [ ! -s "$OUT.zsync" ]; then
+    ZSM="$(command -v zsyncmake || true)"
+    if [ -z "$ZSM" ]; then
+        ZTMP="$(mktemp -d)"
+        (cd "$ZTMP" && env -u APPIMAGE_EXTRACT_AND_RUN "$APPIMAGETOOL" \
+            --appimage-extract usr/bin/zsyncmake >/dev/null 2>&1 || true)
+        [ -x "$ZTMP/squashfs-root/usr/bin/zsyncmake" ] && \
+            ZSM="$ZTMP/squashfs-root/usr/bin/zsyncmake"
+    fi
+    if [ -n "$ZSM" ]; then
+        echo "[Info] .zsync fehlte - erzeuge sie mit $(basename "$ZSM") ..."
+        (cd "$OUT_DIR" && "$ZSM" -u "$(basename "$OUT")" \
+            -o "$OUT.zsync" "$OUT" >/dev/null) || true
+    fi
+    [ -n "${ZTMP:-}" ] && rm -rf "$ZTMP"
+fi
+
 # 7. Gegenprobe: die fertige Datei darf libfuse.so.2 nicht mehr brauchen.
 # Ohne diesen Check merkt man den Rückfall auf die alte Runtime erst,
 # wenn sich der erste Mint-Nutzer meldet.

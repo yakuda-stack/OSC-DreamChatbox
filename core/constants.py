@@ -15,7 +15,7 @@ from core.osinfo import (  # noqa: F401  (IS_WINDOWS/OS_NAME re-exported)
     IS_WINDOWS, OS_NAME, config_dir, legacy_config_dir, resource_root)
 
 APP_NAME = "OSC-DreamChatbox"
-VERSION = "v1.6.5"
+VERSION = "v1.6.7"
 
 #: how many All-in-one strings there can be. Raised from 5 in v1.4.0;
 #: every list that is "one entry per AIO string" is sized from here.
@@ -109,6 +109,10 @@ OSC_RATE_MAX_SENDS = 5
 # interval VRChat itself uses for chatbox updates, so it is the safe
 # floor everybody else (VRCOSC etc.) settled on as well.
 OSC_MIN_SEND_GAP_SEC = 1.5
+# v1.6.6: turning "Send to VRChat" off clears the chatbox, and VRChat
+# does not always take that first empty message. A second clear after
+# this many seconds catches it (still inside the rate-limit budget).
+CLEAR_RETRY_SEC = 3
 
 TITLE_MAX_LEN = 24   # max characters of the song title shown
 LYRICS_MAX_MIN = 10  # smallest Max length of the lyrics line (max = CHATBOX_LIMIT = no limit)

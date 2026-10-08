@@ -97,7 +97,23 @@ def test_new_keyless_servers_listed():
     assert tr.PYRINE_LIBRE_URL in urls
 
 
-def test_adminforge_is_last_fallback(monkeypatch):
+def test_lingva_not_in_fallback_chain(monkeypatch):
+    """v1.6.6: chosen -> adminForge -> Google, Lingva is skipped."""
+    tried = []
+
+    def fake(self, text, s, t):
+        tried.append(type(self).__name__)
+        return None
+    for cls in (tr.LingvaTranslator, tr.GoogleTranslator,
+                tr.LibreOnlineTranslator, tr.DeepLTranslator):
+        monkeypatch.setattr(cls, "translate", fake)
+    assert tr.translate_with_fallback(tr.METHOD_DEEPL, "hi there",
+                                      "en", "de") is None
+    assert tried == ["DeepLTranslator", "LibreOnlineTranslator",
+                     "GoogleTranslator"]
+
+
+def test_adminforge_is_first_fallback(monkeypatch):
     tried = []
 
     def fake(self, text, s, t):
@@ -111,8 +127,8 @@ def test_adminforge_is_last_fallback(monkeypatch):
     out = tr.translate_with_fallback(tr.METHOD_LINGVA, "hi there",
                                      "en", "de")
     assert out == "ok"
-    assert tried == ["LingvaTranslator", "GoogleTranslator",
-                     "LibreOnlineTranslator"]
+    # Lingva picked by hand still runs, then adminForge
+    assert tried == ["LingvaTranslator", "LibreOnlineTranslator"]
 
 
 # ---- default + one-time migration ---------------------------------------

@@ -28,6 +28,7 @@ from PyQt6.QtWidgets import (
     QPushButton, QSpinBox, QSplitter, QVBoxLayout, QWidget)
 
 from core.constants import AIO_MAX, STATUS_MAX_TEXTS
+from core.aioscroll import MAX_STEP_SEC, MIN_STEP_SEC, SCROLL_TIP as AIO_SCROLL_TIP
 from core.hotkeys import IS_WINDOWS
 from core.hotkeys import describe as describe_hotkey
 from core.nodegraph_eval import node_count
@@ -270,6 +271,21 @@ class AdvancedPageMixin:
         self.graph_rotate_spin.valueChanged.connect(self.on_graph_rotate_sec)
         row.addWidget(self.graph_rotate_spin)
         row.addWidget(QLabel("sec"))
+        row.addSpacing(16)
+        # v1.6.6: the same scroll option as on the All in one card
+        self.graph_scroll_chk = QCheckBox("Scroll,")
+        self.graph_scroll_chk.setToolTip(AIO_SCROLL_TIP)
+        self.graph_scroll_chk.toggled.connect(self.on_aio_scroll)
+        row.addWidget(self.graph_scroll_chk)
+        self.graph_scroll_spin = QSpinBox()
+        self.graph_scroll_spin.setObjectName("smallspin")
+        self.graph_scroll_spin.setRange(MIN_STEP_SEC, MAX_STEP_SEC)
+        self.graph_scroll_spin.setFixedSize(64, 28)
+        self.graph_scroll_spin.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.graph_scroll_spin.setToolTip(AIO_SCROLL_TIP)
+        self.graph_scroll_spin.valueChanged.connect(self.on_aio_scroll_sec)
+        row.addWidget(self.graph_scroll_spin)
+        row.addWidget(QLabel("sec/line"))
         row.addStretch()
 
         hint = QLabel("shared with the All in one card")

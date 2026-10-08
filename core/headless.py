@@ -713,7 +713,7 @@ def _make_window_class():
                 self.send_now()
             else:
                 self.pending_send_timer.stop()
-                self.clear_chatbox()
+                self.clear_chatbox_retry()     # v1.6.6: twice
             say(f"Send to VRChat: {'ON' if on else 'OFF'}")
 
         # ---------------------------------------------------- numbered

@@ -36,6 +36,9 @@ from core import emojifont
 from core.boxstyle import (
     BOX_TEMPLATES, CLOCK_FORMATS, CUSTOM_BOX_INDEX, DEFAULT_CUSTOM_BOX, MIDDLE_MODES, MODE_CLOCK, MODE_CUSTOM, MODE_NONE, SIDE_BOTTOM, SIDE_TOP, WIDTH_MAX, WIDTH_MIN, clock_needs_seconds, clock_text, normalize_mode, render_pair, template)
 from core.textutils import apply_template
+from core.boxanim import (
+    ANIM_OFF, ANIMATIONS, MAX_STEP_SEC as ANIM_MAX_SEC,
+    MIN_STEP_SEC as ANIM_MIN_SEC, normalize_anim)
 
 #: which placeholder names let an All-in-one string place a frame line
 #: itself. Matching here (and not only in the alias table) is what stops
@@ -155,6 +158,39 @@ class CustomBoxMixin:
         wrow.addWidget(self.chk_box_align)
         wrow.addStretch()
         bc.addLayout(wrow)
+
+        # ---- v1.6.6: animation ----------------------------------------
+        anrow = QHBoxLayout()
+        anrow.addWidget(QLabel("Animation:"))
+        self.box_anim_combo = QComboBox()
+        for label, value in ANIMATIONS:
+            self.box_anim_combo.addItem(label, value)
+        self.box_anim_combo.setFixedWidth(180)
+        self.box_anim_combo.setCursor(Qt.CursorShape.PointingHandCursor)
+        anim_tip = (
+            "Makes the frame move to catch the eye:\n"
+            "Blink \u2013 the frame lines switch on and off\n"
+            "Loading \u2013 the frame fills up like a progress bar\n"
+            "Rotate \u2013 a dot runs round the box\n"
+            "Only the frame moves; caps and middle text stay put. Every "
+            "step is one chatbox message, so 2 s is the fastest VRChat "
+            "allows.")
+        self.box_anim_combo.setToolTip(anim_tip)
+        self.box_anim_combo.currentIndexChanged.connect(self.on_box_anim)
+        anrow.addWidget(self.box_anim_combo)
+        anrow.addSpacing(12)
+        anrow.addWidget(QLabel("every"))
+        self.box_anim_spin = QSpinBox()
+        self.box_anim_spin.setObjectName("smallspin")
+        self.box_anim_spin.setRange(ANIM_MIN_SEC, ANIM_MAX_SEC)
+        self.box_anim_spin.setFixedSize(64, 28)
+        self.box_anim_spin.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.box_anim_spin.setToolTip(anim_tip)
+        self.box_anim_spin.valueChanged.connect(self.on_box_anim_sec)
+        anrow.addWidget(self.box_anim_spin)
+        anrow.addWidget(QLabel("sec"))
+        anrow.addStretch()
+        bc.addLayout(anrow)
 
         # ---- the two sides --------------------------------------------
         bc.addWidget(self._box_separator("Top line"))
@@ -372,6 +408,13 @@ class CustomBoxMixin:
             combo.blockSignals(True)
             combo.setCurrentIndex(idx if idx >= 0 else 0)
             combo.blockSignals(False)
+        aidx = self.box_anim_combo.findData(normalize_anim(c["box_anim"]))
+        self.box_anim_combo.blockSignals(True)
+        self.box_anim_combo.setCurrentIndex(aidx if aidx >= 0 else 0)
+        self.box_anim_combo.blockSignals(False)
+        self.box_anim_spin.blockSignals(True)
+        self.box_anim_spin.setValue(int(c["box_anim_sec"]))
+        self.box_anim_spin.blockSignals(False)
         self.toggle_box_clock.setChecked(c["box_clock_live"])
         cidx = self.box_clock_combo.findData(c["box_clock_format"])
         self.box_clock_combo.blockSignals(True)
@@ -484,6 +527,24 @@ class CustomBoxMixin:
         self.update_box_preview()
         self.update_preview()
 
+    def on_box_anim(self, _idx=None):
+        if getattr(self, "_block_updating", False):
+            return
+        self.cfg["box_anim"] = normalize_anim(
+            self.box_anim_combo.currentData())
+        self.save_config()
+        self._box_anim_frame = 0
+        self._update_box_timer()
+        self.update_box_preview()
+        self.update_preview()
+
+    def on_box_anim_sec(self, val):
+        if getattr(self, "_block_updating", False):
+            return
+        self.cfg["box_anim_sec"] = int(val)
+        self.save_config()
+        self._update_box_timer()
+
     def on_box_clock_live(self, on):
         if getattr(self, "_block_updating", False):
             return
@@ -542,6 +603,7 @@ class CustomBoxMixin:
         something: the card active, the realtime toggle on, and at least
         one side set to Clock. Everything else leaves the timer stopped,
         which is the whole point of the toggle."""
+        self._update_box_anim_timer()
         if not (self.cfg["box_active"] and self.cfg["box_clock_live"]
                 and self._box_clock_in_use()):
             self.box_timer.stop()
@@ -555,6 +617,30 @@ class CustomBoxMixin:
         if (not self.box_timer.isActive()
                 or self.box_timer.interval() != interval):
             self.box_timer.start(interval)
+
+    def _update_box_anim_timer(self):
+        """v1.6.6: the animation tick runs while an animation is picked
+        and the frame can be on screen - the card active, or All in one
+        (which places the frame with {box_start} / {box_stop})."""
+        timer = getattr(self, "box_anim_timer", None)
+        if timer is None:
+            return
+        c = self.cfg
+        if normalize_anim(c.get("box_anim")) == ANIM_OFF or not (
+                c.get("box_active") or c.get("aio_active")):
+            timer.stop()
+            return
+        interval = max(ANIM_MIN_SEC, int(c.get("box_anim_sec", 2))) * 1000
+        if not timer.isActive() or timer.interval() != interval:
+            timer.start(interval)
+
+    def _box_anim_tick(self):
+        self._box_anim_frame = (self._box_anim_frame + 1) % 100000
+        self.update_box_preview()
+        self.update_preview()
+        if not (self.cfg.get("aio_active") and self.aio_is_advanced()):
+            # Advanced mode: tick_graph() sends the changed text itself
+            self.request_send()
 
     def _box_tick(self):
         """Refreshes only when the clock string actually changed. Without
@@ -605,7 +691,9 @@ class CustomBoxMixin:
                            self._box_middle(SIDE_BOTTOM),
                            top_on=c["box_top_on"],
                            bottom_on=c["box_bottom_on"],
-                           align=c["box_align"])
+                           align=c["box_align"],
+                           anim=c.get("box_anim", ANIM_OFF),
+                           frame=getattr(self, "_box_anim_frame", 0))
 
     def box_placed_manually(self, side):
         """True when the All-in-one string that is on screen right now

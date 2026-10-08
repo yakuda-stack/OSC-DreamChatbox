@@ -25,9 +25,9 @@ Four selectable methods, all behind ONE unified interface:
    not installed). Clean error handling for quota/auth problems.
 
 `translate_with_fallback()` picks the configured method and – if it
-fails for any reason – automatically retries with Lingva (primary
-fallback), then direct Google and finally adminForge's keyless
-LibreTranslate (v1.6.2), so
+fails for any reason – automatically retries with adminForge's keyless
+LibreTranslate and then direct Google (v1.6.6: Lingva is no longer
+in the chain, it is broken upstream), so
 speech-to-text keeps working even when DeepL hits its monthly limit
 or the local LibreTranslate instance is down. Every backend swallows
 its exceptions and returns None instead of crashing the app.
@@ -90,7 +90,7 @@ DEFAULT_LIBRE_URL = "http://127.0.0.1:5000"
 # Anything the user types instead is kept verbatim (see SERVER_CUSTOM).
 #: The hosted default. de.libretranslate.com was keyless up to v1.5.1
 #: and has switched to keyRequired=true since, so without an API key a
-#: request there fails (and the chain falls back to Lingva). There is no
+#: request there fails (and the chain falls back to adminForge). There is no
 #: reliable keyless public instance to preset instead - "Custom server"
 #: or a local instance are the keyless options.
 DEFAULT_LIBRE_ONLINE_URL = "https://de.libretranslate.com"
@@ -674,25 +674,26 @@ def translate_with_fallback(method, text, source_lang, target_lang,
                             custom_snippet="", custom_file="",
                             log=lambda s: None):
     """Translates with the chosen method; on ANY failure the chain
-    automatically continues with Lingva (primary fallback) and then
-    with direct Google (secondary fallback). Each backend runs at
-    most once. Returns the translated text or None if everything
-    failed – never raises."""
+    automatically continues with adminForge's keyless LibreTranslate
+    and then with direct Google. Each backend runs at most once.
+    Returns the translated text or None if everything failed – never
+    raises.
+
+    v1.6.6: Lingva is no longer part of the fallback chain - it is
+    broken upstream and only cost time on every failure. It still runs
+    when the user picks it explicitly."""
     chain = [get_translator(method, deepl_key, libre_url, lingva_url,
                             google_endpoint, google_key,
                             libre_online_url, libre_online_key,
                             custom_snippet, custom_file)]
-    if method != METHOD_LINGVA:
-        chain.append(LingvaTranslator(lingva_url or DEFAULT_LINGVA_URL))
-    if method != METHOD_GOOGLE:
-        chain.append(GoogleTranslator(google_endpoint, google_key))
-    # v1.6.2: last resort now that Lingva is broken - adminForge's
-    # keyless LibreTranslate (the same operator the old default Lingva
-    # instance belonged to). Skipped when it is already the chosen one.
     chosen = chain[0]
+    # adminForge's keyless LibreTranslate - skipped when it already is
+    # the chosen one
     if not (isinstance(chosen, LibreOnlineTranslator)
             and chosen.url == ADMINFORGE_LIBRE_URL):
         chain.append(LibreOnlineTranslator(ADMINFORGE_LIBRE_URL))
+    if method != METHOD_GOOGLE:
+        chain.append(GoogleTranslator(google_endpoint, google_key))
     for i, tr in enumerate(chain):
         out = tr.translate(text, source_lang, target_lang)
         if out is not None:

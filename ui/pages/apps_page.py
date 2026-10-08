@@ -46,6 +46,7 @@ from core.nodegraph_eval import (
     run_side_effects as graph_run_side_effects)
 from pathlib import Path
 from ui.aio_edit import AioTextEdit
+from core.aioscroll import MAX_STEP_SEC, MIN_STEP_SEC, SCROLL_TIP as AIO_SCROLL_TIP
 from ui.ui_main import DragHandle, ToggleLabel, ToggleSwitch
 
 
@@ -1615,6 +1616,24 @@ class AppsPageMixin:
         acnt_row.addWidget(QLabel("sec"))
         acnt_row.addStretch()
         ac.addLayout(acnt_row)
+
+        # v1.6.6: scroll into the next string like the Star Wars intro
+        ascr_row = QHBoxLayout()
+        self.chk_aio_scroll = QCheckBox("Scroll to the next string,")
+        self.chk_aio_scroll.setToolTip(AIO_SCROLL_TIP)
+        self.chk_aio_scroll.toggled.connect(self.on_aio_scroll)
+        ascr_row.addWidget(self.chk_aio_scroll)
+        self.aio_scroll_spin = QSpinBox()
+        self.aio_scroll_spin.setObjectName("smallspin")
+        self.aio_scroll_spin.setRange(MIN_STEP_SEC, MAX_STEP_SEC)
+        self.aio_scroll_spin.setFixedSize(64, 28)
+        self.aio_scroll_spin.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.aio_scroll_spin.setToolTip(AIO_SCROLL_TIP)
+        self.aio_scroll_spin.valueChanged.connect(self.on_aio_scroll_sec)
+        ascr_row.addWidget(self.aio_scroll_spin)
+        ascr_row.addWidget(QLabel("sec per line"))
+        ascr_row.addStretch()
+        ac.addLayout(ascr_row)
 
         self.aio_rows = []
         self.aio_edits = []
@@ -3329,6 +3348,36 @@ class AppsPageMixin:
         self._mirror_graph_rotation()
         self.update_timers()
 
+    def on_aio_scroll(self, on):
+        if getattr(self, "_block_updating", False):
+            return
+        self.cfg["aio_scroll"] = bool(on)
+        self.save_config()
+        if not on:
+            self.aio_scroll.stop()
+            self.aio_scroll_timer.stop()
+        self._mirror_graph_rotation()
+        self.update_preview()
+
+    def on_aio_scroll_sec(self, val):
+        if getattr(self, "_block_updating", False):
+            return
+        self.cfg["aio_scroll_sec"] = int(val)
+        self.save_config()
+        self._mirror_graph_rotation()
+        if self.aio_scroll_timer.isActive():
+            self.aio_scroll_timer.start(int(val) * 1000)
+
+    def advance_aio_scroll(self):
+        """One line of the crawl (see core/aioscroll.py)."""
+        if not self.aio_scroll.tick():
+            self.aio_scroll_timer.stop()
+        self.update_preview()
+        # Advanced mode: tick_graph() notices the changed text by itself
+        if not self.aio_is_advanced() \
+                and not self.afk_holds_the_chatbox():
+            self.request_send()
+
     def _mirror_graph_rotation(self):
         """Repaints the copies of "Number of strings" / "Rotate every"
         that live on the Advanced page. One setting, two places to see
@@ -3338,9 +3387,16 @@ class AppsPageMixin:
         for widget, value in ((self.graph_count_spin, self.cfg["aio_count"]),
                               (self.graph_rotate_chk, self.cfg["aio_rotate"]),
                               (self.graph_rotate_spin,
-                               self.cfg["aio_rotate_sec"])):
+                               self.cfg["aio_rotate_sec"]),
+                              (self.graph_scroll_chk, self.cfg["aio_scroll"]),
+                              (self.graph_scroll_spin,
+                               self.cfg["aio_scroll_sec"]),
+                              (self.chk_aio_scroll, self.cfg["aio_scroll"]),
+                              (self.aio_scroll_spin,
+                               self.cfg["aio_scroll_sec"])):
             widget.blockSignals(True)
-            if widget is self.graph_rotate_chk:
+            if widget in (self.graph_rotate_chk, self.graph_scroll_chk,
+                          self.chk_aio_scroll):
                 widget.setChecked(bool(value))
             else:
                 widget.setValue(int(value))
@@ -3447,6 +3503,12 @@ class AppsPageMixin:
         self.log(f"All in one: template {idx + 1} active")
 
     def advance_aio(self):
+        # v1.6.6: scroll away from what is on screen instead of a jump
+        if self.cfg.get("aio_scroll") and \
+                self.aio_scroll.start(getattr(self, "_aio_shown_lines", [])):
+            self.aio_scroll_timer.start(
+                max(MIN_STEP_SEC, int(self.cfg.get("aio_scroll_sec", 2)))
+                * 1000)
         self.aio_index += 1
         self.update_preview()
         # The string that just came up decides how long it stays, so the
@@ -4202,6 +4264,15 @@ class AppsPageMixin:
         self.log(f"OSC out: /avatar/parameters/{name} = {value}")
 
     def build_aio_lines(self, commit=False):
+        """The AIO lines as they go out - while a v1.6.6 scroll is
+        running, the window of the crawl (core/aioscroll.py)."""
+        lines = self._build_aio_lines_raw(commit=commit)
+        if self.cfg.get("aio_scroll") and self.aio_scroll.active:
+            lines = self.aio_scroll.window(lines)
+        self._aio_shown_lines = list(lines)
+        return lines
+
+    def _build_aio_lines_raw(self, commit=False):
         """Builds the AIO output: one combined custom string with values
         from all active apps.
 

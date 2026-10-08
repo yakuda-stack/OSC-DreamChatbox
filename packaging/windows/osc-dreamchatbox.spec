@@ -129,6 +129,9 @@ hiddenimports = [
     "core.qtstub",
     "core.selflaunch",
     "core.instancelock",
+    # v1.6.6: parameter log window, imported when its button is clicked
+    "ui.osc_param_log",
+    "core.selfupdate",
     # The microphone list and level meter (v1.4.2). mic_pactl is a no-op
     # on Windows but is imported unconditionally by mic_host/micgroups,
     # and audiolevel is only reached from inside the helper - both are

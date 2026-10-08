@@ -2,9 +2,10 @@
 speechtotext.py – speech to text for OSC-DreamChatbox
 
 Translation uses the modular four-tier system in core/translators.py
-(Lingva proxy = default, direct Google endpoint for lowest latency,
-local LibreTranslate, DeepL API). If the chosen method fails, the
-chain falls back to Lingva first and then to direct Google.
+(LibreTranslate Online = default, direct Google endpoint for lowest
+latency, local LibreTranslate, DeepL API, AI services). If the chosen
+method fails, the chain falls back to adminForge's LibreTranslate
+first and then to direct Google (v1.6.6: Lingva left the chain).
 
 Uses the SpeechRecognition library (Google Web Speech API) with your
 microphone. Runs in a background thread and pushes recognized phrases
