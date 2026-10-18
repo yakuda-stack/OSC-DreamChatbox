@@ -7,6 +7,23 @@ All notable changes to OSC-DreamChatbox are documented here.
 🟢 Linux Support: Complete & Stable (v1.2.6)
 
 
+## [v1.6.8] – 2026-10-18
+
+### Added
+
+- **Logic gates on the node canvas** (Advanced mode, Logic → Gates):
+  **AND**, **OR**, **NOR** and **NOT**. AND / OR / NOR grow like Join
+  (*Inputs* 2–10), NOT has one input. The output is a *True?* socket
+  for If / Else – so conditions can finally be combined, e.g. "song
+  only while music plays AND the avatar toggle is on" or "status only
+  when NOR (AFK, music, STT)". Only wired inputs count, so a spare
+  socket never makes an AND false; a gate with nothing wired stays
+  false. AND / OR / NOR have an **Output: normal / inverted** switch
+  (AND inverted = NAND, OR inverted = NOR, NOR inverted = OR); an
+  unwired gate stays false even when inverted. Feature request
+  from the community (`core/nodegraph_eval.py`, `ui/nodegraph.py`,
+  `tests/test_logic_gates.py`).
+
 ## [v1.6.7] – 2026-10-08
 
 ### Added

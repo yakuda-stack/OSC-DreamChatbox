@@ -289,6 +289,48 @@ NODE_DEFS = {
         "note": "True whenever the input is not empty - the usual way to "
                 "hide a line while nothing is playing.",
     },
+    # v1.6.8: logic gates. AND / OR / NOR grow like Join (2-10 inputs);
+    # only connected inputs count, so a spare socket never decides.
+    "and": {
+        "title": "AND", "cat": "Logic", "accent": "#c9a35b",
+        "inputs": [("a", "A"), ("b", "B")],
+        "dynamic_inputs": ("count", "abcdefghij"),
+        "outputs": [("out", "True?")],
+        "fields": [("count", "int", "Inputs", 2, (2, 10)),
+                   ("invert", "choice", "Output", "normal",
+                    ["normal", "inverted"])],
+        "note": "True when every connected input is true. Output "
+                "inverted = NAND.",
+    },
+    "or": {
+        "title": "OR", "cat": "Logic", "accent": "#c9a35b",
+        "inputs": [("a", "A"), ("b", "B")],
+        "dynamic_inputs": ("count", "abcdefghij"),
+        "outputs": [("out", "True?")],
+        "fields": [("count", "int", "Inputs", 2, (2, 10)),
+                   ("invert", "choice", "Output", "normal",
+                    ["normal", "inverted"])],
+        "note": "True when at least one connected input is true. "
+                "Output inverted = NOR.",
+    },
+    "nor": {
+        "title": "NOR", "cat": "Logic", "accent": "#c9a35b",
+        "inputs": [("a", "A"), ("b", "B")],
+        "dynamic_inputs": ("count", "abcdefghij"),
+        "outputs": [("out", "True?")],
+        "fields": [("count", "int", "Inputs", 2, (2, 10)),
+                   ("invert", "choice", "Output", "normal",
+                    ["normal", "inverted"])],
+        "note": "True when none of the connected inputs is true - "
+                "e.g. \"not AFK, no music, no STT\". Output inverted "
+                "= OR.",
+    },
+    "not": {
+        "title": "NOT", "cat": "Logic", "accent": "#c9a35b",
+        "inputs": [("in", "Value")], "outputs": [("out", "True?")],
+        "fields": [],
+        "note": "Flips true and false.",
+    },
 
     # ---------------- OSC ------------------------------------------------
     "osc_in": {
@@ -446,7 +488,8 @@ PALETTE_TREE = [
     ]),
     ("Text", [("", ["join", "format", "info", "style", "truncate",
                     "newline"])]),
-    ("Logic", [("", ["if", "compare", "nonempty"])]),
+    ("Logic", [("", ["if", "compare", "nonempty"]),
+               ("Gates", ["and", "or", "nor", "not"])]),
     ("Flow", [("", ["timer", "step", "button", "aio_change"])]),
     ("OSC", [("VRChat avatar", ["osc_in", "osc_out"]),
              ("External", ["ext_osc_in", "ext_osc_out"])]),

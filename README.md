@@ -48,7 +48,7 @@ Status rotation, now-playing, hardware stats, speech-to-text, live translation, 
 | 🎵 **MediaPlay** | Spotify / YT Music / VLC / browser — title, time, songbar, synced lyrics |
 | 🖥️ **Hardware** | GPU / CPU / RAM / VRAM, temps, watts, FPS |
 | 🧩 **All in one** | Merge everything into one master string, 10 layouts |
-| 🕸️ **Advanced mode** | A node canvas that builds the line visually — 34 blocks |
+| 🕸️ **Advanced mode** | A node canvas that builds the line visually — 38 blocks |
 | 🖼️ **Custom Box** | A frame around the chatbox, 12 templates + custom |
 | 💬 **Textbox & STT** | Type or speak, live translation into 13 languages |
 | 🧩 **Plugins** | Own page with store, install from GitHub in one click |
@@ -322,7 +322,8 @@ A **Mode switch** on the All in one card: *Normal* is the text fields, *Advanced
 
 - Blocks palette on the left, canvas in the middle, the selected block's values on the right — both side panels fold away and can be **dragged wider** (the width is remembered). Long Text fields grow with their content. Drag a block out of the palette, drag from an output dot to an input dot to wire it; middle mouse pans, the wheel zooms, Delete removes the selection
 - **One canvas per AIO string**, picked with tabs above the canvas, and each of the ten AIO templates keeps its own set of canvases
-- **34 blocks**: Sources (Text, Placeholder, Personal Status, GPU, CPU, RAM & System, MediaPlay, Chat/STT, Clock, Custom Box), Text (Join with 2–10 inputs, Format, Info, Style, Truncate, Line break), Logic (If/Else, Compare, Has value), Flow (Timer, Step, Button, Change AIO), OSC, Output, System and Hotkeys
+- **38 blocks**: Sources (Text, Placeholder, Personal Status, GPU, CPU, RAM & System, MediaPlay, Chat/STT, Clock, Custom Box), Text (Join with 2–10 inputs, Format, Info, Style, Truncate, Line break), Logic (If/Else, Compare, Has value, gates AND / OR / NOR / NOT), Flow (Timer, Step, Button, Change AIO), OSC, Output, System and Hotkeys
+- **Logic gates** (v1.6.8): AND, OR and NOR combine conditions (2–10 inputs, only wired inputs count, *Output: inverted* turns AND into NAND), NOT flips one – e.g. *song only while music plays AND NOT AFK*. Feed the result into an If / Else
 - Every placeholder a typed string can use is **draggable out of a grouped Variables list**, plugins included
 - **OSC input**: a listener that keeps the last value of every avatar parameter, with a picker so names are chosen rather than typed, plus blocks to read them and to write bool/int/float back
 - **Parameter log** (Options → OSC): a separate window that lists live which OSC parameters your avatar sends, plus a change log — the app keeps working while it is open

@@ -69,6 +69,10 @@ CHAT_SOURCES = {
 SIDE_EFFECT_TYPES = ("osc_out", "ext_osc_out", "aio_change", "hotkey",
                      "run_program")
 
+#: v1.6.8 logic gates with 2-10 inputs (the "count" field, like Join)
+GATE_TYPES = ("and", "or", "nor")
+GATE_KEYS = "abcdefghij"
+
 #: how many nodes one output slot may pull in before we call it a runaway
 #: graph. A canvas this size is not something you build by accident.
 MAX_STEPS = 500
@@ -304,6 +308,12 @@ class _Evaluator:
 
         if kind == "nonempty":
             return "1" if get_in("in").strip() else ""
+
+        if kind in GATE_TYPES:
+            return self._gate(node_id, kind, values)
+
+        if kind == "not":
+            return "" if get_in("in").strip() else "1"
 
         if kind == "osc_in":
             name = str(values.get("name", "")).strip()
@@ -666,6 +676,35 @@ class _Evaluator:
         if payload is None:
             return
         self.actions.append(("osc_set", name, payload))
+
+    def _gate(self, node_id, kind, values):
+        """AND / OR / NOR over the connected inputs only.
+
+        An unwired socket is left out instead of counting as false - a
+        spare input would otherwise make every AND false. With nothing
+        wired at all the gate stays empty (false), so a freshly dropped
+        NOR does not switch a line on by itself - inverted or not.
+        """
+        try:
+            count = int(values.get("count", 2))
+        except (TypeError, ValueError):
+            count = 2
+        count = max(2, min(len(GATE_KEYS), count))
+        states = [bool(self.input_of(node_id, key).strip())
+                  for key in GATE_KEYS[:count]
+                  if (node_id, key) in self.graph.wires]
+        if not states:
+            return ""
+        if kind == "and":
+            result = all(states)
+        elif kind == "or":
+            result = any(states)
+        else:
+            result = not any(states)
+        # "Output: inverted" turns AND into NAND, OR into NOR, NOR into OR
+        if str(values.get("invert", "normal")).strip().lower() == "inverted":
+            result = not result
+        return "1" if result else ""
 
     @staticmethod
     def _compare(op, a, b):

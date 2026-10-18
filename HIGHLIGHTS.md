@@ -3,6 +3,10 @@
 The short version of every release — what you will actually notice.
 The full details are in the changelog.
 
+## v1.6.8 – 2026-10-18
+
+- **Logic gates on the node canvas:** new **AND / OR / NOR / NOT** blocks combine conditions – e.g. show the song only while music plays **and** you are **not** AFK. A switch flips the result (AND → NAND).
+
 ## v1.6.7 – 2026-10-08
 
 - **Clear and aur fix** 
