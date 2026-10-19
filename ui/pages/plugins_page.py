@@ -23,6 +23,7 @@ from core.plugin_store import (PluginStore, StoreError, all_tags,
 from core.plugins import (
     ACTION_TYPE, ANCHOR_LABELS, PLUGIN_API_VERSION, UNSUPPORTED_TYPE,
     PluginError, PluginExistsError)
+from ui.flowlayout import FlowLayout
 from ui.ui_main import DragHandle, ToggleLabel, ToggleSwitch
 
 
@@ -215,7 +216,7 @@ class PluginsPageMixin:
         note.setWordWrap(True)
         c.addWidget(note)
 
-        btn_row = QHBoxLayout()
+        btn_row = FlowLayout()
         install_btn = QPushButton("\u2795  Install plugin from .zip")
         install_btn.setObjectName("sendbtn")
         install_btn.setFixedHeight(34)
@@ -248,7 +249,7 @@ class PluginsPageMixin:
         open_btn.clicked.connect(self.on_open_plugins_dir)
         btn_row.addWidget(open_btn)
 
-        repo_btn = QPushButton("\U0001F9E9  Plugins & template")
+        repo_btn = QPushButton("\U0001F9E9  Plugins && template")
         repo_btn.setObjectName("linkbtn")
         repo_btn.setFixedHeight(34)
         repo_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -1243,7 +1244,7 @@ class PluginsPageMixin:
         head.addWidget(self.store_status)
         c.addLayout(head)
 
-        btns = QHBoxLayout()
+        btns = FlowLayout()
         self.store_refresh_btn = QPushButton("\U0001F504  Refresh")
         self.store_refresh_btn.setObjectName("sendbtn")
         self.store_refresh_btn.setFixedHeight(34)
@@ -1264,7 +1265,7 @@ class PluginsPageMixin:
         self.store_update_btn.clicked.connect(self.on_store_update_all)
         btns.addWidget(self.store_update_btn)
 
-        repo_btn = QPushButton("\U0001F9E9  Plugins & template")
+        repo_btn = QPushButton("\U0001F9E9  Plugins && template")
         repo_btn.setObjectName("linkbtn")
         repo_btn.setFixedHeight(34)
         repo_btn.setCursor(Qt.CursorShape.PointingHandCursor)

@@ -453,7 +453,10 @@ class MainWindow(ConfigMixin, AppsPageMixin, AdvancedPageMixin,
         # ===================== middle (pages) =====================
         self.pages = QStackedWidget()
         self.pages.addWidget(self._wrap_scroll(self.build_apps_page()))
-        self.pages.addWidget(self._wrap_scroll(self.build_advanced_page()))
+        adv_scroll = self._wrap_scroll(self.build_advanced_page())
+        self.pages.addWidget(adv_scroll)
+        # folds the canvas side panels in a narrow window (v1.6.9)
+        self.watch_advanced_width(adv_scroll.viewport())
         self.pages.addWidget(self._wrap_scroll(self.build_textbox_page()))
         # order must match nav_buttons above - switch_page() indexes both
         self.pages.addWidget(self._wrap_scroll(self.build_plugins_page()))

@@ -3,6 +3,11 @@
 The short version of every release — what you will actually notice.
 The full details are in the changelog.
 
+## v1.6.9 – 2026-10-19
+
+- **Advanced mode fits small windows:** Blocks, Avatar and Variables sit behind tabs, side panels fold away by themselves when space runs out.
+- **No more sideways scrolling** on Options, Plugins and Textbox – buttons and tiles wrap onto the next line.
+
 ## v1.6.8 – 2026-10-18
 
 - **Logic gates on the node canvas:** new **AND / OR / NOR / NOT** blocks combine conditions – e.g. show the song only while music plays **and** you are **not** AFK. A switch flips the result (AND → NAND).

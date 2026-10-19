@@ -7,6 +7,32 @@ All notable changes to OSC-DreamChatbox are documented here.
 🟢 Linux Support: Complete & Stable (v1.2.6)
 
 
+## [v1.6.9] – 2026-10-19
+
+### Changed
+
+- **Advanced mode fits small windows.** The palette shows **Blocks**,
+  **Avatar** parameters or **Variables** one at a time behind tabs
+  instead of three lists stacked in one column – the open list gets the
+  full height (the last tab is remembered). In a narrow window the side
+  panels **fold away by themselves** (inspector first, then palette) and
+  come back when the window gets wider; panels folded or opened by hand
+  are left alone. With room for one panel only, selecting a block swaps
+  the palette for the inspector. The settings and button rows above the
+  canvas wrap, the block/connection status moved below the canvas, the
+  intro text is folded behind **ⓘ How it works** and "shared with the
+  All in one card" is a tooltip now (`ui/pages/advanced_page.py`).
+- **No more sideways scrolling** on Options (General, OSC, Design),
+  Plugins and Textbox: button rows, theme and background tiles wrap onto
+  the next line (new `ui/flowlayout.py`), long switch labels wrap, wide
+  dropdowns may get narrower.
+- **Custom Box:** shorter description.
+
+### Fixed
+
+- The **Plugins & template** button showed "Plugins _template" (Qt read
+  the `&` as a keyboard shortcut).
+
 ## [v1.6.8] – 2026-10-18
 
 ### Added

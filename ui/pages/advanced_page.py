@@ -21,17 +21,19 @@ between the two modes.
 
 import re
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import QEvent, QObject, Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QButtonGroup, QCheckBox, QComboBox, QDialog, QFileDialog, QFrame,
     QHBoxLayout, QLabel, QLineEdit, QListWidget, QPlainTextEdit,
-    QPushButton, QSpinBox, QSplitter, QVBoxLayout, QWidget)
+    QPushButton, QSpinBox, QSplitter, QStackedWidget, QVBoxLayout,
+    QWidget)
 
 from core.constants import AIO_MAX, STATUS_MAX_TEXTS
 from core.aioscroll import MAX_STEP_SEC, MIN_STEP_SEC, SCROLL_TIP as AIO_SCROLL_TIP
 from core.hotkeys import IS_WINDOWS
 from core.hotkeys import describe as describe_hotkey
 from core.nodegraph_eval import node_count
+from ui.flowlayout import FlowLayout
 from ui.nodegraph import (
     BlockTree, NodeCanvas, OscParamPalette, VariableTree)
 from ui.pages.placeholder_picker import (
@@ -45,8 +47,12 @@ _PLACEHOLDER_RE = re.compile(r"\{([a-z0-9_]+)\}", re.IGNORECASE)
 #: the range the splitter handle may move them in
 PALETTE_WIDTH = 196
 INSPECTOR_WIDTH = 232
-PANEL_MIN = (160, 200)          # palette, inspector
+PANEL_MIN = (170, 190)          # palette, inspector
 PANEL_MAX = 600
+#: narrowest the canvas may get before a side panel folds itself away
+CANVAS_MIN = 240
+#: splitter handle width
+HANDLE_W = 6
 #: width of the "show panel" tab that stays behind when one is folded
 PANEL_STRIP = 30
 
@@ -82,6 +88,20 @@ class AutoGrowEdit(QPlainTextEdit):
         self._fit()
 
 
+class _ResizeWatch(QObject):
+    """Calls back with the new width whenever `widget` is resized."""
+
+    def __init__(self, widget, on_width):
+        super().__init__(widget)
+        self._on_width = on_width
+        widget.installEventFilter(self)
+
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.Type.Resize:
+            self._on_width(event.size().width())
+        return False
+
+
 class AdvancedPageMixin:
     # ------------------------------------------------------------------
     # page
@@ -91,6 +111,8 @@ class AdvancedPageMixin:
         layout = QVBoxLayout(page)
         layout.setContentsMargins(28, 24, 28, 24)
         layout.setSpacing(16)
+        # page + card side margins, for the width watcher
+        self.graph_page_margins = 28 * 2 + 12 * 2
 
         title = QLabel("Advanced mode")
         title.setObjectName("pagetitle")
@@ -107,13 +129,25 @@ class AdvancedPageMixin:
             "removes what is selected.")
         intro.setObjectName("dim")
         intro.setWordWrap(True)
+        # v1.6.9: folded behind a link - six lines of help above the
+        # canvas in a narrow window pushed the canvas below the fold
+        intro.setVisible(False)
+        how = QPushButton("\u24d8  How it works")
+        how.setObjectName("linkbtn")
+        how.setCheckable(True)
+        how.setCursor(Qt.CursorShape.PointingHandCursor)
+        how.toggled.connect(intro.setVisible)
+        how_row = QHBoxLayout()
+        how_row.addWidget(how)
+        how_row.addStretch()
+        layout.addLayout(how_row)
         layout.addWidget(intro)
 
         card = QFrame()
         card.setObjectName("card")
         c_layout = QVBoxLayout(card)
-        c_layout.setContentsMargins(16, 14, 16, 16)
-        c_layout.setSpacing(12)
+        c_layout.setContentsMargins(12, 12, 12, 12)
+        c_layout.setSpacing(10)
 
         c_layout.addWidget(self._build_graph_template_box())
         c_layout.addLayout(self._build_graph_rotation_row())
@@ -125,7 +159,7 @@ class AdvancedPageMixin:
         split = QSplitter(Qt.Orientation.Horizontal)
         split.setObjectName("graphsplit")
         split.setChildrenCollapsible(False)
-        split.setHandleWidth(6)
+        split.setHandleWidth(HANDLE_W)
         split.setStyleSheet(
             "QSplitter#graphsplit::handle:hover,"
             "QSplitter#graphsplit::handle:pressed"
@@ -142,7 +176,7 @@ class AdvancedPageMixin:
             self.on_graph_changed)
         self.graph_canvas.selectionChanged.connect(self.on_graph_selection)
         # dragging a panel wide must never squeeze the canvas to nothing
-        self.graph_canvas.setMinimumWidth(320)
+        self.graph_canvas.setMinimumWidth(CANVAS_MIN)
         split.addWidget(self.graph_canvas)
 
         self.graph_inspector_panel = self._build_node_inspector()
@@ -158,6 +192,13 @@ class AdvancedPageMixin:
         split.setSizes([left, 1000, right])
         split.splitterMoved.connect(self._on_graph_split_moved)
         c_layout.addWidget(split, 1)
+
+        # v1.6.9: under the canvas instead of in the toolbar - the
+        # warning text is long and pushed the buttons onto a new line
+        self.graph_status_lbl = QLabel("")
+        self.graph_status_lbl.setObjectName("dim")
+        self.graph_status_lbl.setWordWrap(True)
+        c_layout.addWidget(self.graph_status_lbl)
 
         layout.addWidget(card, 1)
         return page
@@ -247,36 +288,47 @@ class AdvancedPageMixin:
     def _build_graph_rotation_row(self):
         """The same two settings the All in one card has, on the same
         config keys. They belong to the strings, not to a mode, so
-        changing one here changes it there."""
-        row = QHBoxLayout()
-        row.setSpacing(8)
-        row.addWidget(QLabel("Number of strings"))
+        changing one here changes it there.
+
+        v1.6.9: a flow instead of one long row - each label stays with
+        its spin box, and what does not fit moves to the next line
+        instead of pushing a horizontal scrollbar onto the page."""
+        row = FlowLayout(spacing=16, v_spacing=6)
+
+        g = QHBoxLayout()
+        g.setSpacing(8)
+        g.addWidget(QLabel("Number of strings"))
         self.graph_count_spin = QSpinBox()
         self.graph_count_spin.setObjectName("smallspin")
         self.graph_count_spin.setRange(1, AIO_MAX)
         self.graph_count_spin.setFixedSize(64, 28)
         self.graph_count_spin.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.graph_count_spin.valueChanged.connect(self.on_graph_count)
-        row.addWidget(self.graph_count_spin)
-        row.addSpacing(16)
+        g.addWidget(self.graph_count_spin)
+        row.addLayout(g)
 
+        g = QHBoxLayout()
+        g.setSpacing(8)
         self.graph_rotate_chk = QCheckBox("Rotate strings every")
         self.graph_rotate_chk.toggled.connect(self.on_graph_rotate)
-        row.addWidget(self.graph_rotate_chk)
+        g.addWidget(self.graph_rotate_chk)
         self.graph_rotate_spin = QSpinBox()
         self.graph_rotate_spin.setObjectName("smallspin")
         self.graph_rotate_spin.setRange(2, 3600)
         self.graph_rotate_spin.setFixedSize(72, 28)
         self.graph_rotate_spin.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.graph_rotate_spin.valueChanged.connect(self.on_graph_rotate_sec)
-        row.addWidget(self.graph_rotate_spin)
-        row.addWidget(QLabel("sec"))
-        row.addSpacing(16)
+        g.addWidget(self.graph_rotate_spin)
+        g.addWidget(QLabel("sec"))
+        row.addLayout(g)
+
         # v1.6.6: the same scroll option as on the All in one card
+        g = QHBoxLayout()
+        g.setSpacing(8)
         self.graph_scroll_chk = QCheckBox("Scroll,")
         self.graph_scroll_chk.setToolTip(AIO_SCROLL_TIP)
         self.graph_scroll_chk.toggled.connect(self.on_aio_scroll)
-        row.addWidget(self.graph_scroll_chk)
+        g.addWidget(self.graph_scroll_chk)
         self.graph_scroll_spin = QSpinBox()
         self.graph_scroll_spin.setObjectName("smallspin")
         self.graph_scroll_spin.setRange(MIN_STEP_SEC, MAX_STEP_SEC)
@@ -284,13 +336,18 @@ class AdvancedPageMixin:
         self.graph_scroll_spin.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.graph_scroll_spin.setToolTip(AIO_SCROLL_TIP)
         self.graph_scroll_spin.valueChanged.connect(self.on_aio_scroll_sec)
-        row.addWidget(self.graph_scroll_spin)
-        row.addWidget(QLabel("sec/line"))
-        row.addStretch()
+        g.addWidget(self.graph_scroll_spin)
+        g.addWidget(QLabel("sec/line"))
+        row.addLayout(g)
 
-        hint = QLabel("shared with the All in one card")
-        hint.setObjectName("dim")
-        row.addWidget(hint)
+        # v1.6.9: was a label at the end of the row; as a tooltip it no
+        # longer costs a line of its own once the row wraps
+        shared = "Shared with the All in one card \u2013 same setting."
+        for w in (self.graph_count_spin, self.graph_rotate_chk,
+                  self.graph_rotate_spin):
+            w.setToolTip(shared)
+        self.graph_scroll_chk.setToolTip(f"{AIO_SCROLL_TIP}\n\n{shared}")
+        self.graph_scroll_spin.setToolTip(f"{AIO_SCROLL_TIP}\n\n{shared}")
         return row
 
     def _build_graph_toolbar(self):
@@ -301,12 +358,15 @@ class AdvancedPageMixin:
         tabs - which is what they are - and the canvas gets the space
         back.
         """
-        bar = QHBoxLayout()
-        bar.setSpacing(3)
+        # v1.6.9: three pieces in a flow (tabs | status | actions), so a
+        # narrow window wraps them instead of scrolling sideways
+        bar = FlowLayout(spacing=14, v_spacing=6)
+        tabs = QHBoxLayout()
+        tabs.setSpacing(3)
 
         aio_lbl = QLabel("AIO:")
         aio_lbl.setObjectName("dim")
-        bar.addWidget(aio_lbl)
+        tabs.addWidget(aio_lbl)
 
         # bare numbers, and only as many as "Number of strings" allows.
         # Ten tabs reading "AIO 7" would be most of the header width
@@ -323,16 +383,12 @@ class AdvancedPageMixin:
             b.setCursor(Qt.CursorShape.PointingHandCursor)
             b.setFixedWidth(34)
             self.graph_slot_group.addButton(b, i)
-            bar.addWidget(b)
+            tabs.addWidget(b)
             self.graph_slot_buttons.append(b)
         self.graph_slot_group.idClicked.connect(self.on_graph_slot)
         self.graph_slot_buttons[0].setChecked(True)
+        bar.addLayout(tabs)
 
-        bar.addSpacing(14)
-        self.graph_status_lbl = QLabel("")
-        self.graph_status_lbl.setObjectName("dim")
-        bar.addWidget(self.graph_status_lbl)
-        bar.addStretch()
 
         btn_fit = QPushButton("Reset view")
         btn_fit.setObjectName("linkbtn")
@@ -398,6 +454,7 @@ class AdvancedPageMixin:
                 saved["w"] = sizes[index]
             panel.setVisible(not collapsed)
             strip.setVisible(collapsed)
+            self._graph_folded[side] = collapsed
             # in a splitter the width does not follow the content by
             # itself: pin the folded tab, give the panel its width back
             holder.setMaximumWidth(PANEL_STRIP if collapsed else PANEL_MAX)
@@ -408,9 +465,21 @@ class AdvancedPageMixin:
                 sizes[index] = want
                 split.setSizes(sizes)
 
+        # v1.6.9: the width watcher (see _graph_fit_width) folds panels
+        # by itself in a narrow window - a click by hand always wins and
+        # is never undone by it
+        if not hasattr(self, "_graph_fold"):
+            self._graph_fold, self._graph_folded = {}, {}
+            self._graph_auto_folded = set()
+        self._graph_fold[side] = apply
+
+        def by_hand(collapsed):
+            self._graph_auto_folded.discard(side)
+            apply(collapsed)
+
         hide_button.setToolTip(f"Hide {name}")
-        hide_button.clicked.connect(lambda: apply(True))
-        show_btn.clicked.connect(lambda: apply(False))
+        hide_button.clicked.connect(lambda: by_hand(True))
+        show_btn.clicked.connect(lambda: by_hand(False))
         apply(False)
 
         if side == "left":
@@ -421,6 +490,79 @@ class AdvancedPageMixin:
             row.addWidget(panel)
         holder.setMaximumWidth(PANEL_MAX)
         return holder
+
+    def watch_advanced_width(self, viewport):
+        """Called by the main window once the page sits in its scroll
+        area. Folds the side panels when the window gets too narrow for
+        palette + canvas + inspector, and opens them again when it gets
+        wide enough (v1.6.9) - instead of a horizontal scrollbar."""
+        self._graph_width_watch = _ResizeWatch(
+            viewport, lambda w: self._graph_fit_width(w))
+
+    @staticmethod
+    def _graph_need(left_open, right_open):
+        """Width the splitter needs with these panels open."""
+        return ((PANEL_MIN[0] if left_open else PANEL_STRIP)
+                + (PANEL_MIN[1] if right_open else PANEL_STRIP)
+                + CANVAS_MIN + 2 * HANDLE_W)
+
+    def _graph_swap_for_selection(self, selected):
+        """Only room for one panel: a selected block brings the
+        inspector out and folds the palette, deselecting swaps back.
+        Panels the user folded or opened by hand are left alone."""
+        if not hasattr(self, "_graph_auto_folded"):
+            return
+        auto = self._graph_auto_folded
+        if selected and "right" in auto and "left" not in auto \
+                and not self._graph_folded.get("left"):
+            avail = getattr(self, "_graph_last_w", 0) - self.graph_page_margins
+            if avail >= self._graph_need(False, True):
+                auto.discard("right")
+                auto.add("left")
+                self._graph_swapped = True
+                self._graph_fold["left"](True)
+                self._graph_fold["right"](False)
+        elif not selected and getattr(self, "_graph_swapped", False):
+            self._graph_swapped = False
+            if "left" in auto and not self._graph_folded.get("right"):
+                auto.discard("left")
+                auto.add("right")
+                self._graph_fold["right"](True)
+                self._graph_fold["left"](False)
+
+    def _graph_fit_width(self, viewport_w):
+        if not hasattr(self, "_graph_fold"):
+            return
+        self._graph_last_w = viewport_w
+        avail = viewport_w - self.graph_page_margins
+        need = self._graph_need
+
+        left_open = not self._graph_folded.get("left")
+        right_open = not self._graph_folded.get("right")
+        # too narrow: inspector first (it is empty until a block is
+        # selected), then the palette
+        for side in ("right", "left"):
+            if avail >= need(left_open, right_open):
+                break
+            if side == "right" and right_open:
+                right_open = False
+            elif side == "left" and left_open:
+                left_open = False
+            else:
+                continue
+            self._graph_auto_folded.add(side)
+            self._graph_fold[side](True)
+        # wide again: give back only what was folded automatically,
+        # palette first
+        for side in ("left", "right"):
+            if side not in self._graph_auto_folded:
+                continue
+            lo = left_open or side == "left"
+            ro = right_open or side == "right"
+            if avail >= need(lo, ro):
+                left_open, right_open = lo, ro
+                self._graph_auto_folded.discard(side)
+                self._graph_fold[side](False)
 
     def _on_graph_split_moved(self, _pos, _index):
         """Remembers the panel widths (debounced - this fires on every
@@ -444,6 +586,13 @@ class AdvancedPageMixin:
         return b
 
     def _build_node_palette(self):
+        """Blocks, avatar parameters and variables.
+
+        v1.6.9: one section at a time behind three tabs. Stacked under
+        each other the three lists shared one column - the block tree got
+        a few rows, the variables ended below the canvas, and the page
+        had to scroll to reach them. Now the open list gets the full
+        height of the panel."""
         box = QFrame()
         box.setObjectName("innerbox")
         box.setMinimumWidth(PANEL_MIN[0])
@@ -452,17 +601,53 @@ class AdvancedPageMixin:
         v.setSpacing(6)
 
         head_row = QHBoxLayout()
-        head = QLabel("Blocks")
-        head.setObjectName("cardtitle")
-        head_row.addWidget(head)
+        self.graph_palette_title = QLabel("Blocks")
+        self.graph_palette_title.setObjectName("cardtitle")
+        head_row.addWidget(self.graph_palette_title)
         head_row.addStretch()
         self.graph_palette_hide = self._panel_hide_button("left")
         head_row.addWidget(self.graph_palette_hide)
         v.addLayout(head_row)
+
+        sections = (("Blocks", "Blocks",
+                     "Every block, by category"),
+                    ("Avatar", "Avatar",
+                     "Parameters your avatar sent over OSC"),
+                    ("Vars", "Variables",
+                     "Everything a typed AIO string can use"))
+        tab_row = QHBoxLayout()
+        tab_row.setSpacing(3)
+        self.graph_palette_tabs = QButtonGroup(self)
+        self.graph_palette_tabs.setExclusive(True)
+        for i, (short, _title, tip) in enumerate(sections):
+            b = QPushButton(short)
+            b.setObjectName("slottab")
+            b.setCheckable(True)
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.setToolTip(tip)
+            b.setProperty("compact", True)
+            b.setMinimumWidth(0)
+            self.graph_palette_tabs.addButton(b, i)
+            tab_row.addWidget(b, 1)
+        v.addLayout(tab_row)
+
+        self.graph_palette_stack = QStackedWidget()
+        v.addWidget(self.graph_palette_stack, 1)
+
+        def section():
+            w = QWidget()
+            lay = QVBoxLayout(w)
+            lay.setContentsMargins(0, 4, 0, 0)
+            lay.setSpacing(6)
+            self.graph_palette_stack.addWidget(w)
+            return lay
+
+        # ---- blocks ---------------------------------------------------
+        sv = section()
         hint = QLabel("Drag onto the canvas")
         hint.setObjectName("dim")
         hint.setWordWrap(True)
-        v.addWidget(hint)
+        sv.addWidget(hint)
 
         # Thirty-four blocks in six collapsed categories: knowing that
         # "Send Hotkey" is under System is a thing you learn, not a thing
@@ -476,42 +661,55 @@ class AdvancedPageMixin:
             "the ones that talk to VRChat.")
         self.graph_block_search.textChanged.connect(
             lambda t: self.graph_block_tree.apply_filter(t))
-        v.addWidget(self.graph_block_search)
+        sv.addWidget(self.graph_block_search)
 
         self.graph_block_tree = BlockTree()
-        v.addWidget(self.graph_block_tree, 1)
+        sv.addWidget(self.graph_block_tree, 1)
 
         # ---- avatar parameters ----------------------------------------
-        osc_head = QLabel("Avatar parameters")
-        osc_head.setObjectName("cardtitle")
-        v.addWidget(osc_head)
+        sv = section()
         self.graph_osc_hint = QLabel("")
         self.graph_osc_hint.setObjectName("dim")
         self.graph_osc_hint.setWordWrap(True)
-        v.addWidget(self.graph_osc_hint)
+        sv.addWidget(self.graph_osc_hint)
         self.graph_osc_list = OscParamPalette()
-        v.addWidget(self.graph_osc_list)
+        sv.addWidget(self.graph_osc_list)
+        sv.addStretch()
 
         # ---- variables ------------------------------------------------
-        var_head = QLabel("Variables")
-        var_head.setObjectName("cardtitle")
-        v.addWidget(var_head)
-        var_hint = QLabel("Everything a typed AIO string can use, grouped "
-                          "like the \u201c+\u201d menu \u2013 drag one "
-                          "over and it arrives as a ready-made block.")
+        sv = section()
+        var_hint = QLabel("Grouped like the \u201c+\u201d menu \u2013 drag "
+                          "one over and it arrives as a ready-made block.")
         var_hint.setObjectName("dim")
         var_hint.setWordWrap(True)
-        v.addWidget(var_hint)
+        sv.addWidget(var_hint)
 
         self.graph_var_search = QLineEdit()
         self.graph_var_search.setPlaceholderText("Search \u2026")
         self.graph_var_search.setClearButtonEnabled(True)
         self.graph_var_search.textChanged.connect(
             lambda t: self.graph_var_list.apply_filter(t))
-        v.addWidget(self.graph_var_search)
+        sv.addWidget(self.graph_var_search)
 
         self.graph_var_list = VariableTree()
-        v.addWidget(self.graph_var_list, 1)
+        sv.addWidget(self.graph_var_list, 1)
+
+        def show_section(i):
+            self.graph_palette_stack.setCurrentIndex(i)
+            self.graph_palette_title.setText(sections[i][1])
+            self.graph_palette_tabs.button(i).setChecked(True)
+            cfg = getattr(self, "cfg", None)
+            if cfg is not None and cfg.get("graph_palette_tab") != i:
+                cfg["graph_palette_tab"] = i
+                self.save_config_later()
+
+        self.graph_palette_tabs.idClicked.connect(show_section)
+        start = int((getattr(self, "cfg", None) or {}).get(
+            "graph_palette_tab", 0) or 0)
+        start = start if 0 <= start < len(sections) else 0
+        self.graph_palette_stack.setCurrentIndex(start)
+        self.graph_palette_title.setText(sections[start][1])
+        self.graph_palette_tabs.button(start).setChecked(True)
         return box
 
     def _build_node_inspector(self):
@@ -811,6 +1009,7 @@ class AdvancedPageMixin:
                 w.deleteLater()
 
         self.graph_delete_btn.setEnabled(node is not None)
+        self._graph_swap_for_selection(node is not None)
         if node is None:
             self.graph_inspect_title.setText("Nothing selected")
             self.graph_inspect_note.setText(

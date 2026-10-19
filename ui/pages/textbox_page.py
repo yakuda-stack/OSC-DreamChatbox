@@ -127,6 +127,16 @@ def first_service_index(combo):
     return next((i for i in range(combo.count()) if combo.itemData(i)), -1)
 
 
+
+def _shrinkable(combo, chars=12):
+    """A combo box whose minimum width does not follow its longest entry
+    (v1.6.9) - the page wraps narrower instead of scrolling sideways.
+    The open list still shows the full names."""
+    combo.setSizeAdjustPolicy(
+        QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+    combo.setMinimumContentsLength(chars)
+    return combo
+
 class TextboxPageMixin:
     @staticmethod
     def _key_link(text, url, tooltip=""):
@@ -330,6 +340,7 @@ class TextboxPageMixin:
             "Favorites only, once you have marked some in the "
             "Translation card \u2013 otherwise every service.")
         self.tr_active_combo.currentIndexChanged.connect(self.on_tr_active)
+        _shrinkable(self.tr_active_combo)
         svc_row.addWidget(self.tr_active_combo, 1)
         sc.addLayout(svc_row)
 
@@ -349,6 +360,7 @@ class TextboxPageMixin:
         for name, code in OUTPUT_LANGUAGES:
             self.stt_out_combo.addItem(name, code)
         self.stt_out_combo.currentIndexChanged.connect(self.on_stt_output)
+        _shrinkable(self.stt_out_combo)
         out_row.addWidget(self.stt_out_combo)
         out_row.addStretch()
         sc.addLayout(out_row)
@@ -792,6 +804,10 @@ class TextboxPageMixin:
         # what is active, readable while the card is collapsed
         self.tr_summary_lbl = QLabel("")
         self.tr_summary_lbl.setObjectName("dim")
+        # long service names wrap instead of widening the page (v1.6.9)
+        self.tr_summary_lbl.setWordWrap(True)
+        self.tr_summary_lbl.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         thead.addWidget(self.tr_summary_lbl)
         tco.addLayout(thead)
         self.tr_expander = self.make_settings_expander(

@@ -321,6 +321,7 @@ A **Mode switch** on the All in one card: *Normal* is the text fields, *Advanced
 <summary><b>Details</b></summary>
 
 - Blocks palette on the left, canvas in the middle, the selected block's values on the right — both side panels fold away and can be **dragged wider** (the width is remembered). Long Text fields grow with their content. Drag a block out of the palette, drag from an output dot to an input dot to wire it; middle mouse pans, the wheel zooms, Delete removes the selection
+- **Fits small windows** (v1.6.9): the palette shows Blocks, Avatar parameters or Variables one at a time behind tabs, and in a narrow window the side panels fold away by themselves (and come back when it gets wider) — no sideways scrolling. Button rows on every page wrap onto the next line instead
 - **One canvas per AIO string**, picked with tabs above the canvas, and each of the ten AIO templates keeps its own set of canvases
 - **38 blocks**: Sources (Text, Placeholder, Personal Status, GPU, CPU, RAM & System, MediaPlay, Chat/STT, Clock, Custom Box), Text (Join with 2–10 inputs, Format, Info, Style, Truncate, Line break), Logic (If/Else, Compare, Has value, gates AND / OR / NOR / NOT), Flow (Timer, Step, Button, Change AIO), OSC, Output, System and Hotkeys
 - **Logic gates** (v1.6.8): AND, OR and NOR combine conditions (2–10 inputs, only wired inputs count, *Output: inverted* turns AND into NAND), NOT flips one – e.g. *song only while music plays AND NOT AFK*. Feed the result into an If / Else

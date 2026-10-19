@@ -76,19 +76,10 @@ class CustomBoxMixin:
         head.addWidget(ToggleLabel("Active", self.toggle_box))
         layout.addLayout(head)
 
-        desc = QLabel("Hangs one line above everything and one line below "
-                      "everything, so the chatbox looks like a closed box. "
-                      "The top line is always the first line of the "
-                      "message, the bottom line always the last. Two lines "
-                      "and their characters come out of the same 144 as "
-                      "everything else, so keep an eye on the counter under "
-                      "the preview. With every app quiet nothing is sent at "
-                      "all \u2013 an empty frame is not worth a message.\n"
-                      "With All in one active the frame is NOT wrapped "
-                      "around the message: there you place it yourself "
-                      "with {box_start}, {box_stop} and {box_text}, which "
-                      "is the only way it can sit where you want it "
-                      "relative to your strings and your plugin lines.")
+        desc = QLabel("A frame around the chatbox: one line on top, one at "
+                      "the bottom. Both count towards the 144 characters.\n"
+                      "With All in one active, place it yourself with "
+                      "{box_start}, {box_stop} and {box_text}.")
         desc.setObjectName("dim")
         desc.setWordWrap(True)
         layout.addWidget(desc)

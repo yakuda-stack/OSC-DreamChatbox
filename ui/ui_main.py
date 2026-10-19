@@ -62,10 +62,15 @@ class ToggleSwitch(QCheckBox):
 
 class ToggleLabel(QLabel):
     """Label next to a toggle – clicking the text toggles it too."""
-    def __init__(self, text, toggle):
+    def __init__(self, text, toggle, wrap=False):
         super().__init__(text)
         self._toggle = toggle
         self.setCursor(Qt.CursorShape.PointingHandCursor)
+        if wrap:
+            # long texts break onto a second line instead of forcing a
+            # horizontal scrollbar on the page (v1.6.9)
+            self.setWordWrap(True)
+            self.setMinimumWidth(1)
 
     def mousePressEvent(self, ev):
         self._toggle.toggle()
@@ -320,6 +325,8 @@ QPlainTextEdit { background: #0d0f13; }
     border-bottom: 2px solid #5b8dc9; color: #ffffff;
 }
 #slottab:disabled { color: #3a3f4a; border-bottom-color: #2c313c; }
+/* the Blocks / Avatar / Vars tabs in the narrow palette panel */
+#slottab[compact="true"] { padding: 6px 1px; font-size: 11px; }
 /* node editor (ui/nodegraph.py). The canvas paints its own background
    and items - only the frame around it is styled here. */
 #nodecanvas {

@@ -30,6 +30,7 @@ from core.oscquery import HAS_ZEROCONF
 from core.plugin_store import compare_versions
 from core.osinfo import IS_WINDOWS, OS_NAME
 from ui.docviewer import CHANGELOG_FILE, HIGHLIGHTS_FILE, show_doc
+from ui.flowlayout import FlowLayout
 from ui.ui_main import ToggleLabel, ToggleSwitch
 try:
     from pythonosc.udp_client import SimpleUDPClient
@@ -37,6 +38,15 @@ except ImportError:
     print("Error: python-osc is not installed.  ->  pip install python-osc")
     sys.exit(1)
 
+
+
+def _shrinkable(combo, chars=12):
+    """A combo box whose minimum width does not follow its longest entry
+    (v1.6.9) - the open list still shows the full names."""
+    combo.setSizeAdjustPolicy(
+        QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+    combo.setMinimumContentsLength(chars)
+    return combo
 
 class OptionsPageMixin:
     def build_options_page(self):
@@ -119,8 +129,7 @@ class OptionsPageMixin:
         qtog_row.addWidget(self.toggle_oscquery)
         qtog_row.addWidget(ToggleLabel(
             "Native OSCQuery (dynamic port + VRChat auto-detect)",
-            self.toggle_oscquery))
-        qtog_row.addStretch()
+            self.toggle_oscquery, wrap=True), 1)
         qc.addLayout(qtog_row)
         self.oscq_status = QLabel("")
         self.oscq_status.setObjectName("dim")
@@ -138,20 +147,23 @@ class OptionsPageMixin:
         iline.setObjectName("hline")
         qc.addWidget(iline)
 
-        itog_row = QHBoxLayout()
+        # v1.6.9: toggle | port | log button wrap as three pieces
+        itog_row = FlowLayout(spacing=16)
+        g = QHBoxLayout()
         self.toggle_osc_in = ToggleSwitch()
         self.toggle_osc_in.toggled.connect(self.on_osc_input_toggled)
-        itog_row.addWidget(self.toggle_osc_in)
-        itog_row.addWidget(ToggleLabel(
+        g.addWidget(self.toggle_osc_in)
+        g.addWidget(ToggleLabel(
             "Receive avatar parameters (OSC input)", self.toggle_osc_in))
-        itog_row.addSpacing(16)
-        itog_row.addWidget(QLabel("Port"))
+        itog_row.addLayout(g)
+        g = QHBoxLayout()
+        g.addWidget(QLabel("Port"))
         self.osc_in_port = QSpinBox()
         self.osc_in_port.setRange(1024, 65535)
         self.osc_in_port.setFixedWidth(90)
         self.osc_in_port.valueChanged.connect(self.on_osc_input_port)
-        itog_row.addWidget(self.osc_in_port)
-        itog_row.addStretch()
+        g.addWidget(self.osc_in_port)
+        itog_row.addLayout(g)
         # v1.6.6: which parameters does my avatar send? Own window, the
         # app stays usable while it is open
         plog_btn = QPushButton("\U0001F4CB  Parameter log")
@@ -175,20 +187,23 @@ class OptionsPageMixin:
         idesc.setWordWrap(True)
         qc.addWidget(idesc)
 
-        ext_row = QHBoxLayout()
-        ext_row.addWidget(QLabel("External OSC target"))
+        ext_row = FlowLayout(spacing=16)
+        g = QHBoxLayout()
+        g.addWidget(QLabel("External OSC target"))
         self.osc_ext_ip = QLineEdit()
         self.osc_ext_ip.setFixedWidth(140)
         self.osc_ext_ip.setPlaceholderText("127.0.0.1")
         self.osc_ext_ip.editingFinished.connect(self.on_osc_ext_ip)
-        ext_row.addWidget(self.osc_ext_ip)
-        ext_row.addWidget(QLabel("Port"))
+        g.addWidget(self.osc_ext_ip)
+        ext_row.addLayout(g)
+        g = QHBoxLayout()
+        g.addWidget(QLabel("Port"))
         self.osc_ext_port = QSpinBox()
         self.osc_ext_port.setRange(1, 65535)
         self.osc_ext_port.setFixedWidth(90)
         self.osc_ext_port.valueChanged.connect(self.on_osc_ext_port)
-        ext_row.addWidget(self.osc_ext_port)
-        ext_row.addStretch()
+        g.addWidget(self.osc_ext_port)
+        ext_row.addLayout(g)
         qc.addLayout(ext_row)
         ext_desc = QLabel(
             "Where the \u201cExternal OSC out\u201d block sends when it "
@@ -311,8 +326,7 @@ class OptionsPageMixin:
         self.toggle_slim.toggled.connect(self.on_slim_toggled)
         row.addWidget(self.toggle_slim)
         row.addWidget(ToggleLabel('Slim Chatbox  (slim bar instead of big box – "BlankEgg" trick)',
-                                  self.toggle_slim))
-        row.addStretch()
+                                  self.toggle_slim, wrap=True), 1)
         c.addLayout(row)
         hint = QLabel("Appends invisible characters (\\u0003\\u001f) to the text so "
                       "VRChat renders the chatbox as a slim bar only. Default: ON")
@@ -370,8 +384,7 @@ class OptionsPageMixin:
         clear_row.addWidget(self.toggle_clear_empty)
         clear_row.addWidget(ToggleLabel(
             "Clear chatbox when there is nothing to send",
-            self.toggle_clear_empty))
-        clear_row.addStretch()
+            self.toggle_clear_empty, wrap=True), 1)
         c.addLayout(clear_row)
         clear_hint = QLabel(
             "When every app is off or has nothing to show (e.g. the song "
@@ -424,6 +437,7 @@ class OptionsPageMixin:
         for label, val in NOTIFY_MODES:
             self.notify_combo.addItem(label, val)
         self.notify_combo.currentIndexChanged.connect(self.on_notify_mode)
+        _shrinkable(self.notify_combo, 8)
         n_row.addWidget(self.notify_combo, 1)
         nc.addLayout(n_row)
         # who plays it - VRChat's own sound, the app's, or both
@@ -508,7 +522,7 @@ class OptionsPageMixin:
         upd_card, upd = self._opt_card(
             "Updates",
             "Check whether a new version is out, and read what changed.")
-        upd_row = QHBoxLayout()
+        upd_row = FlowLayout()
         upd_row.setSpacing(8)
         upd_row.addWidget(self._opt_button(
             "\U0001F504  Check for updates", "sendbtn",
@@ -549,7 +563,7 @@ class OptionsPageMixin:
         com_card, com = self._opt_card(
             "Community",
             "Questions, ideas and bug reports are welcome on Discord.")
-        com_row = QHBoxLayout()
+        com_row = FlowLayout()
         com_row.setSpacing(8)
         com_row.addWidget(self._opt_button(
             "\U0001F4AC  Discord", "linkbtn",
@@ -573,7 +587,7 @@ class OptionsPageMixin:
             "Switch profiles and save new ones in the Profile dropdown at "
             "the bottom of the sidebar. Rename or delete the ACTIVE "
             "profile here.")
-        prof_row = QHBoxLayout()
+        prof_row = FlowLayout()
         prof_row.setSpacing(8)
         prof_row.addWidget(self._opt_button(
             "\U0001F4C2  Open profiles folder", "linkbtn",
@@ -589,7 +603,7 @@ class OptionsPageMixin:
         prof_row.addStretch()
         prof.addLayout(prof_row)
 
-        io_row = QHBoxLayout()
+        io_row = FlowLayout()
         io_row.setSpacing(8)
         io_row.addWidget(self._opt_button(
             "\U0001F4E4  Export active", "linkbtn",
@@ -613,8 +627,8 @@ class OptionsPageMixin:
         exit_row.addWidget(self.toggle_profile_exit)
         exit_row.addWidget(ToggleLabel(
             "Save the active profile when the app closes  "
-            "(settings and plugin settings)", self.toggle_profile_exit))
-        exit_row.addStretch()
+            "(settings and plugin settings)", self.toggle_profile_exit,
+            wrap=True), 1)
         prof.addLayout(exit_row)
         general_lay.addWidget(prof_card)
 
@@ -624,7 +638,7 @@ class OptionsPageMixin:
             "Runs the chatbox without this window – same settings, "
             "same plugins, less than half the memory. The window closes "
             "and a terminal opens; type DCB-UI there to come back.")
-        term_row = QHBoxLayout()
+        term_row = FlowLayout()
         term_row.setSpacing(8)
         term_row.addWidget(self._opt_button(
             "⌨️  Start in terminal mode", "linkbtn",
@@ -672,7 +686,7 @@ class OptionsPageMixin:
                 "Fixes",
                 "One-click repairs for Linux desktops. Each one does "
                 "nothing if it is already set up.")
-            fix_row = QHBoxLayout()
+            fix_row = FlowLayout()
             fix_row.setSpacing(8)
             fix_row.addWidget(self.tray_fix_btn)
             fix_row.addWidget(self.vrc_pic_btn)
@@ -786,7 +800,9 @@ class OptionsPageMixin:
         c.addWidget(hint)
 
         # ---- theme tiles
-        self.theme_grid = QGridLayout()
+        # v1.6.9: tiles flow onto the next line instead of a fixed five
+        # columns that forced a horizontal scrollbar
+        self.theme_grid = FlowLayout()
         self.theme_grid.setSpacing(8)
         c.addLayout(self.theme_grid)
         self._build_theme_tiles()
@@ -831,7 +847,7 @@ class OptionsPageMixin:
         bg_head.addWidget(add_bg)
         c.addLayout(bg_head)
 
-        self.bg_grid = QGridLayout()
+        self.bg_grid = FlowLayout()
         self.bg_grid.setSpacing(8)
         c.addLayout(self.bg_grid)
 
@@ -907,7 +923,6 @@ class OptionsPageMixin:
             tile.mousePressEvent = (
                 lambda ev, k=tid: self.on_theme_selected(k))
             self.theme_grid.addWidget(tile, i // 5, i % 5)
-        self.theme_grid.setColumnStretch(5, 1)
 
     def _build_color_buttons(self):
         self._clear_layout(self.color_grid)
@@ -917,6 +932,8 @@ class OptionsPageMixin:
         for i, (key, label) in enumerate(TOKEN_LABELS):
             btn = QPushButton(f"  {label}")
             btn.setFixedHeight(28)
+            # the grid may get narrower than the label (v1.6.9)
+            btn.setMinimumWidth(60)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             edited = key in overrides
             btn.setStyleSheet(
@@ -991,7 +1008,6 @@ class OptionsPageMixin:
             tile.mousePressEvent = (
                 lambda ev, n=name: self.on_background_selected(n))
             self.bg_grid.addWidget(tile, i // 4, i % 4)
-        self.bg_grid.setColumnStretch(4, 1)
 
     def _sync_opacity_row(self):
         on = bool(self.cfg.get("theme_background"))
