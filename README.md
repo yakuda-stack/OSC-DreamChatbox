@@ -675,7 +675,7 @@ OSC-DreamChatbox/
 - 💬 [Discord](https://discord.gg/ShNKvvZu74)
 - 👥 [VRChat group](https://vrchat.com/home/group/grp_829b7777-430d-48b2-8bf3-4e348d0dac9b)
 - ☕ [Support me on Ko-fi](https://ko-fi.com/yakuda_)
-- 📋 [Changelog](CHANGELOG.md) · 🧩 [Plugin API](docs/PLUGIN_API.md)
+- 📋 [Changelog](CHANGELOG.md) · 🧩 [Plugin API](docs/PLUGIN_API.md) · 🗺️ [Architektur](ARCHITEKTUR.md)
 
 ---
 

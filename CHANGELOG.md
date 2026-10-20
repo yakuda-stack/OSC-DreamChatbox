@@ -7,6 +7,35 @@ All notable changes to OSC-DreamChatbox are documented here.
 🟢 Linux Support: Complete & Stable (v1.2.6)
 
 
+## [v1.7.0] – 2026-10-20
+
+### Fixed
+
+- **Windows: microphones that only run at their own sample rate work
+  now.** Speech to Text always opened the microphone at 16 kHz. WASAPI
+  (shared mode) and many virtual microphones – e.g. the Pico / Virtual
+  Desktop / Steam streaming mic – only accept their native rate (usually
+  48000 or 44100 Hz) and refused with "Invalid sample rate
+  [PaErrorCode -9997]", so nothing was recognised. The app still tries
+  16 kHz first and, if the device says no, records at the device's own
+  rate instead; SpeechRecognition resamples it by itself
+  (`core/backends/mic_sounddevice.py`).
+
+### Changed
+
+- **New `ARCHITEKTUR.md`** (German): where everything lives, how the send
+  pipeline works and which files to touch for which feature – UI and
+  logic side by side, plus config paths, platform backends, plugins,
+  release and tests.
+- **Cleanup:** removed dead files – the empty `core/boxframe.py` and
+  `ui/pages/custombox_card.py`, `scripts/DreamManager` (called a script
+  that no longer exists), the old `scripts/build-appimage.sh` (replaced by
+  `scripts/build_appimage.sh`) and `scripts/install.sh` (a copy of the
+  `install.sh` in the project root).
+- The description at the top of `core/translators.py` named Lingva as
+  the default; it now says LibreTranslate Online (adminForge), the
+  default since v1.6.2.
+
 ## [v1.6.9] – 2026-10-19
 
 ### Changed

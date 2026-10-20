@@ -3,6 +3,11 @@
 The short version of every release — what you will actually notice.
 The full details are in the changelog.
 
+## v1.7.0 – 2026-10-20
+
+- **Windows: Speech to Text works with more microphones** – mics that only run at 48000 / 44100 Hz (e.g. Pico, Virtual Desktop or Steam streaming mic) are no longer rejected.
+- **Tidied up behind the scenes:** old unused files removed, new architecture overview for developers.
+
 ## v1.6.9 – 2026-10-19
 
 - **Advanced mode fits small windows:** Blocks, Avatar and Variables sit behind tabs, side panels fold away by themselves when space runs out.

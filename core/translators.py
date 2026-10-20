@@ -1,13 +1,15 @@
 """
 core/translators.py – modular translation backends for OSC-DreamChatbox
 
-Four selectable methods, all behind ONE unified interface:
+Several selectable methods, all behind ONE unified interface:
 
     translator.translate(text, source_lang, target_lang) -> str | None
 
-1. LingvaTranslator  (DEFAULT) – anonymous Lingva-Translate proxy
+1. LingvaTranslator  – anonymous Lingva-Translate proxy
    (e.g. https://lingva.ml). No API key, plain HTTP GET,
-   shields the user from direct Google tracking.
+   shields the user from direct Google tracking. Still selectable,
+   but no longer the default and not in the fallback chain (v1.6.6,
+   broken upstream).
 2. GoogleTranslator  (direct/fast) – the un-anonymised Google
    Translate web endpoint for minimal latency. No key; the request
    goes straight to Google (tracking possible – user's choice).
@@ -20,6 +22,8 @@ Four selectable methods, all behind ONE unified interface:
    preset instance (https://de.libretranslate.com, needs a key) or any URL
    the user pastes in, with an optional API key for instances that
    require one. Open source end to end, unlike Google/DeepL.
+   DEFAULT since v1.6.2: adminForge's keyless instance
+   (translate.adminforge.de).
 4. DeepLTranslator   (optional/power user) – official DeepL API via
    the `deepl` Python library (raw-HTTP fallback if the library is
    not installed). Clean error handling for quota/auth problems.

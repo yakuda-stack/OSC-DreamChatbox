@@ -185,15 +185,48 @@ def make_microphone(sr_module, device_index=-1):
         def __enter__(self):
             if self.stream is not None:
                 raise RuntimeError("this microphone is already open")
-            self._raw = sd.RawInputStream(
-                samplerate=SAMPLE_RATE,
-                blocksize=CHUNK,
-                device=self.device_index,
-                channels=1,
-                dtype="int16")
+            self._raw = self._open_stream()
             self._raw.start()
             self.stream = _Stream(self._raw)
             return self
+
+        def _open_stream(self):
+            """Open at 16 kHz, fall back to the device's own rate.
+
+            WASAPI (shared mode) and many virtual microphones - e.g. the
+            Pico/Virtual Desktop/Steam streaming mic - only accept their
+            native rate (usually 48000 or 44100). Asking them for 16000
+            fails with "Invalid sample rate [PaErrorCode -9997]".
+            SpeechRecognition copes with any rate (it reads SAMPLE_RATE
+            off the source and the FLAC encoder resamples), so on that
+            error we simply record at the native rate instead.
+            """
+            def _open(rate):
+                return sd.RawInputStream(
+                    samplerate=rate,
+                    blocksize=CHUNK,
+                    device=self.device_index,
+                    channels=1,
+                    dtype="int16")
+
+            try:
+                raw = _open(SAMPLE_RATE)
+                self.SAMPLE_RATE = SAMPLE_RATE
+                return raw
+            except Exception as first:
+                try:
+                    info = sd.query_devices(self.device_index, "input")
+                    native = int(round(float(info["default_samplerate"])))
+                except Exception:
+                    raise first
+                if not native or native == SAMPLE_RATE:
+                    raise first
+                try:
+                    raw = _open(native)
+                except Exception:
+                    raise first
+                self.SAMPLE_RATE = native
+                return raw
 
         def __exit__(self, exc_type, exc_value, traceback):
             stream, self.stream = self.stream, None
@@ -244,7 +277,7 @@ def _selftest():
         import audioop
         peak = 0
         with mic as source:
-            for _ in range(int(3 * SAMPLE_RATE / CHUNK)):
+            for _ in range(int(3 * source.SAMPLE_RATE / CHUNK)):
                 chunk = source.stream.read(CHUNK)
                 try:
                     peak = max(peak, audioop.max(chunk, SAMPLE_WIDTH))
