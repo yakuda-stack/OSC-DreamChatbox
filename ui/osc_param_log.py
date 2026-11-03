@@ -1,7 +1,8 @@
 """
 ui/osc_param_log.py – live log of the avatar parameters (v1.6.6)
 
-Options -> OSC -> "Parameter log" opens this as a separate window. It
+The "Parameter log" button in the right column opens this as a separate
+window. It
 is not modal: the app keeps working while it is open, so you can flip
 a toggle on your avatar and watch which parameter changes.
 

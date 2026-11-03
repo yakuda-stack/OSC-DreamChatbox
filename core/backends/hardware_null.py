@@ -102,6 +102,13 @@ class NullHardwareMonitor:
     def select_cpu_temp(self, sensor_id=None):
         self.sel_cpu_temp = sensor_id or None
 
+    # ------------------------------------------------- network, RAM type
+    def set_net(self, enabled, interface=None):
+        pass
+
+    def ram_type(self):
+        return None
+
     def snapshot(self):
         """Same shape as the Linux backend, so poll_hw() needs no
         special case: keys exist, values are None."""
@@ -110,4 +117,6 @@ class NullHardwareMonitor:
                 "cpu_power": None,
                 "ram": None,
                 "gpu": None,
-                "gpu2": None}
+                "gpu2": None,
+                "net": None,
+                "ram_type": None}

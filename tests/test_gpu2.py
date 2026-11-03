@@ -246,3 +246,36 @@ def test_the_custom_string_places_the_second_card_itself():
     page = make_page(hw_custom=True,
                      hw_custom_template="{gpu_usage} / {gpu2_usage}")
     assert page.build_hw_lines() == ["42% / 7%"]
+
+
+# ====================================================================
+# 4. the title of the GPU+ line (v1.7.1)
+# ====================================================================
+PLUS_GPU = {"hotspot": 34.0, "fan": 0.0}
+
+
+def plus_page(**extra):
+    return make_page(hw_gpu_hotspot=True, hw_gpu_fan=True, **extra)
+
+
+def test_plus_line_keeps_its_default_title():
+    assert plus_page()._gpu_plus_line(PLUS_GPU, "gpu", "vram") \
+        == "GPU+: Hot 34°C Fan 0%"
+
+
+def test_plus_title_can_be_switched_off():
+    page = plus_page(hw_gpu_plus_label=False)
+    assert page._gpu_plus_line(PLUS_GPU, "gpu", "vram") == "Hot 34°C Fan 0%"
+    assert page._gpu_plus_values(PLUS_GPU, "gpu", "vram")["gpu_plus"] is None
+
+
+def test_plus_title_can_be_your_own_text():
+    page = plus_page(hw_gpu_plus_text=" Extra ")
+    assert page._gpu_plus_line(PLUS_GPU, "gpu", "vram") \
+        == "Extra: Hot 34°C Fan 0%"
+    assert page._gpu_plus_values(PLUS_GPU, "gpu", "vram")["gpu_plus"] == "Extra"
+
+
+def test_second_plus_title_stays_empty_with_the_card_off():
+    assert plus_page(hw_gpu2=False)._gpu_plus_values(
+        {}, "gpu2", "vram2")["gpu2_plus"] is None

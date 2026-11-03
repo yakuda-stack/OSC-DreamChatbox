@@ -78,9 +78,9 @@ def backend_note() -> str:
     if BACKEND_NAME == "windows":
         # the one value Windows cannot produce on its own, so nobody
         # files a bug about an empty temperature field
-        return ("Temperatures need LibreHardwareMonitor (Options > Remote "
-                "Web Server). Everything else works without extra "
-                "software.")
+        return ("CPU temperature and watts need LibreHardwareMonitor "
+                "(Options > Remote Web Server). Everything else works "
+                "without extra software.")
     return ""
 
 

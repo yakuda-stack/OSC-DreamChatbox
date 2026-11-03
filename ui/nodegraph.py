@@ -121,7 +121,11 @@ NODE_DEFS = {
         "title": "GPU", "cat": "Sources", "accent": "#5b8dc9",
         "inputs": [],
         "outputs": [("usage", "Load"), ("temp", "Temp"), ("power", "Watts"),
-                    ("vram", "VRAM"), ("name", "Name")],
+                    ("vram", "VRAM"), ("name", "Name"),
+                    ("plus", "GPU+ title"),
+                    ("hotspot", "Hot spot"), ("vram_temp", "VRAM temp"),
+                    ("fan", "Fan"), ("clock", "Clock"),
+                    ("vram_clock", "VRAM clock")],
         "fields": [], "note": "Live GPU values. The Hardware app has to be "
                               "Active for these to fill in; Watts needs the "
                               "power draw tick on that card.",
@@ -130,7 +134,11 @@ NODE_DEFS = {
         "title": "GPU 2", "cat": "Sources", "accent": "#5b8dc9",
         "inputs": [],
         "outputs": [("usage", "Load"), ("temp", "Temp"), ("power", "Watts"),
-                    ("vram", "VRAM"), ("name", "Name")],
+                    ("vram", "VRAM"), ("name", "Name"),
+                    ("plus", "GPU+ title"),
+                    ("hotspot", "Hot spot"), ("vram_temp", "VRAM temp"),
+                    ("fan", "Fan"), ("clock", "Clock"),
+                    ("vram_clock", "VRAM clock")],
         "fields": [], "note": "The second card. Needs \"Second GPU\" "
                               "switched on in the Hardware app, with a "
                               "card picked - otherwise these outputs stay "
@@ -149,7 +157,8 @@ NODE_DEFS = {
         "title": "RAM & System", "cat": "Sources", "accent": "#5b8dc9",
         "inputs": [],
         "outputs": [("ram", "RAM"), ("ram_pct", "RAM %"),
-                    ("ram_type", "RAM type"), ("fps", "FPS")],
+                    ("ram_type", "RAM type"), ("fps", "FPS"),
+                    ("net_down", "Download"), ("net_up", "Upload")],
         "fields": [], "note": "Memory, plus frames per second. FPS moved "
                               "into the World Stats plugin in v1.4.4 - "
                               "this output stays wired to {fps} and fills "

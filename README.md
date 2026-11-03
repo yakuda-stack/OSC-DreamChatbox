@@ -46,7 +46,7 @@ Status rotation, now-playing, hardware stats, speech-to-text, live translation, 
 |---|---|
 | 📝 **Personal Status** | 10 templates × 100 texts, rotating, with icon picker |
 | 🎵 **MediaPlay** | Spotify / YT Music / VLC / browser — title, time, songbar, synced lyrics |
-| 🖥️ **Hardware** | GPU / CPU / RAM / VRAM, temps, watts, FPS |
+| 🖥️ **Hardware** | GPU / CPU / RAM / VRAM, temps, watts, fan, clocks, network, FPS |
 | 🧩 **All in one** | Merge everything into one master string, 10 layouts |
 | 🕸️ **Advanced mode** | A node canvas that builds the line visually — 38 blocks |
 | 🖼️ **Custom Box** | A frame around the chatbox, 12 templates + custom |
@@ -282,9 +282,14 @@ Live GPU / VRAM / CPU / RAM stats in the chatbox.
 - **CPU temp sensor** (v1.5.9) — dropdown in the CPU box with every temperature sensor the machine has (hwmon on Linux, LibreHardwareMonitor on Windows) and its current value. *Automatic* keeps the old pick; choose another one when the CPU temperature looks wrong
 - **Select GPU** (v1.5.1) — a dropdown in the GPU box lists every card the machine has, so a desktop Ryzen no longer reports on the Radeon inside the CPU when you meant the discrete card. Automatic still takes the one with the most VRAM
 - **Second GPU** (v1.5.1) — a *GPU 2* box in the same style as the others, hidden until you tick "I have a second GPU". Pick the second card and it comes with its own checkboxes, custom name and placeholders: `{gpu2_name} {gpu2_usage} {gpu2_temp} {gpu2_power} {vram2_usage} {vram2_pct}`. In the generated layout it takes its own line or joins the first one (`GPU: 42% 61°C | GPU2: 7% 44°C`); in a custom string, an All-in-one string or on the node canvas (*GPU 2* block) you place it yourself. Per-card readings come from sysfs on Linux and from `nvidia-smi` on Windows, where the counters Windows offers are machine-wide rather than per card
-- **Power draw in watts** — one tick per section puts it next to the temperature (`GPU: 68% 61°C 213W`) and fills `{gpu_power}` / `{cpu_power}`. Off by default, so no existing line gets longer without being asked. NVIDIA always reports it; AMD needs amdgpu's hwmon node, CPU watts need zenpower or readable RAPL counters, and on Windows both come from LibreHardwareMonitor
+- **Power draw in watts** — one tick per section puts it next to the temperature (`GPU: 68% 61°C 213W`) and fills `{gpu_power}` / `{cpu_power}`. Off by default, so no existing line gets longer without being asked. NVIDIA always reports it; AMD needs amdgpu's hwmon node on Linux and nothing extra on Windows, where the driver reports it. CPU watts need zenpower or readable RAPL counters, on Windows LibreHardwareMonitor
 - **FPS** — lives in the **World Stats plugin** since v1.4.4, not on this card. A frame rate only exists inside the process drawing it, so reading one means loading something into the game: a Vulkan layer on Linux, RTSS on Windows. The plugin owns both, along with the build step and the settings
 - Custom string with placeholders: `{gpu_name} {gpu_usage} {gpu_temp} {gpu_power} {temp_icon} {vram_usage} {cpu_name} {cpu_usage} {cpu_temp} {cpu_power} {ram_usage} {ram_type} {fps}` — `{ram_usage}` / `{vram_usage}` follow the Numbers + Percent ticks together, `{ram_used}` / `{vram_used}` are the numbers only (v1.5.9), `{ram_pct}` / `{vram_pct}` the percent only — plus the `{gpu2_*}` / `{vram2_*}` set for the second card
+
+- **GPU info +** (v1.7.1) — hot spot, VRAM temperature, fan, GPU clock and VRAM clock, each with its own tick for both cards. They go on a `GPU+` line of their own, whose title can be switched off or replaced with your own text (`{gpu_plus}`), and fill `{gpu_hotspot}` `{vram_temp}` `{gpu_fan}` `{gpu_clock}` `{vram_clock}` (`{gpu2_…}` / `{vram2_…}` for the second card). Not every card reports every value
+- **Network** (v1.7.1) — download and upload speed as `{net_down}` / `{net_up}`. Automatic picks your real connection and skips VPNs and other virtual ones; the Connection dropdown picks one by hand
+- **RAM type** (v1.7.1) — *Automatic* reads it from the machine (on Linux that needs root), *Manual* uses what you type
+- **Temperature unit** (v1.7.1) — Celsius or Fahrenheit
 
 **About CPU temperatures on Windows:** they live in registers only kernel-mode code can read, so *no* normal program can get them — administrator rights do not change that. Every tool that shows them ships a signed kernel driver. This app does **not** ship one (the usual candidate, WinRing0, has published privilege-escalation CVEs). Instead the Hardware card has a button that starts a small elevated helper reading everything reachable without a driver — ACPI thermal zones, which work on most laptops — and drives [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor) if you have it installed, which does have the driver. On desktop boards you will most likely need LHM; the button links it.
 
@@ -327,7 +332,7 @@ A **Mode switch** on the All in one card: *Normal* is the text fields, *Advanced
 - **Logic gates** (v1.6.8): AND, OR and NOR combine conditions (2–10 inputs, only wired inputs count, *Output: inverted* turns AND into NAND), NOT flips one – e.g. *song only while music plays AND NOT AFK*. Feed the result into an If / Else
 - Every placeholder a typed string can use is **draggable out of a grouped Variables list**, plugins included
 - **OSC input**: a listener that keeps the last value of every avatar parameter, with a picker so names are chosen rather than typed, plus blocks to read them and to write bool/int/float back
-- **Parameter log** (Options → OSC): a separate window that lists live which OSC parameters your avatar sends, plus a change log — the app keeps working while it is open
+- **Parameter log** (right column, under Clear chatbox): a separate window that lists live which OSC parameters your avatar sends, plus a change log — the app keeps working while it is open
 - **Scroll** between the AIO strings (Star Wars style) — the same option as on the All in one card
 - **External OSC in/out** for any address, so other tools on the machine can drive the chatbox and be driven by it
 - **Send Hotkey / Get Hotkey**: press a key combination at the operating system, or react to one pressed anywhere. SendInput on Windows; xdotool, wtype or ydotool on Linux, python-evdev for watching
@@ -544,8 +549,10 @@ The app runs natively on Windows 10/11 — not through Wine, not as a port, but 
 |---|---|---|
 | Now playing | MPRIS over D-Bus | GSMTC — the media session Windows uses for its own media keys |
 | CPU / RAM | `/proc`, `/sys` | `GetSystemTimes()`, `GlobalMemoryStatusEx()` |
-| GPU / VRAM | sysfs (AMD), `nvidia-smi` | `nvidia-smi`, otherwise the same GPU performance counters the Task Manager reads |
-| Temperatures | hwmon | `nvidia-smi`; for CPU and AMD/Intel GPU a helper you start from the Hardware card |
+| GPU / VRAM | sysfs (AMD), `nvidia-smi` | `nvidia-smi`, otherwise the same per-card GPU performance counters the Task Manager reads; cards found through DXGI |
+| Network | `/proc/net/dev` | Windows performance counters |
+| GPU temperature / watts | hwmon | `nvidia-smi`, AMD driver (`atiadlxx.dll`) — nothing to install; Intel via the helper below |
+| CPU temperature / watts | hwmon, RAPL | a helper you start from the Hardware card |
 | FPS | World Stats plugin: Vulkan layer or MangoHud | World Stats plugin: RTSS |
 | Microphone | PyAudio | sounddevice (PyAudio has no wheels past Python 3.13) |
 | Config | `~/.config/OSC-DreamChatbox` | `%APPDATA%\OSC-DreamChatbox` |
@@ -563,7 +570,7 @@ Where a platform genuinely cannot do something, the value stays empty and the ca
 | Offline translation | `pip install libretranslate`, then Start/Stop right in the UI | same |
 | Exact GPU name | `mesa-utils` (glxinfo) | not needed — read from the driver/registry |
 | NVIDIA stats | `nvidia-smi` (driver package) | `nvidia-smi` (ships with the driver) |
-| CPU / GPU temperatures | hwmon, already there | [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor) — the Hardware card starts it for you |
+| CPU temperature / watts, Intel GPU temperature | hwmon, already there | [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor) — the Hardware card starts it for you |
 | FPS readout | `mangohud`, started with logging | [RTSS](https://www.guru3d.com/download/rtss-rivatuner-statistics-server-download/) / MSI Afterburner, just running |
 
 ---
@@ -626,6 +633,11 @@ OSC-DreamChatbox/
 │       ├── media_windows.py      GSMTC (system media session)
 │       ├── media_null.py         nothing playing, ever
 │       ├── mic_sounddevice.py    microphone without PyAudio
+│       ├── adl_windows.py        AMD GPU sensors from the driver (Windows)
+│       ├── dxgi_windows.py       the real graphics cards and their ids (Windows)
+│       ├── netstats.py           download and upload speed
+│       ├── nvsmi.py              long-running nvidia-smi, both platforms
+│       ├── ramtype.py            memory generation from SMBIOS
 │       └── wintemp.py            elevated temperature helper (Windows)
 ├── config/
 │   └── plugins.json      #   store catalogue (GitHub links)

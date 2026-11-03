@@ -16,21 +16,29 @@ card already renders None as "leave this out".
     1. Win32 API via ctypes            – stdlib, no install, always on
        GetSystemTimes()                  CPU usage
        GlobalMemoryStatusEx()            RAM used/total
-       winreg                            CPU name, GPU name, VRAM total
+       DXGI (dxgi_windows.py)            GPU names, VRAM total, LUIDs
+       winreg                            CPU name, GPU fallback
 
     2. PDH performance counters        – stdlib, no install, Win10 1709+
        \\GPU Engine(*)\\Utilization Percentage      GPU usage (any vendor)
-       \\GPU Process Memory(*)\\Dedicated Usage     VRAM used (any vendor)
-       This is exactly what the Task Manager's GPU column reads.
+       \\GPU Adapter Memory(*)\\Dedicated Usage     VRAM used (any vendor)
+       This is exactly what the Task Manager's GPU column reads. Every
+       instance name carries the adapter's LUID, so each card gets its
+       own numbers.
 
     3. nvidia-smi                      – ships with every NVIDIA driver
-       Preferred when present: gives usage, temperature and VRAM in one
-       call, and it is the only no-extra-software temperature source.
+       Preferred when present, as one long-running process (nvsmi.py).
 
-    4. LibreHardwareMonitor            – optional, user installs it
+    4. atiadlxx.dll                    – ships with every AMD driver
+       The same idea for AMD: power, temperatures, fan and clocks per
+       card, no administrator rights, nothing to install. See
+       adl_windows.py.
+
+    5. LibreHardwareMonitor            – optional, user installs it
        LHM has a built-in web server (Options -> Remote Web Server).
        Switch it on and it serves every sensor as JSON on port 8085.
-       That is where AMD/Intel GPU temps and ANY CPU temp come from.
+       That is where Intel GPU temps and ANY CPU temp and CPU watts
+       come from.
        Auto-detected, no configuration: if LHM is not running we simply
        never get temperatures, exactly like a Linux box without hwmon.
 
@@ -64,10 +72,28 @@ import time
 import urllib.request
 from pathlib import Path
 
+from core.backends import dxgi_windows, netstats, ramtype
+from core.backends.nvsmi import _NvidiaSmiLoop, _parse_nvsmi
+
 GB = 1024 ** 3
 
 # how long a dead optional source is not retried again (seconds)
 _RETRY_LHM = 60.0
+
+# nvidia-smi: this many polls without an answer, then a break. A driver
+# in trouble can take seconds per call, and the app should not spend
+# those on every poll.
+_SMI_MAX_FAILS = 3
+_SMI_PAUSE_SEC = 300.0
+
+#: a performance counter sample is good for this long. gpu() and gpu2()
+#: run right after each other, and counter rates over milliseconds are
+#: noise.
+_PDH_CACHE_SEC = 1.0
+
+#: the values only some cards report, see gpu()
+_GPU_EXTRAS = ("hotspot", "vram_temp", "fan", "fan_rpm", "clock",
+               "vram_clock")
 
 # keeps subprocess calls from flashing a console window in a windowed
 # (console=False) PyInstaller build - without this every nvidia-smi poll
@@ -263,22 +289,101 @@ def _registry_gpu():
     return gpus[0] if gpus else ("", 0)
 
 
+def _vendor_from_name(name):
+    """Registry entries carry no vendor id, the name has to do."""
+    low = (name or "").lower()
+    if "nvidia" in low or "geforce" in low:
+        return dxgi_windows.VENDOR_NVIDIA
+    if "amd" in low or "radeon" in low:
+        return dxgi_windows.VENDOR_AMD
+    if "intel" in low:
+        return dxgi_windows.VENDOR_INTEL
+    return None
+
+
+def _windows_adapters():
+    """[{"name", "vram", "luid", "vendor"}, ...], most VRAM first. DXGI
+    knows what is really in the machine; the registry is the fallback and
+    has no LUIDs."""
+    try:
+        found = dxgi_windows.list_adapters()
+    except Exception:
+        found = []
+    if found:
+        return found
+    return [{"name": name, "vram": vram, "luid": None,
+             "vendor": _vendor_from_name(name)}
+            for name, vram in _registry_gpus()]
+
+
 # ====================================================================
 # 2. PDH performance counters (GPU usage + VRAM, any vendor)
 # ====================================================================
 _PDH_FMT_DOUBLE = 0x00000200
 _PDH_MORE_DATA = 0x800007D2
-_PDH_CSTATUS_VALID = (0x00000000, 0x00000800)   # VALID_DATA, NEW_DATA
+_PDH_CSTATUS_VALID = (0x00000000, 0x00000001)   # VALID_DATA, NEW_DATA
 
 _C_GPU_UTIL = r"\GPU Engine(*)\Utilization Percentage"
 _C_GPU_VRAM = r"\GPU Process Memory(*)\Dedicated Usage"
+_C_GPU_ADAPTER = r"\GPU Adapter Memory(*)\Dedicated Usage"
+_C_NET_DOWN = r"\Network Interface(*)\Bytes Received/sec"
+_C_NET_UP = r"\Network Interface(*)\Bytes Sent/sec"
+
+_LUID_RE = re.compile(r"luid_0x([0-9a-f]+)_0x([0-9a-f]+)", re.IGNORECASE)
 
 
-class _PdhGpu:
-    """Wildcard PDH query, kept open across polls.
+def _luid_key(instance):
+    """'..._luid_0x00000000_0x0000ABCD_...' -> (0, 0xABCD), else None."""
+    m = _LUID_RE.search(instance or "")
+    return (int(m.group(1), 16), int(m.group(2), 16)) if m else None
 
-    Utilization Percentage needs two samples, so the query is primed once
-    at construction; from the second poll on the values are real.
+
+def _gpu_counters(util_rows, process_rows, adapter_rows):
+    """Counter rows -> {luid: (usage, vram_bytes)}.
+
+    The key None is the whole machine, for adapters without a LUID.
+
+    Summing every engine double-counts, because 3D, Copy and VideoDecode
+    run in parallel on the same chip. The Task Manager sums per engine
+    TYPE and shows the busiest type - do the same.
+
+    VRAM prefers GPU Adapter Memory, the adapter's own total. Adding up
+    GPU Process Memory is the fallback for a Windows without it.
+    """
+    per_type = {}
+    for name, value in util_rows:
+        m = re.search(r"engtype_(\w+)", name or "")
+        engine = m.group(1) if m else "other"
+        for key in {_luid_key(name), None}:
+            types = per_type.setdefault(key, {})
+            types[engine] = types.get(engine, 0.0) + value
+
+    def memory(rows):
+        total = {}
+        for name, value in rows:
+            if value <= 0:
+                continue
+            for key in {_luid_key(name), None}:
+                total[key] = total.get(key, 0.0) + value
+        return total
+
+    vram = memory(process_rows)
+    vram.update(memory(adapter_rows))
+
+    out = {}
+    for key in set(per_type) | set(vram):
+        types = per_type.get(key)
+        usage = (max(0.0, min(100.0, max(types.values())))
+                 if types else None)
+        out[key] = (usage, vram.get(key))
+    return out
+
+
+class _PdhBase:
+    """A wildcard PDH query, kept open across polls.
+
+    Rate counters need two samples: the first collect in a subclass only
+    sets the baseline, real values start with the next one.
     """
 
     def __init__(self):
@@ -286,6 +391,9 @@ class _PdhGpu:
         from ctypes import wintypes
         self.ctypes = ctypes
         self.pdh = ctypes.WinDLL("pdh")
+        # ctypes defaults to a signed int, which would turn PDH_MORE_DATA
+        # into a negative number that never equals the constant
+        self.pdh.PdhGetFormattedCounterArrayW.restype = wintypes.DWORD
 
         class CV(ctypes.Union):
             _fields_ = [("longValue", ctypes.c_long),
@@ -306,12 +414,6 @@ class _PdhGpu:
         if self.pdh.PdhOpenQueryW(None, 0,
                                   ctypes.byref(self._query)) != 0:
             raise OSError("PdhOpenQueryW failed")
-        self._util = self._add(_C_GPU_UTIL)
-        self._vram = self._add(_C_GPU_VRAM)
-        if self._util is None and self._vram is None:
-            raise OSError("no GPU performance counters on this system")
-        # prime: the first collect only establishes the baseline
-        self.pdh.PdhCollectQueryData(self._query)
 
     def _add(self, path):
         h = self.ctypes.c_void_p()
@@ -350,34 +452,70 @@ class _PdhGpu:
             out.append((it.szName or "", it.FmtValue.u.doubleValue))
         return out
 
-    def poll(self):
-        """-> (usage_percent | None, vram_used_bytes | None)"""
+
+class _PdhGpu(_PdhBase):
+    """GPU usage and VRAM per adapter."""
+
+    def __init__(self):
+        super().__init__()
+        self._util = self._add(_C_GPU_UTIL)
+        self._vram = self._add(_C_GPU_VRAM)
+        self._adapter = self._add(_C_GPU_ADAPTER)
+        if self._util is None and self._vram is None \
+                and self._adapter is None:
+            raise OSError("no GPU performance counters on this system")
+        self.pdh.PdhCollectQueryData(self._query)
+        self._values = {}
+        self._sampled_at = 0.0
+
+    def poll(self, luid=None):
+        """-> (usage_percent | None, vram_used_bytes | None) of one
+        adapter, or of the whole machine for None."""
+        now = time.monotonic()
+        if now - self._sampled_at >= _PDH_CACHE_SEC:
+            if self.pdh.PdhCollectQueryData(self._query) != 0:
+                return None, None
+            self._sampled_at = now
+            self._values = _gpu_counters(self._read(self._util),
+                                         self._read(self._vram),
+                                         self._read(self._adapter))
+        if luid is not None and luid not in self._values and self._values:
+            # nothing is running on this card, so no engine has an
+            # instance at all. That is an idle card, not a missing value.
+            return 0.0, None
+        return self._values.get(luid, (None, None))
+
+
+class _PdhNet(_PdhBase):
+    """Network speed per connection. Windows computes the rate itself."""
+
+    def __init__(self):
+        super().__init__()
+        self._down = self._add(_C_NET_DOWN)
+        self._up = self._add(_C_NET_UP)
+        if self._down is None or self._up is None:
+            raise OSError("no network performance counters on this system")
+        self.pdh.PdhCollectQueryData(self._query)
+        self.totals = {}
+        self._sampled_at = None
+
+    def sample(self):
+        """-> {connection: (down, up)} in bytes per second."""
         if self.pdh.PdhCollectQueryData(self._query) != 0:
-            return None, None
-
-        usage = None
-        rows = self._read(self._util)
-        if rows:
-            # Instances look like
-            #   pid_1234_luid_0x00000000_0x0000ABCD_phys_0_eng_0_engtype_3D
-            # Summing everything double-counts, because 3D, Copy and
-            # VideoDecode run in parallel on the same chip. The Task
-            # Manager sums per engine TYPE and shows the busiest type -
-            # do the same.
-            per_type = {}
-            for name, val in rows:
-                m = re.search(r"engtype_(\w+)", name or "")
-                key = m.group(1) if m else "other"
-                per_type[key] = per_type.get(key, 0.0) + val
-            if per_type:
-                usage = max(0.0, min(100.0, max(per_type.values())))
-
-        vram = None
-        rows = self._read(self._vram)
-        if rows:
-            total = sum(v for _, v in rows if v > 0)
-            vram = total if total > 0 else None
-        return usage, vram
+            return {}
+        now = time.monotonic()
+        seconds = now - self._sampled_at if self._sampled_at else 0.0
+        self._sampled_at = now
+        down = dict(self._read(self._down))
+        up = dict(self._read(self._up))
+        rates = {}
+        for name in set(down) | set(up):
+            rates[name] = (down.get(name, 0.0), up.get(name, 0.0))
+            # no byte counters on this path, so "moved the most" is added
+            # up from the speeds
+            self.totals[name] = self.totals.get(name, 0.0) \
+                + sum(rates[name]) * seconds
+        return rates
 
 
 # ====================================================================
@@ -396,7 +534,7 @@ def _find_nvidia_smi():
 
 
 # ====================================================================
-# 4. LibreHardwareMonitor web server (the only temperature source)
+# 5. LibreHardwareMonitor web server (the CPU temperature source)
 # ====================================================================
 _LHM_DEFAULT_URL = "http://localhost:8085/data.json"
 
@@ -550,6 +688,13 @@ class _Lhm:
         return self._power
 
 
+def _wmi_ram_type():
+    return ramtype.parse_wmi_output(_run(
+        ["powershell", "-NoProfile", "-NonInteractive", "-Command",
+         "(Get-CimInstance Win32_PhysicalMemory).SMBIOSMemoryType"],
+        timeout=20))
+
+
 # ====================================================================
 # the backend itself
 # ====================================================================
@@ -571,13 +716,45 @@ class WindowsHardwareMonitor:
 
         self.nvidia_smi = _find_nvidia_smi()
         self.has_nvidia = self.nvidia_smi is not None
+        # a leftover nvidia-smi.exe after swapping to another vendor must
+        # not count as an NVIDIA card, it would switch off the PDH path
+        if self.has_nvidia and not self._nvidia_cards():
+            self.nvidia_smi = None
+            self.has_nvidia = False
+        self._nvsmi = None
+        self._smi_fails = 0
+        self._smi_pause_until = 0.0
+        if self.has_nvidia:
+            self._nvsmi = _NvidiaSmiLoop(
+                log_fn=log_fn, exe=self.nvidia_smi,
+                creationflags=_CREATE_NO_WINDOW)
         # the Linux backend exposes .amd_card; the UI only tests it for
         # truthiness to label the backend, so a plain flag is enough
         self.amd_card = None
 
+        #: every card nvidia-smi does not answer for
+        self._others = [
+            a for a in _windows_adapters()
+            if not (self.has_nvidia
+                    and a["vendor"] == dxgi_windows.VENDOR_NVIDIA)]
+
+        # the driver's own sensors, the AMD counterpart to nvidia-smi
+        self._adl = None
+        if any(a["vendor"] in (dxgi_windows.VENDOR_AMD, None)
+               for a in self._others):
+            try:
+                from core.backends import adl_windows
+                self._adl = adl_windows.AdlReader(log_fn)
+            except Exception as e:
+                self.log(f"Hardware: no AMD driver sensors ({e}).")
+        if self._adl:
+            # the registry keeps the entries of cards that were swapped
+            # out; what the driver can read really is in the machine
+            self._others.sort(key=lambda a: not self._adl.has(a["name"]))
+
         self._pdh = None
-        if not self.has_nvidia:
-            # with nvidia-smi around, PDH adds nothing but overhead
+        if self._others or not self.has_nvidia:
+            # a pure NVIDIA machine does not need it, nvidia-smi answers
             try:
                 self._pdh = _PdhGpu()
             except Exception as e:
@@ -592,9 +769,11 @@ class WindowsHardwareMonitor:
         except Exception:
             self.temp_helper = None
 
-        self._reg_gpus = _registry_gpus()
-        reg_name, reg_vram = (self._reg_gpus[0] if self._reg_gpus
-                              else ("", 0))
+        self.net = netstats.NetMonitor(_PdhNet, log_fn)
+        self._ram_type = ramtype.RamTypeProbe(_wmi_ram_type)
+
+        reg_name = self._others[0]["name"] if self._others else ""
+        reg_vram = self._others[0]["vram"] if self._others else 0
         self._vram_total_bytes = reg_vram or None
         if not self.has_nvidia:
             self.amd_card = bool(reg_name) or None
@@ -612,6 +791,10 @@ class WindowsHardwareMonitor:
         #   getattr(self.hw, "gpu_backend_label", None)
         if self.has_nvidia:
             self.gpu_backend_label = "NVIDIA (nvidia-smi)"
+        elif self._adl and self._pdh:
+            self.gpu_backend_label = "AMD driver + performance counters"
+        elif self._adl:
+            self.gpu_backend_label = "AMD driver"
         elif self._pdh:
             self.gpu_backend_label = "Windows (performance counters)"
         else:
@@ -622,6 +805,8 @@ class WindowsHardwareMonitor:
             sources.append("Win32")
         if self.has_nvidia:
             sources.append("nvidia-smi")
+        if self._adl:
+            sources.append("ADL")
         if self._pdh:
             sources.append("PDH")
         self.log(f"Hardware: Windows backend, sources={'+'.join(sources) or 'none'}"
@@ -663,11 +848,11 @@ class WindowsHardwareMonitor:
         """Every card the Hardware card can offer.
 
         NVIDIA cards are listed one by one, because nvidia-smi answers per
-        card. Everything else comes from the display-adapter registry: the
-        performance counters Windows itself offers are machine-wide, not
-        per adapter, so only the first of those carries readings and the
-        rest are names (their label says so). Picking one still fixes the
-        case this exists for - the wrong card's name on the line.
+        card. Every other card comes from DXGI and gets its readings from
+        the performance counters through its LUID. Only the registry
+        fallback has no LUIDs: there the counters are machine-wide, so the
+        first entry carries them and the rest are names, unless the AMD
+        driver reads them (the label says which).
         """
         gpus = []
         nvidia = self._nvidia_cards()
@@ -677,16 +862,23 @@ class WindowsHardwareMonitor:
             gpus.append({"id": f"nvidia:{idx}", "name": name,
                          "vendor": "NVIDIA", "index": idx,
                          "label": f"NVIDIA #{idx} · {name}"})
-        if not self.has_nvidia:
-            for pos, (name, vram) in enumerate(self._reg_gpus):
-                clean = _clean_gpu_name(name) or "GPU"
-                gb = (vram or 0) / GB
-                label = f"{clean}" + (f" ({gb:.0f}GB)" if gb >= 1 else "")
-                gpus.append({"id": f"win:{pos}", "name": clean,
-                             "vendor": "Windows", "counters": pos == 0,
-                             "vram_total": vram or None,
-                             "label": label if pos == 0
-                                      else f"{label} - name only"})
+        for pos, adapter in enumerate(self._others):
+            name, vram = adapter["name"], adapter["vram"]
+            luid = adapter["luid"]
+            clean = _clean_gpu_name(name) or "GPU"
+            gb = (vram or 0) / GB
+            label = f"{clean}" + (f" ({gb:.0f}GB)" if gb >= 1 else "")
+            readable = (pos == 0 or luid is not None
+                        or (self._adl is not None and self._adl.has(name)))
+            gpus.append({"id": f"win:{pos}", "name": clean,
+                         "reg_name": name, "luid": luid,
+                         "vendor": "Windows",
+                         "counters": luid is not None or pos == 0,
+                         # LHM and the helper report one GPU, not per card
+                         "shared_sensors": pos == 0 and not self.has_nvidia,
+                         "vram_total": vram or None,
+                         "label": label if readable
+                                  else f"{label} - name only"})
         if not gpus:
             name = self._detect_gpu_name(registry_name)
             gpus.append({"id": "display", "name": name, "vendor": "",
@@ -752,8 +944,16 @@ class WindowsHardwareMonitor:
         self._lhm.cpu_pick = sensor_id or None
         self._lhm._cache = (0.0, None, None)     # next read re-scores
 
+    def _adl_values(self, entry):
+        """This card's values from the AMD driver, {} when it has none."""
+        if self._adl is None or not entry:
+            return {}
+        return self._adl.values(entry.get("reg_name") or entry.get("name"),
+                                sole=len(self._others) <= 1)
+
     def amd_gpu_temp(self):
-        return self._temps()[1]
+        temp = self._adl_values(self._gpu_entry(None)).get("temp")
+        return temp if temp is not None else self._temps()[1]
 
     def cpu_power(self):
         """Watts, from LibreHardwareMonitor. Windows exposes no power
@@ -773,48 +973,88 @@ class WindowsHardwareMonitor:
         Linux backend behaves the same way."""
         entry = self._gpu_entry(gpu_id, fallback=gpu_id is None) or {}
         if entry.get("vendor") == "NVIDIA":
-            out = _run([self.nvidia_smi, "-i", str(entry.get("index", 0)),
-                        "--query-gpu=utilization.gpu,temperature.gpu,"
-                        "memory.used,memory.total,power.draw",
-                        "--format=csv,noheader,nounits"])
-            try:
-                cols = out.splitlines()[0].split(",")
-                u, t, mu, mt = [float(x) for x in cols[:4]]
-                # "[N/A]" on cards that do not report it - parsed on its
-                # own so it cannot cost us the four that always work
-                try:
-                    power = float(cols[4])
-                except (IndexError, ValueError):
-                    power = None
-                return {"usage": u, "temp": t, "power": power,
-                        "vram_used": mu / 1024.0, "vram_total": mt / 1024.0,
-                        "vram_pct": 100.0 * mu / mt if mt else None}
-            except Exception:
-                pass          # driver hiccup - fall through to PDH/LHM
+            got = self._nvidia_values(entry.get("index", 0))
+            if got is not None:
+                return got
+            # driver hiccup - fall through to PDH/LHM
 
-        # An adapter without counters (the second entry of a registry
-        # list) has nothing but its name and the VRAM size the driver
-        # wrote down. Saying so with an all-None dict is better than
-        # handing back the machine-wide counters under its name.
+        adl = self._adl_values(entry)
+        extras = {key: adl.get(key) for key in _GPU_EXTRAS}
+
+        # An adapter without counters (a later entry of the registry
+        # fallback) has its name, the VRAM size the driver wrote down and
+        # whatever the AMD driver reports per card. Saying so with None
+        # values is better than handing back the machine-wide counters
+        # under its name.
         if entry and entry.get("vendor") == "Windows" \
                 and not entry.get("counters"):
             vt = entry.get("vram_total")
-            return {"usage": None, "temp": None, "power": None,
+            return {"usage": adl.get("usage"), "temp": adl.get("temp"),
+                    "power": adl.get("power"),
                     "vram_used": None,
                     "vram_total": vt / GB if vt else None,
-                    "vram_pct": None}
-        if self._pdh is None:
+                    "vram_pct": None, **extras}
+        if self._pdh is None and not adl:
             return None
-        usage, vram_used = self._pdh.poll()
+        luid = entry.get("luid")
+        usage, vram_used = self._pdh.poll(luid) if self._pdh else (None, None)
+        # the counters are per card only with a LUID, ADL always is
+        if adl.get("usage") is not None and (usage is None or luid is None):
+            usage = adl["usage"]
+        temp, power = adl.get("temp"), adl.get("power")
+        if entry.get("shared_sensors", True):
+            if temp is None:
+                temp = self._temps()[1]
+            if power is None:
+                power = self._lhm.powers()[1]
         vu = vram_used / GB if vram_used else None
-        vt = self._vram_total_bytes / GB if self._vram_total_bytes else None
+        total = entry.get("vram_total") or self._vram_total_bytes
+        vt = total / GB if total else None
         return {"usage": usage,
-                "temp": self._temps()[1],
-                "power": self._lhm.powers()[1],
+                "temp": temp,
+                "power": power,
                 "vram_used": vu,
                 "vram_total": vt,
                 "vram_pct": (100.0 * vu / vt)
-                            if (vu is not None and vt) else None}
+                            if (vu is not None and vt) else None,
+                **extras}
+
+    def _nvidia_values(self, index):
+        """One NVIDIA card, or None. After a few polls without an answer
+        it pauses instead of waiting on a broken driver every time."""
+        now = time.monotonic()
+        if now < self._smi_pause_until:
+            return None
+        if self._nvsmi.broken:
+            out = _run([self.nvidia_smi, "-i", str(index),
+                        f"--query-gpu={self._nvsmi.query}",
+                        "--format=csv,noheader,nounits"])
+            line = out.splitlines()[0] if out else None
+        else:
+            line = self._nvsmi.latest(index)
+        got = _parse_nvsmi(line, index)
+        if got is not None:
+            self._smi_fails = 0
+            return got
+        self._smi_fails += 1
+        if self._smi_fails >= _SMI_MAX_FAILS:
+            self._smi_fails = 0
+            self._smi_pause_until = now + _SMI_PAUSE_SEC
+            self.log("Hardware: nvidia-smi does not answer - trying again "
+                     f"in {_SMI_PAUSE_SEC / 60:.0f} minutes.")
+        return None
+
+    def close(self):
+        """Called on app exit - ends the nvidia-smi process."""
+        if self._nvsmi is not None:
+            self._nvsmi.close()
+
+    # ------------------------------------------------- network, RAM type
+    def set_net(self, enabled, interface=None):
+        self.net.configure(enabled, interface)
+
+    def ram_type(self):
+        return self._ram_type.get()
 
     def gpu2(self):
         """The second card's values, or None when none is selected."""
@@ -829,7 +1069,9 @@ class WindowsHardwareMonitor:
                 "cpu_power": self.cpu_power(),
                 "ram": self.ram(),
                 "gpu": self.gpu(),
-                "gpu2": self.gpu2()}
+                "gpu2": self.gpu2(),
+                "net": self.net.read(),
+                "ram_type": self.ram_type()}
 
 
 # ====================================================================
@@ -849,6 +1091,7 @@ def _selftest():
         print(f"\n--- snapshot {round_no} ---")
         print(f"  CPU usage : {snap['cpu_usage']}")
         print(f"  CPU temp  : {snap['cpu_temp']}   (needs LibreHardwareMonitor)")
+        print(f"  CPU watts : {snap['cpu_power']}   (needs LibreHardwareMonitor)")
         print(f"  RAM       : {snap['ram']}")
         print(f"  GPU       : {snap['gpu']}")
         if round_no == 1:
@@ -856,7 +1099,8 @@ def _selftest():
     print("\n" + "-" * 62)
     print("None means 'no source for this value', not an error.")
     print("Expected without extra software: CPU usage, RAM, GPU usage,")
-    print("VRAM and both names work; temperatures are None.")
+    print("VRAM and both names work. NVIDIA and AMD cards also report GPU")
+    print("temperature and watts; the CPU values stay None.")
     print("=" * 62)
 
 

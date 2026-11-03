@@ -14,7 +14,7 @@ from core.audiolevel import THRESHOLD_DEFAULT, clamp_threshold
 from core.lyrics_sources import DEFAULT_SOURCES, normalize_sources
 from core.textstyle import STYLE_NORMAL, normalize as normalize_style
 from core.constants import (
-    AFK_PRESET_COUNT, AIO_MAX, CHAT_MODES, CHATBOX_LIMIT, DEFAULT_AFK_PARAM, DEFAULT_AFK_TEXTS, DEFAULT_AFK_TIMER_TEXT, DEFAULT_TRANSLATE_NOTICE, CHAT_MODE_DIRECT, CONFIG_DIR, CONFIG_FILE, GPU2_MODE_LINE, LYRICS_DIR, MIN_STATUS_CYCLE_SEC, normalize_gpu2_mode, STATUS_MAX_TEXTS, OLD_CONFIG_FILE, SLIM_SUFFIX, TITLE_MAX_LEN)
+    AFK_PRESET_COUNT, AIO_MAX, CHAT_MODES, CHATBOX_LIMIT, DEFAULT_AFK_PARAM, DEFAULT_AFK_TEXTS, DEFAULT_AFK_TIMER_TEXT, DEFAULT_TRANSLATE_NOTICE, CHAT_MODE_DIRECT, CONFIG_DIR, CONFIG_FILE, GPU2_MODE_LINE, LYRICS_DIR, MIN_STATUS_CYCLE_SEC, normalize_gpu2_mode, STATUS_MAX_TEXTS, OLD_CONFIG_FILE, SLIM_SUFFIX, TEMP_CELSIUS, TEMP_FAHRENHEIT, TITLE_MAX_LEN)
 from core.boxstyle import (
     CLOCK_24_HM, DEFAULT_CUSTOM_BOX, MODE_CUSTOM as BOX_MODE_CUSTOM, normalize_clock_format, normalize_custom as normalize_box_custom, normalize_mode as normalize_box_mode, normalize_template as normalize_box_template, normalize_width as normalize_box_width)
 from core.boxanim import normalize_anim as normalize_box_anim
@@ -476,6 +476,7 @@ class ConfigMixin:
             "media_idle": True,
             "media_idle_text": "\u23F8",
             "hw_flame": False,
+            "hw_temp_unit": TEMP_CELSIUS,
             "hw_custom": False,
             "hw_custom_template": "\U0001F3AE {gpu_name} {gpu_usage} | {gpu_temp} {temp_icon} \\n "
                                   "\u2699\uFE0F {cpu_name} {cpu_usage} | {cpu_temp} {temp_icon} \\n "
@@ -520,9 +521,34 @@ class ConfigMixin:
             "hw_gpu2_vram_pct": False,
             "hw_vram_used": True,
             "hw_vram_pct": False,
+            # GPU info + and Network (v1.7.1). All off for the same
+            # reason as the watts: nobody's line gets longer unasked.
+            "hw_gpu_hotspot": False,
+            "hw_vram_temp": False,
+            "hw_gpu_fan": False,
+            "hw_gpu_clock": False,
+            "hw_vram_clock": False,
+            # the "GPU+" in front of that line: on or off, and your own
+            # text. Empty text = the default title.
+            "hw_gpu_plus_label": True,
+            "hw_gpu_plus_text": "",
+            "hw_gpu2_plus_label": True,
+            "hw_gpu2_plus_text": "",
+            "hw_gpu2_hotspot": False,
+            "hw_vram2_temp": False,
+            "hw_gpu2_fan": False,
+            "hw_gpu2_clock": False,
+            "hw_vram2_clock": False,
+            "hw_net_down": False,
+            "hw_net_up": False,
+            # empty = Automatic, else a name from the Connection dropdown
+            "hw_net_iface": "",
             "hw_ram_used": True,
             "hw_ram_pct": False,
             "hw_ram_type": "",
+            # "auto" | "manual". Stays empty here and is settled when the
+            # config loads, because it depends on hw_ram_type.
+            "hw_ram_type_mode": "",
             "hw_cpu_usage": True,
             "hw_cpu_name": True,
             "hw_cpu_custom": False,
@@ -749,6 +775,16 @@ class ConfigMixin:
                 defaults.get("theme_opacity", 0.82))))
         except (TypeError, ValueError):
             defaults["theme_opacity"] = 0.82
+        # A typed memory type stays what it is; everyone else gets the
+        # detected one. Runs on every load, so a config from before the
+        # dropdown is settled the first time it comes in.
+        if defaults.get("hw_ram_type_mode") not in ("auto", "manual"):
+            defaults["hw_ram_type_mode"] = (
+                "manual" if str(defaults.get("hw_ram_type", "")).strip()
+                else "auto")
+        if defaults.get("hw_temp_unit") not in (TEMP_CELSIUS,
+                                                TEMP_FAHRENHEIT):
+            defaults["hw_temp_unit"] = TEMP_CELSIUS
         # lyrics prefix: a single short string, never None. Longer than
         # 4 characters is almost certainly a paste accident and would eat
         # into the 144 char budget on every single line.

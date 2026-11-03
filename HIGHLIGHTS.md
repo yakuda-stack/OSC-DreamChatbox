@@ -3,6 +3,13 @@
 The short version of every release — what you will actually notice.
 The full details are in the changelog.
 
+## v1.7.1 – 2026-11-03
+
+- **Windows: GPU values fixed, no extra software for AMD** – usage, VRAM, watts and temperature now work on AMD and Intel cards, every card with its own numbers.
+- **New GPU info + box:** hot spot, VRAM temperature, fan and clocks for both cards.
+- **New Network box:** download and upload speed in the chatbox.
+- **Small but nice:** Parameter log is now under Clear chatbox on every page, RAM type detected or typed by hand, Fahrenheit.
+
 ## v1.7.0 – 2026-10-20
 
 - **Windows: Speech to Text works with more microphones** – mics that only run at 48000 / 44100 Hz (e.g. Pico, Virtual Desktop or Steam streaming mic) are no longer rejected.

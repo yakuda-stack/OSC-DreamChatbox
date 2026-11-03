@@ -164,16 +164,6 @@ class OptionsPageMixin:
         self.osc_in_port.valueChanged.connect(self.on_osc_input_port)
         g.addWidget(self.osc_in_port)
         itog_row.addLayout(g)
-        # v1.6.6: which parameters does my avatar send? Own window, the
-        # app stays usable while it is open
-        plog_btn = QPushButton("\U0001F4CB  Parameter log")
-        plog_btn.setObjectName("linkbtn")
-        plog_btn.setFixedHeight(30)
-        plog_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        plog_btn.setToolTip("Opens a separate window that lists every "
-                            "OSC parameter your avatar sends, live.")
-        plog_btn.clicked.connect(self.on_osc_param_log)
-        itog_row.addWidget(plog_btn)
         qc.addLayout(itog_row)
 
         idesc = QLabel(

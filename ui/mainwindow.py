@@ -552,6 +552,19 @@ class MainWindow(ConfigMixin, AppsPageMixin, AdvancedPageMixin,
         self.clear_chatbox_btn.clicked.connect(self.on_clear_chatbox_btn)
         r_layout.addWidget(self.clear_chatbox_btn)
 
+        # v1.7.1: in the column that is on every page, because it is used
+        # while working on the Advanced canvas. Its own window, the app
+        # stays usable while it is open.
+        self.param_log_btn = QPushButton("\U0001F4CB  Parameter log")
+        self.param_log_btn.setObjectName("linkbtn")
+        self.param_log_btn.setFixedHeight(30)
+        self.param_log_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.param_log_btn.setToolTip(
+            "Opens a separate window that lists every OSC parameter your "
+            "avatar sends, live.")
+        self.param_log_btn.clicked.connect(self.on_osc_param_log)
+        r_layout.addWidget(self.param_log_btn)
+
         # SendToVRChat (below Preview, above Debug)
         row1 = QHBoxLayout()
         self.toggle_send = ToggleSwitch()
@@ -899,6 +912,10 @@ class MainWindow(ConfigMixin, AppsPageMixin, AdvancedPageMixin,
             row.setVisible(i < self.cfg["aio_count"])
         self.apply_box_config_to_ui()
         self.chk_hw_flame.setChecked(self.cfg["hw_flame"])
+        self.hw_temp_unit_combo.blockSignals(True)
+        self.hw_temp_unit_combo.setCurrentIndex(max(
+            0, self.hw_temp_unit_combo.findData(self.cfg["hw_temp_unit"])))
+        self.hw_temp_unit_combo.blockSignals(False)
         self.chk_hw_custom.setChecked(self.cfg["hw_custom"])
         self.hw_custom_input.setText(self.cfg["hw_custom_template"])
         self.toggle_hw.setChecked(self.cfg["hw_active"])
@@ -920,6 +937,13 @@ class MainWindow(ConfigMixin, AppsPageMixin, AdvancedPageMixin,
         self.chk_gpu2_name.setChecked(self.cfg["hw_gpu2_name"])
         self.chk_gpu2_vram_used.setChecked(self.cfg["hw_gpu2_vram_used"])
         self.chk_gpu2_vram_pct.setChecked(self.cfg["hw_gpu2_vram_pct"])
+        self.chk_gpu2_hotspot.setChecked(self.cfg["hw_gpu2_hotspot"])
+        self.chk_vram2_temp.setChecked(self.cfg["hw_vram2_temp"])
+        self.chk_gpu2_fan.setChecked(self.cfg["hw_gpu2_fan"])
+        self.chk_gpu2_clock.setChecked(self.cfg["hw_gpu2_clock"])
+        self.chk_vram2_clock.setChecked(self.cfg["hw_vram2_clock"])
+        self.chk_gpu2_plus_label.setChecked(self.cfg["hw_gpu2_plus_label"])
+        self.gpu2_plus_text_input.setText(self.cfg["hw_gpu2_plus_text"])
         self.chk_gpu2_custom.setChecked(self.cfg["hw_gpu2_custom"])
         self.gpu2_custom_input.setText(self.cfg["hw_gpu2_custom_name"])
         self.set_style_combo(self.gpu2_style_combo,
@@ -935,9 +959,24 @@ class MainWindow(ConfigMixin, AppsPageMixin, AdvancedPageMixin,
         self._fill_cpu_temp_combo()
         self.chk_vram_used.setChecked(self.cfg["hw_vram_used"])
         self.chk_vram_pct.setChecked(self.cfg["hw_vram_pct"])
+        self.chk_gpu_hotspot.setChecked(self.cfg["hw_gpu_hotspot"])
+        self.chk_vram_temp.setChecked(self.cfg["hw_vram_temp"])
+        self.chk_gpu_fan.setChecked(self.cfg["hw_gpu_fan"])
+        self.chk_gpu_clock.setChecked(self.cfg["hw_gpu_clock"])
+        self.chk_vram_clock.setChecked(self.cfg["hw_vram_clock"])
+        self.chk_gpu_plus_label.setChecked(self.cfg["hw_gpu_plus_label"])
+        self.gpu_plus_text_input.setText(self.cfg["hw_gpu_plus_text"])
+        self.chk_net_down.setChecked(self.cfg["hw_net_down"])
+        self.chk_net_up.setChecked(self.cfg["hw_net_up"])
+        self._fill_net_combo(None)
+        self._apply_net_selection()
         self.chk_ram_used.setChecked(self.cfg["hw_ram_used"])
         self.chk_ram_pct.setChecked(self.cfg["hw_ram_pct"])
         self.ram_type_input.setText(self.cfg["hw_ram_type"])
+        self.ram_mode_combo.blockSignals(True)
+        self.ram_mode_combo.setCurrentIndex(max(
+            0, self.ram_mode_combo.findData(self.cfg["hw_ram_type_mode"])))
+        self.ram_mode_combo.blockSignals(False)
         self.chk_cpu_usage.setChecked(self.cfg["hw_cpu_usage"])
         self.chk_cpu_name.setChecked(self.cfg["hw_cpu_name"])
         self.chk_cpu_custom.setChecked(self.cfg["hw_cpu_custom"])

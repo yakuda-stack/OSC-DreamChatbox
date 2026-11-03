@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import (
 from core.constants import (
     AFK_PRESET_COUNT, AIO_MAX, DEFAULT_AFK_PARAM, DEFAULT_AFK_TEXTS,
     DEFAULT_AFK_TIMER_TEXT, GPU2_MODE_INLINE, GPU2_MODE_LINE, ORIGINS, ORIGIN_CHAT,
-    CHATBOX_LIMIT, LYRICS_DIR, MIN_STATUS_CYCLE_SEC, SLIM_SUFFIX, SONGBAR_LEN, STATUS_MAX_TEXTS, TITLE_MAX_LEN,
+    CHATBOX_LIMIT, LYRICS_DIR, TEMP_CELSIUS, TEMP_FAHRENHEIT, MIN_STATUS_CYCLE_SEC, SLIM_SUFFIX, SONGBAR_LEN, STATUS_MAX_TEXTS, TITLE_MAX_LEN,
     LYRICS_MAX_MIN)
 from core.lyrics_sources import SOURCES, normalize_sources
 from core.afk import (
@@ -1115,9 +1115,10 @@ class AppsPageMixin:
              ("Power draw", "hw_gpu_power",
               "Adds the card's power draw to the GPU line, and fills "
               "{gpu_power} / {gpu_watt} for custom strings.\n\n"
-              "NVIDIA always reports it. AMD needs amdgpu's hwmon node, "
-              "and on Windows both come from LibreHardwareMonitor. Where "
-              "nothing reports a value the line simply stays as it was."),
+              "NVIDIA always reports it. AMD needs amdgpu's hwmon node on "
+              "Linux; on Windows the AMD driver reports it by itself. "
+              "Where nothing reports a value the line simply stays as it "
+              "was."),
              ("Name", "hw_gpu_name",
               "The detected card name. Off means the line says GPU."),
          ))
@@ -1138,11 +1139,17 @@ class AppsPageMixin:
         comp.addWidget(gpu_box, 0, 0)
 
         # ----- VRAM -----
-        vram_box, vram = self._hw_component("VRAM")
-        (self.chk_vram_used, self.chk_vram_pct) = self._hw_check_grid(vram, (
-            ("Numbers", "hw_vram_used", "e.g. 12/16GB"),
-            ("Percent", "hw_vram_pct", "e.g. 75%"),
-        ))
+        vram_box, vram = self._hw_component("GPU info +")
+        (self.chk_vram_used, self.chk_vram_pct, self.chk_gpu_hotspot,
+         self.chk_vram_temp, self.chk_gpu_fan, self.chk_gpu_clock,
+         self.chk_vram_clock) = self._hw_check_grid(
+            vram, (
+                ("GB", "hw_vram_used", "VRAM, e.g. 12/16GB"),
+                ("Percent", "hw_vram_pct", "VRAM, e.g. 75%"),
+                *self._gpu_plus_specs("gpu", "vram"),
+            ))
+        (self.chk_gpu_plus_label, self.gpu_plus_text_input) = \
+            self._gpu_plus_title_row(vram, "gpu", "GPU+")
         vram.addStretch()
         comp.addWidget(vram_box, 0, 1)
 
@@ -1204,27 +1211,66 @@ class AppsPageMixin:
         # ----- RAM -----
         ram_box, ram = self._hw_component("RAM")
         (self.chk_ram_used, self.chk_ram_pct) = self._hw_check_grid(ram, (
-            ("Numbers", "hw_ram_used", "e.g. 12/32GB"),
+            ("GB", "hw_ram_used", "e.g. 12/32GB"),
             ("Percent", "hw_ram_pct", "e.g. 38%"),
         ))
         ramtype_box, ramtype = self._sub_group()
         rt_lbl = QLabel("Type")
         rt_lbl.setObjectName("dim")
         ramtype.addWidget(rt_lbl)
+        self.ram_mode_combo = QComboBox()
+        self.ram_mode_combo.addItem("Automatic", "auto")
+        self.ram_mode_combo.addItem("Manual", "manual")
+        self.ram_mode_combo.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.ram_mode_combo.setMinimumWidth(0)
+        self.ram_mode_combo.setToolTip(
+            "Automatic reads the memory generation from the machine. "
+            "That works on Windows; on Linux it takes root, so it mostly "
+            "stays empty there.\n\nManual uses what you type next to it. "
+            "Either way it fills {ram_type}.")
+        self.ram_mode_combo.currentIndexChanged.connect(
+            lambda _i: self.on_hw_choice(
+                "hw_ram_type_mode", self.ram_mode_combo.currentData()))
+        ramtype.addWidget(self.ram_mode_combo)
         self.ram_type_input = QLineEdit()
         self.ram_type_input.setPlaceholderText("DDR5")
         self.ram_type_input.setMaxLength(10)
         self.ram_type_input.setFixedWidth(88)
         self.ram_type_input.setToolTip(
-            "Optional. Nothing can detect the memory generation without "
-            "reading SPD as root, so it is yours to type or leave empty. "
-            "Fills {ram_type}.")
+            "Used when the dropdown says Manual. Fills {ram_type}.")
         self.ram_type_input.textChanged.connect(
             lambda t: self.on_hw_text("hw_ram_type", t))
         ramtype.addWidget(self.ram_type_input)
         ramtype.addStretch()
         ram.addWidget(ramtype_box)
         comp.addWidget(ram_box, 1, 1)
+
+        # ----- Network -----
+        # Full width: it is the one box without a partner in the grid.
+        net_box, net = self._hw_component("Network")
+        (self.chk_net_down, self.chk_net_up) = self._hw_check_grid(net, (
+            ("Download", "hw_net_down",
+             "Current download speed. Fills {net_down}."),
+            ("Upload", "hw_net_up",
+             "Current upload speed. Fills {net_up}."),
+        ))
+        netpick_box, netpick = self._sub_group()
+        np_lbl = QLabel("Connection")
+        np_lbl.setObjectName("dim")
+        netpick.addWidget(np_lbl)
+        self.net_iface_combo = QComboBox()
+        self.net_iface_combo.addItem("Automatic", "")
+        self.net_iface_combo.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.net_iface_combo.setMinimumWidth(0)
+        self.net_iface_combo.setToolTip(
+            "Automatic takes the real connection that moved the most data "
+            "and skips virtual ones like VPNs. The list fills in once "
+            "Download or Upload is ticked.")
+        self.net_iface_combo.currentIndexChanged.connect(
+            self.on_net_iface_changed)
+        netpick.addWidget(self.net_iface_combo, 1)
+        net.addWidget(netpick_box)
+        comp.addWidget(net_box, 2, 0, 1, 2)
 
         # Equal stretch alone does not give equal columns: it splits the
         # *spare* room evenly on top of each column's own minimum, and
@@ -1289,9 +1335,7 @@ class AppsPageMixin:
 
         self.gpu2_note = self._mode_note(
             "Only one card was detected, so there is no second one to "
-            "report on. On Windows, per-card readings come from "
-            "nvidia-smi - other cards can be named here but report no "
-            "values.", hc)
+            "report on.", hc)
 
         gpu2_row = QHBoxLayout()
         gpu2_row.setContentsMargins(0, 0, 0, 0)
@@ -1299,7 +1343,9 @@ class AppsPageMixin:
         self.gpu2_box, g2 = self._hw_component("GPU 2")
         (self.chk_gpu2_usage, self.chk_gpu2_temp,
          self.chk_gpu2_power, self.chk_gpu2_name,
-         self.chk_gpu2_vram_used, self.chk_gpu2_vram_pct) = \
+         self.chk_gpu2_vram_used, self.chk_gpu2_vram_pct,
+         self.chk_gpu2_hotspot, self.chk_vram2_temp, self.chk_gpu2_fan,
+         self.chk_gpu2_clock, self.chk_vram2_clock) = \
             self._hw_check_grid(g2, (
                 ("Usage", "hw_gpu2_usage", "The load on the second card."),
                 ("Temp", "hw_gpu2_temp",
@@ -1308,14 +1354,17 @@ class AppsPageMixin:
                 ("Power draw", "hw_gpu2_power",
                  "Fills {gpu2_power} / {gpu2_watt}. Same sources as the "
                  "first card: NVIDIA always reports it, AMD needs that "
-                 "card's own hwmon node."),
+                 "card's own hwmon node on Linux."),
                 ("Name", "hw_gpu2_name",
                  "The detected card name. Off means the line says GPU2."),
-                ("VRAM numbers", "hw_gpu2_vram_used",
+                ("VRAM GB", "hw_gpu2_vram_used",
                  "e.g. 3/8GB, as {vram2_usage}."),
                 ("VRAM percent", "hw_gpu2_vram_pct",
                  "e.g. 38%, as {vram2_pct}."),
+                *self._gpu_plus_specs("gpu2", "vram2"),
             ))
+        (self.chk_gpu2_plus_label, self.gpu2_plus_text_input) = \
+            self._gpu_plus_title_row(g2, "gpu2", "GPU2+")
         (self.chk_gpu2_custom, self.gpu2_custom_input,
          self.gpu2_style_combo) = self._hw_name_row(
             g2, "gpu2", "RX 6600 / RTX 3060 / …", title="GPU 2")
@@ -1421,12 +1470,17 @@ class AppsPageMixin:
              "{gpu_name} {gpu_usage} {gpu_temp} {gpu_power} {vram_usage} "
              "{cpu_name} {cpu_usage} {cpu_temp} {cpu_power} {ram_usage} "
              "{ram_type} {icon_flame} {temp_icon}\n"
-             "{vram_usage} / {ram_usage} follow the Numbers + Percent "
+             "{gpu_plus} {gpu_hotspot} {vram_temp} {gpu_fan} {gpu_clock} "
+             "{vram_clock} {net_down} {net_up}\n"
+             "{vram_usage} / {ram_usage} follow the GB + Percent "
              "ticks together; {vram_used} / {ram_used} are the numbers "
              "only, {vram_pct} / {ram_pct} the percent only."),
             ("Second GPU",
              "{gpu2_name} {gpu2_usage} {gpu2_temp} {gpu2_power} "
-             "{vram2_usage} {vram2_used} {vram2_pct} - filled once Second GPU above is "
+             "{vram2_usage} {vram2_used} {vram2_pct} {gpu2_plus} "
+             "{gpu2_hotspot} "
+             "{vram2_temp} {gpu2_fan} {gpu2_clock} {vram2_clock} - filled "
+             "once Second GPU above is "
              "on and a card is picked. Empty otherwise, so a string can "
              "carry them permanently."),
             ("Line breaks",
@@ -1467,6 +1521,23 @@ class AppsPageMixin:
         self.chk_hw_flame.toggled.connect(
             lambda on: self.on_hw_option("hw_flame", on))
         hc.addWidget(self.chk_hw_flame)
+
+        unit_row = QHBoxLayout()
+        unit_row.addWidget(QLabel("Temperature unit"))
+        self.hw_temp_unit_combo = QComboBox()
+        self.hw_temp_unit_combo.addItem("Celsius (\u00b0C)", TEMP_CELSIUS)
+        self.hw_temp_unit_combo.addItem("Fahrenheit (\u00b0F)",
+                                        TEMP_FAHRENHEIT)
+        self.hw_temp_unit_combo.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.hw_temp_unit_combo.setToolTip(
+            "Every temperature on the line and {temp_icon}. With the flame "
+            "icon on, the number still follows this.")
+        self.hw_temp_unit_combo.currentIndexChanged.connect(
+            lambda _i: self.on_hw_choice(
+                "hw_temp_unit", self.hw_temp_unit_combo.currentData()))
+        unit_row.addWidget(self.hw_temp_unit_combo)
+        unit_row.addStretch()
+        hc.addLayout(unit_row)
 
         hpoll_row = QHBoxLayout()
         hpoll_row.addWidget(QLabel("Query hardware every"))
@@ -2543,6 +2614,52 @@ class AppsPageMixin:
             layout.addWidget(sub)
         return frame, layout
 
+    @staticmethod
+    def _gpu_plus_specs(gpu, vram):
+        """The five GPU extras, for _hw_check_grid(). `gpu` and `vram` are
+        the key prefixes, gpu/vram or gpu2/vram2."""
+        return (
+            ("Hot spot", f"hw_{gpu}_hotspot",
+             f"The hottest spot on the chip, as {{{gpu}_hotspot}}. Goes on "
+             "the GPU+ line. Runs 15-30 degrees above the normal "
+             "temperature, which is expected."),
+            ("VRAM temp", f"hw_{vram}_temp",
+             f"Memory temperature, as {{{vram}_temp}}. Not every card "
+             "reports it."),
+            ("Fan", f"hw_{gpu}_fan",
+             f"Fan speed in %, or RPM where the card gives no percent, as "
+             f"{{{gpu}_fan}}."),
+            ("GPU clock", f"hw_{gpu}_clock",
+             f"Core clock in MHz, as {{{gpu}_clock}}."),
+            ("VRAM clock", f"hw_{vram}_clock",
+             f"Memory clock in MHz, as {{{vram}_clock}}."),
+        )
+
+    def _gpu_plus_title_row(self, parent_layout, g, default):
+        """The tick and text field for the title of the GPU+ line.
+
+        Returns (checkbox, line edit). An empty field means the default,
+        so clearing it can never leave a line with an empty title.
+        """
+        box, row = self._sub_group()
+        chk = QCheckBox("Line title")
+        chk.setToolTip(
+            f"The \u201c{default}:\u201d in front of the line. Untick it "
+            "to save the characters. The text also fills "
+            f"{{{g}_plus}} for your own strings.")
+        chk.toggled.connect(
+            lambda on, k=f"hw_{g}_plus_label": self.on_hw_option(k, on))
+        row.addWidget(chk)
+        edit = QLineEdit()
+        edit.setPlaceholderText(default)
+        edit.setMaxLength(20)
+        edit.setMinimumWidth(0)
+        edit.textChanged.connect(
+            lambda t, k=f"hw_{g}_plus_text": self.on_hw_text(k, t))
+        row.addWidget(edit, 1)
+        parent_layout.addWidget(box)
+        return chk, edit
+
     def _hw_check_grid(self, parent_layout, specs, columns=2):
         """The component's checkboxes, two per row.
 
@@ -3091,6 +3208,11 @@ class AppsPageMixin:
         self.gpu2_row_widget.setVisible(on and have_second)
         self.gpu2_note.setVisible(on and not have_second)
         self.hw_custom_box.setEnabled(self.chk_hw_custom.isChecked())
+        self.ram_type_input.setEnabled(
+            self.cfg.get("hw_ram_type_mode") == "manual")
+        for g in ("gpu", "gpu2"):
+            getattr(self, f"{g}_plus_text_input").setEnabled(
+                getattr(self, f"chk_{g}_plus_label").isChecked())
 
     # ---------------------------------------------------- GPU selection
     def _gpu_list(self):
@@ -3260,12 +3382,51 @@ class AppsPageMixin:
             return
         self.cfg[key] = value
         self.save_config()
+        self._sync_hw_dependents()
         self.update_preview()
+
+    def on_net_iface_changed(self, _index):
+        value = self.net_iface_combo.currentData()
+        if value is None or value == self.cfg.get("hw_net_iface", ""):
+            return
+        self.cfg["hw_net_iface"] = value
+        self.save_config()
+        self._apply_net_selection()
+
+    def _apply_net_selection(self):
+        """Tells the backend whether to measure, and which connection."""
+        setter = getattr(self.hw, "set_net", None)
+        if callable(setter):
+            setter(self.cfg.get("hw_net_down") or self.cfg.get("hw_net_up"),
+                   self.cfg.get("hw_net_iface") or None)
+
+    def _fill_net_combo(self, net):
+        """The connection dropdown. Follows the readings, because the
+        names only exist once the backend has measured something."""
+        names = list((net or {}).get("names") or [])
+        want = self.cfg.get("hw_net_iface") or ""
+        if want and want not in names:
+            names.append(want)
+        combo = self.net_iface_combo
+        have = [combo.itemData(i) for i in range(1, combo.count())]
+        if have == names:
+            return
+        combo.blockSignals(True)
+        combo.clear()
+        combo.addItem("Automatic", "")
+        for name in names:
+            combo.addItem(name, name)
+        combo.setCurrentIndex(max(0, combo.findData(want)))
+        combo.blockSignals(False)
 
     def on_hw_option(self, key, on):
         self.cfg[key] = on
         self.save_config()
         self._sync_hw_dependents()
+        if key in ("hw_net_down", "hw_net_up"):
+            self._apply_net_selection()
+            if self.cfg["hw_active"]:
+                self.poll_hw()
         if key == "hw_gpu2":
             # the backend only polls a second card while this is on
             self._apply_gpu_selection()
@@ -3614,20 +3775,24 @@ class AppsPageMixin:
                      "{vram_usage}  {cpu_name}  {cpu_usage}  {cpu_temp}  "
                      "{cpu_power}  {ram_usage}  {ram_used}  {ram_pct}  "
                      "{vram_used}  {vram_pct}  {ram_type}  {temp_icon}  "
-                     "{icon_flame}",
+                     "{icon_flame}  {gpu_plus}  {gpu_hotspot}  {vram_temp}  "
+                     "{gpu_fan}  "
+                     "{gpu_clock}  {vram_clock}  {net_down}  {net_up}",
          "{gpu_power} / {cpu_power} are the power draw in watts "
          "({gpu_watt} spells the same thing) and follow the "
          "\u201cpower draw in watts\u201d checkboxes on the Hardware card, "
          "which are off by default. NVIDIA always reports it; "
-         "AMD GPUs need amdgpu's hwmon node, and CPU watts need zenpower "
-         "or readable RAPL counters - on Windows both come from "
-         "LibreHardwareMonitor. Empty when nothing reports it, like every "
-         "other sensor here. "
+         "AMD GPUs need amdgpu's hwmon node on Linux, on Windows the AMD "
+         "driver reports them by itself. CPU watts need zenpower or "
+         "readable RAPL counters, on Windows LibreHardwareMonitor. Empty "
+         "when nothing reports it, like every other sensor here. "
          "With {temp_icon} in the string the temperatures drop their unit, "
          "because the icon already carries it."),
         ("Second GPU", "{gpu2_name}  {gpu2_usage}  {gpu2_temp}  "
                        "{gpu2_power}  {vram2_usage}  {vram2_used}  "
-                       "{vram2_pct}",
+                       "{vram2_pct}  {gpu2_plus}  {gpu2_hotspot}  "
+                       "{vram2_temp}  "
+                       "{gpu2_fan}  {gpu2_clock}  {vram2_clock}",
          "The same values for a second card. Switch “Second GPU” "
          "on in the Hardware card and pick which one it is; until then "
          "these stay empty and collapse like every other empty "
@@ -3978,7 +4143,7 @@ class AppsPageMixin:
             if re.search(r"\{\s*temp_icon\s*\}", probe or "", re.IGNORECASE):
                 self._bare_temps(hw, self.hw_info)
             vals.update(hw)
-        vals["temp_icon"] = "\U0001F525" if self.cfg["hw_flame"] else "\u00b0C"
+        vals["temp_icon"] = self._temp_icon()
         vals.setdefault("icon_flame", "\U0001F525")
         # The Chat card's parked message. Present in every send mode, so
         # a template using {text_output} keeps working if you switch the
@@ -4564,15 +4729,28 @@ class AppsPageMixin:
                      else ("AMD (sysfs)" if self.hw.amd_card
                            else "none detected – GPU values unavailable"))
         self.hw_status_lbl.setText("GPU backend: " + label)
+        self._fill_net_combo((info or {}).get("net"))
         if IS_WINDOWS:
             self.refresh_wintemp_status()
         self.update_preview()
         self._warm_done("hw")          # see MainWindow._begin_warmup
 
+    def _temp_num(self, t):
+        """The number in the chosen unit, without the unit."""
+        if self.cfg.get("hw_temp_unit") == TEMP_FAHRENHEIT:
+            t = t * 9 / 5 + 32
+        return f"{t:.0f}"
+
+    def _temp_icon(self):
+        if self.cfg["hw_flame"]:
+            return "\U0001F525"
+        return ("\u00b0F" if self.cfg.get("hw_temp_unit") == TEMP_FAHRENHEIT
+                else "\u00b0C")
+
     def _temp_str(self, t):
         if t is None:
             return None
-        return f"{t:.0f}\U0001F525" if self.cfg["hw_flame"] else f"{t:.0f}\u00b0C"
+        return self._temp_num(t) + self._temp_icon()
 
     # ------------------------------------------------- Windows temps
     def _build_wintemp_row(self, indent=24):
@@ -4623,8 +4801,9 @@ class AppsPageMixin:
         rec_row = QHBoxLayout()
         rec_row.addSpacing(indent)
         rec = QLabel(
-            "Recommended extra software: LibreHardwareMonitor (LHM). "
-            "Lightweight, open source and uses practically no system "
+            "Optional extra software, only for CPU temperature and CPU "
+            "watts: LibreHardwareMonitor (LHM). NVIDIA and AMD cards report "
+            "their own values without it. Lightweight, open source and uses practically no system "
             "resources, so your performance stays untouched. Inside LHM, "
             "enable Options \u203a Remote Web Server once.")
         rec.setStyleSheet("color: #7a8290; font-size: 11px;")
@@ -4777,10 +4956,88 @@ class AppsPageMixin:
             "ram_used": (f"{ram['used']:.0f}/{ram['total']:.0f}GB"
                          if c["hw_ram_used"] and ram else None),
             "ram_pct": (f"{ram['pct']:.0f}%" if c["hw_ram_pct"] and ram else None),
-            "ram_type": c["hw_ram_type"].strip() or None,
+            "ram_type": self._ram_type_str(info),
             "icon_flame": "\U0001F525",
+            **self._gpu_plus_values(gpu, "gpu", "vram"),
+            **self._net_values(info),
             **self._gpu2_values(info),
         }
+
+    def _ram_type_str(self, info):
+        """{ram_type}: read from the machine, or what was typed. A config
+        from before the dropdown has no mode yet, its text then wins."""
+        c = self.cfg
+        typed = (c.get("hw_ram_type") or "").strip()
+        mode = c.get("hw_ram_type_mode") or ("manual" if typed else "auto")
+        if mode == "manual":
+            return typed or None
+        return info.get("ram_type") or None
+
+    @staticmethod
+    def _rate_str(rate):
+        """Bytes per second for a chatbox: 340KB/s, 12MB/s, 1.2MB/s."""
+        if rate is None:
+            return None
+        if rate >= 10 * 1024 ** 2:
+            return f"{rate / 1024 ** 2:.0f}MB/s"
+        if rate >= 1024 ** 2:
+            return f"{rate / 1024 ** 2:.1f}MB/s"
+        return f"{rate / 1024:.0f}KB/s"
+
+    def _net_values(self, info):
+        c = self.cfg
+        net = info.get("net") or {}
+        return {"net_down": (self._rate_str(net.get("down"))
+                             if c.get("hw_net_down") else None),
+                "net_up": (self._rate_str(net.get("up"))
+                           if c.get("hw_net_up") else None)}
+
+    def _gpu_plus_title(self, g):
+        """Title of the GPU+ line, None with its tick off."""
+        c = self.cfg
+        if not c.get(f"hw_{g}_plus_label", True):
+            return None
+        text = (c.get(f"hw_{g}_plus_text") or "").strip()
+        return text or ("GPU+" if g == "gpu" else "GPU2+")
+
+    def _gpu_plus_values(self, gpu, g, v):
+        """The GPU info + values by placeholder. `g` and `v` are the
+        prefixes, gpu/vram or gpu2/vram2."""
+        c = self.cfg
+        fan = gpu.get("fan")
+        rpm = gpu.get("fan_rpm")
+        fan_text = (f"{fan:.0f}%" if fan is not None
+                    else f"{rpm:.0f}RPM" if rpm is not None else None)
+        clock = gpu.get("clock")
+        vclock = gpu.get("vram_clock")
+        return {
+            f"{g}_plus": (self._gpu_plus_title(g)
+                          if g == "gpu" or c.get("hw_gpu2") else None),
+            f"{g}_hotspot": (self._temp_str(gpu.get("hotspot"))
+                             if c.get(f"hw_{g}_hotspot") else None),
+            f"{v}_temp": (self._temp_str(gpu.get("vram_temp"))
+                          if c.get(f"hw_{v}_temp") else None),
+            f"{g}_fan": fan_text if c.get(f"hw_{g}_fan") else None,
+            f"{g}_clock": (f"{clock:.0f}MHz" if c.get(f"hw_{g}_clock")
+                           and clock is not None else None),
+            f"{v}_clock": (f"{vclock:.0f}MHz" if c.get(f"hw_{v}_clock")
+                           and vclock is not None else None),
+        }
+
+    def _gpu_plus_line(self, gpu, g, v):
+        """"GPU+: Hot 78°C VRAM 70°C Fan 45% Core 2450MHz Mem 1200MHz", or
+        "" with nothing ticked. A line of its own, so that the GPU line
+        everyone already has stays as short as it was."""
+        vals = self._gpu_plus_values(gpu, g, v)
+        parts = [f"{label} {vals[key]}" for label, key in (
+            ("Hot", f"{g}_hotspot"), ("VRAM", f"{v}_temp"),
+            ("Fan", f"{g}_fan"), ("Core", f"{g}_clock"),
+            ("Mem", f"{v}_clock")) if vals[key]]
+        if not parts:
+            return ""
+        title = self._gpu_plus_title(g)
+        body = " ".join(parts)
+        return f"{title}: {body}" if title else body
 
     def _gpu2_values(self, info):
         """The {gpu2_*} / {vram2_*} half of _hw_values().
@@ -4816,6 +5073,7 @@ class AppsPageMixin:
             "vram2_pct": (f"{gpu['vram_pct']:.0f}%"
                           if c.get("hw_gpu2_vram_pct")
                           and gpu.get("vram_pct") is not None else None),
+            **self._gpu_plus_values(gpu, "gpu2", "vram2"),
         }
 
     def _bare_temps(self, vals, info):
@@ -4829,12 +5087,16 @@ class AppsPageMixin:
         """
         gpu = info.get("gpu") or {}
         gpu2 = (info.get("gpu2") or {}) if self.cfg.get("hw_gpu2") else {}
-        if self.cfg["hw_gpu_temp"] and gpu.get("temp") is not None:
-            vals["gpu_temp"] = f"{gpu['temp']:.0f}"
-        if self.cfg.get("hw_gpu2_temp") and gpu2.get("temp") is not None:
-            vals["gpu2_temp"] = f"{gpu2['temp']:.0f}"
-        if self.cfg["hw_cpu_temp"] and info.get("cpu_temp") is not None:
-            vals["cpu_temp"] = f"{info['cpu_temp']:.0f}"
+        for tick, key, value in (
+                ("hw_gpu_temp", "gpu_temp", gpu.get("temp")),
+                ("hw_gpu2_temp", "gpu2_temp", gpu2.get("temp")),
+                ("hw_cpu_temp", "cpu_temp", info.get("cpu_temp")),
+                ("hw_gpu_hotspot", "gpu_hotspot", gpu.get("hotspot")),
+                ("hw_vram_temp", "vram_temp", gpu.get("vram_temp")),
+                ("hw_gpu2_hotspot", "gpu2_hotspot", gpu2.get("hotspot")),
+                ("hw_vram2_temp", "vram2_temp", gpu2.get("vram_temp"))):
+            if self.cfg.get(tick) and value is not None:
+                vals[key] = self._temp_num(value)
 
     def _gpu2_line(self, info):
         """"GPU2: 7% 44°C | VRAM 1/8GB" for the generated layout, or ""
@@ -4879,7 +5141,7 @@ class AppsPageMixin:
             # you can format/replace the unit yourself.
             if re.search(r"\{\s*temp_icon\s*\}", tpl, re.IGNORECASE):
                 self._bare_temps(vals, info)
-            vals["temp_icon"] = "\U0001F525" if self.cfg["hw_flame"] else "\u00b0C"
+            vals["temp_icon"] = self._temp_icon()
             text = apply_template(tpl, vals)
             return text.split("\n") if text else []
         lines = []
@@ -4913,8 +5175,16 @@ class AppsPageMixin:
             gpu2_line = ""
         if vals or vram:
             lines.append(line)
+        plus = self._gpu_plus_line(gpu, "gpu", "vram")
+        if plus:
+            lines.append(plus)
         if gpu2_line:
             lines.append(gpu2_line)
+        if self.cfg.get("hw_gpu2"):
+            plus = self._gpu_plus_line(info.get("gpu2") or {}, "gpu2",
+                                       "vram2")
+            if plus:
+                lines.append(plus)
         # ---------- CPU line ----------
         cname = self._hw_display_name("cpu")
         cvals = []
@@ -4935,6 +5205,15 @@ class AppsPageMixin:
             if self.cfg["hw_ram_pct"]:
                 rvals.append(f"{ram['pct']:.0f}%")
             if rvals:
-                rtype = self.cfg["hw_ram_type"].strip()
+                rtype = self._ram_type_str(info)
                 lines.append("RAM: " + " ".join(rvals) + (f" {rtype}" if rtype else ""))
+        # ---------- Network line ----------
+        net = self._net_values(info)
+        nvals = []
+        if net["net_down"]:
+            nvals.append("\u2193" + net["net_down"])
+        if net["net_up"]:
+            nvals.append("\u2191" + net["net_up"])
+        if nvals:
+            lines.append("Net: " + " ".join(nvals))
         return lines

@@ -151,7 +151,7 @@ Fabrik-Prinzip: Modul in `core/` wählt das Backend, die UI importiert **nie** d
 
 | Fabrik | Linux | Windows | Fallback |
 |---|---|---|---|
-| `core/hardware.py` | `hardware_linux.py` (/proc, /sys, nvidia-smi) | `hardware_windows.py` (Win32/PDH/LHM) + `wintemp.py` | `hardware_null.py` |
+| `core/hardware.py` | `hardware_linux.py` (/proc, /sys, nvidia-smi), gemeinsam: `nvsmi.py`, `netstats.py`, `ramtype.py` | `hardware_windows.py` (Win32/PDH/LHM) + `adl_windows.py` (AMD-Treiber) + `dxgi_windows.py` (Karten, LUIDs) + `wintemp.py` | `hardware_null.py` |
 | `core/mediafetch.py` | `media_linux.py` (MPRIS/D-Bus) | `media_windows.py` (GSMTC) | `media_null.py` |
 | Mikrofon | `mic_pactl.py` (PipeWire/Pulse) | `mic_sounddevice.py` | `mic_probe.py` (Timeout-Schutz) |
 

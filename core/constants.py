@@ -15,7 +15,7 @@ from core.osinfo import (  # noqa: F401  (IS_WINDOWS/OS_NAME re-exported)
     IS_WINDOWS, OS_NAME, config_dir, legacy_config_dir, resource_root)
 
 APP_NAME = "OSC-DreamChatbox"
-VERSION = "v1.7.0"
+VERSION = "v1.7.1"
 
 #: how many All-in-one strings there can be. Raised from 5 in v1.4.0;
 #: every list that is "one entry per AIO string" is sized from here.
@@ -127,6 +127,10 @@ SONGBAR_LEN = 13     # number of segments in the song progress bar
 #   inline  appended to the first GPU line, all in one line
 GPU2_MODE_LINE = "line"
 GPU2_MODE_INLINE = "inline"
+
+# ---- temperature unit on the Hardware card ---------------------------
+TEMP_CELSIUS = "c"
+TEMP_FAHRENHEIT = "f"
 GPU2_MODES = (GPU2_MODE_LINE, GPU2_MODE_INLINE)
 
 

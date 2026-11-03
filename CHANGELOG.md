@@ -7,6 +7,72 @@ All notable changes to OSC-DreamChatbox are documented here.
 🟢 Linux Support: Complete & Stable (v1.2.6)
 
 
+## [v1.7.1] – 2026-11-03
+
+### Added
+
+- **Windows: AMD cards report watts and temperature without extra
+  software.** The new `core/backends/adl_windows.py` reads power,
+  temperature and load per card from `atiadlxx.dll`, which every AMD
+  driver installs. No LibreHardwareMonitor, no administrator rights. Board
+  power is preferred over ASIC power, and the edge temperature over the
+  hot spot. LibreHardwareMonitor stays optional for CPU temperature, CPU
+  watts and Intel GPUs. A second AMD card now has its own values too, and
+  a card that was swapped out no longer wins over the installed one
+  because of a leftover registry entry.
+- **GPU info +.** The VRAM box on the Hardware card is now *GPU info +*
+  and adds hot spot, VRAM temperature, fan, GPU clock and VRAM clock, for
+  the second card as well. All off by default. They go on a `GPU+` /
+  `GPU2+` line of their own, whose title can be switched off or replaced
+  with your own text (`{gpu_plus}` / `{gpu2_plus}`, also on the node
+  canvas), and fill the new placeholders `{gpu_hotspot}`
+  `{vram_temp}` `{gpu_fan}` `{gpu_clock}` `{vram_clock}` and their
+  `{gpu2_…}` / `{vram2_…}` versions, also as outputs on the node canvas.
+  They come from the AMD driver on Windows, from hwmon on Linux and from
+  `nvidia-smi`, which only gets `temperature.memory` asked for where the
+  driver knows that field.
+- **Network.** New box with download and upload speed, `{net_down}` and
+  `{net_up}`, off by default and not measured until ticked. Automatic
+  skips VPNs and other virtual connections, the Connection dropdown picks
+  one by hand (`core/backends/netstats.py`).
+- **RAM type: Automatic or Manual.** Automatic reads the generation from
+  the machine, Manual uses what you type. A type you already typed stays
+  on Manual. On Linux Automatic needs root, so it mostly stays empty.
+  Windows users with an empty field now see their type on the RAM line.
+- **Fahrenheit.** A temperature unit dropdown under Config & formatting.
+  It covers every temperature and `{temp_icon}`.
+
+### Changed
+
+- **Windows: every card gets its own numbers.** Cards are found through
+  DXGI (`core/backends/dxgi_windows.py`) instead of the registry, which
+  keeps cards that are long gone, and the performance counters are read
+  per adapter through its LUID. Before, load and VRAM of all cards were
+  added up. VRAM now comes from `GPU Adapter Memory`. Intel cards and a
+  second card have real values instead of "name only", and a machine with
+  an NVIDIA and an AMD card lists both. The registry stays as fallback.
+- **Windows: one `nvidia-smi` instead of a new process per poll.** The
+  loop Linux already had moved to `core/backends/nvsmi.py`, and a job
+  object ends it with the app. After three polls without an answer it
+  rests for five minutes.
+- **Parameter log moved to the right column**, under *Clear chatbox*.
+  It is one click away on every page now, also on the Advanced canvas.
+- **"Numbers" is now "GB"** on the VRAM and RAM ticks, and "VRAM GB" on
+  the second GPU.
+
+### Fixed
+
+- **Windows: GPU usage and VRAM work on AMD and Intel cards.** Every
+  non-NVIDIA card, e.g. the Radeon RX 9060, stayed empty: the status
+  returned by the performance counters was read as a signed number, so
+  `PDH_MORE_DATA` never matched and each poll came back with nothing. The
+  return type is now unsigned, and the `PDH_CSTATUS_NEW_DATA` constant is
+  corrected from `0x800` to `0x1`, which would have thrown away valid
+  readings (`core/backends/hardware_windows.py`).
+- **Windows: a leftover `nvidia-smi.exe` no longer counts as an NVIDIA
+  card.** After swapping to another vendor it switched off the performance
+  counters and left the GPU values empty.
+
 ## [v1.7.0] – 2026-10-20
 
 ### Fixed
