@@ -445,6 +445,7 @@ Own **Plugins** page with two tabs: **Installed** and **Store**.
 **OSCQuery Fix** — one button enables OSCQuery directly in the config of every supported program, other settings stay untouched. Currently **OSCLeash** and **OscGoesBrrr**; only files that already exist are touched, never created. Easily extensible in `core/queryfix.py`.
 
 **Slim Chatbox (default ON)** — appends the invisible characters `\u0003\u001f` so VRChat renders a **slim bar instead of the huge box** (the hidden "BlankEgg" trick from MagicChatbox — here it's just a normal setting). The suffix is guaranteed to survive even at the 144-char limit.
+> ⚠️ No longer works in VRChat since the Unity 6 update.
 
 **Send changes instantly** — a changed text goes to VRChat right away instead of waiting for the interval, while staying inside VRChat's rate limit (5 messages per 5 s, min 1.5 s apart). Extra sends are delayed, never dropped.
 
@@ -453,6 +454,8 @@ Own **Plugins** page with two tabs: **Installed** and **Store**.
 **Turning SendToVRChat off clears the chatbox twice** (now and again after 3 s), because VRChat does not always take the first empty message. A **🧹 Clear chatbox** button sits right under the preview.
 
 **Clear chatbox when there is nothing to send** — once nothing is left to show, one empty message removes the old text right away instead of VRChat keeping it ~30 s. A message you typed yourself is never cleared by this.
+
+**Enforce plugin setting limits** (Options → General → Plugins, on by default) — keeps every number setting of a plugin inside the min/max from its `plugin.json`, even when the config file was edited by hand.
 
 **Update directly in the app (Windows):** *Check for updates* finds a new version → **Download & install** fetches the setup, starts it and closes the app. Settings, profiles and plugins stay.
 

@@ -1243,6 +1243,7 @@ class AppsPageMixin:
         ramtype.addWidget(self.ram_type_input)
         ramtype.addStretch()
         ram.addWidget(ramtype_box)
+        ram.addStretch()
         comp.addWidget(ram_box, 1, 1)
 
         # ----- Network -----

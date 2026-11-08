@@ -354,6 +354,23 @@ MODULE_PREFIX = "dreamchatbox_plugin_"
 MAX_UNPACKED_BYTES = 64 * 1024 * 1024
 
 
+def clamp_setting(item, value):
+    """An int/slider value forced into the schema's min..max.
+
+    Only the widget enforced the range before, so a hand-edited
+    config.json could hand a plugin any number. Values that are not a
+    number at all fall back to the default. Other types pass through.
+    """
+    if item.get("type") not in ("int", "slider"):
+        return value
+    lo, hi = item.get("min", 0), item.get("max", 999)
+    try:
+        num = int(value)
+    except (TypeError, ValueError):
+        return item.get("default", lo)
+    return max(lo, min(hi, num))
+
+
 def iter_settings(schema):
     """Yields every setting that holds a VALUE, walking into groups.
 
@@ -930,6 +947,8 @@ class PluginManager:
         self.headless_mode = bool(getattr(host, "HEADLESS", False))
         self.plugins = {}          # pid -> Plugin, insertion = display order
         self.settings = {}         # pid -> config dict (mirrors config.json)
+        # Options tab: clamp int/slider values to min/max from plugin.json
+        self.enforce_limits = True
         self._snap = None          # cached snapshot for the current frame
 
     # ------------------------------------------------- per-plugin config
@@ -979,6 +998,8 @@ class PluginManager:
         for item in iter_settings(plugin.schema if plugin else []):
             if item["key"] not in opts:
                 opts[item["key"]] = item["default"]
+            elif self.enforce_limits:
+                opts[item["key"]] = clamp_setting(item, opts[item["key"]])
         return opts
 
     def _changed(self, pid):
@@ -1134,8 +1155,13 @@ class PluginManager:
         the user is looking at, if the Plugins page is built.
         """
         opts = self.options(pid)
-        opts[str(key)] = value
         plugin = self.plugins.get(pid)
+        if self.enforce_limits and plugin is not None:
+            for item in iter_settings(plugin.schema):
+                if item["key"] == str(key):
+                    value = clamp_setting(item, value)
+                    break
+        opts[str(key)] = value
         if notify and plugin is not None and plugin.loaded:
             self._safe_call(plugin, "on_settings", opts)
         self._changed(pid)

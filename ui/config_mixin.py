@@ -566,6 +566,8 @@ class ConfigMixin:
             # to show, instead of VRChat keeping the last text ~30 s.
             # A typed (manual) message is never cleared by this.
             "clear_when_empty": False,
+            # clamp plugin int/slider settings to their min/max
+            "plugin_enforce_limits": True,
             # v1.6.5: never | appear | events (core/constants.NOTIFY_*)
             "chatbox_notify": "never",
             "chatbox_notify_output": "vrchat",   # vrchat | app | both
@@ -1020,6 +1022,8 @@ class ConfigMixin:
             defaults["chatbox_notify_param"] = ""
         defaults["clear_when_empty"] = bool(
             defaults.get("clear_when_empty", False))
+        defaults["plugin_enforce_limits"] = bool(
+            defaults.get("plugin_enforce_limits", True))
         gw = defaults.get("graph_panel_widths")
         if (isinstance(gw, (list, tuple)) and len(gw) == 2
                 and all(isinstance(x, int) for x in gw)):

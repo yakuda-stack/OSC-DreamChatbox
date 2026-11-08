@@ -3,6 +3,13 @@
 The short version of every release — what you will actually notice.
 The full details are in the changelog.
 
+## v1.7.2 – 2026-11-08
+
+- **Safer plugins:** number settings of a plugin always stay inside their min/max, even after editing the config by hand (Options → General → Plugins).
+- **New in the plugin store:** Shocker – OpenShock + PiShock control by ArcticTechy.
+- **Note:** Slim Chatbox no longer works in VRChat since Unity 6.
+- **Small fix:** the RAM box on the Hardware card no longer stretches.
+
 ## v1.7.1 – 2026-11-03
 
 - **Windows: GPU values fixed, no extra software for AMD** – usage, VRAM, watts and temperature now work on AMD and Intel cards, every card with its own numbers.

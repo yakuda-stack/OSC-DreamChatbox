@@ -319,7 +319,8 @@ class OptionsPageMixin:
                                   self.toggle_slim, wrap=True), 1)
         c.addLayout(row)
         hint = QLabel("Appends invisible characters (\\u0003\\u001f) to the text so "
-                      "VRChat renders the chatbox as a slim bar only. Default: ON")
+                      "VRChat renders the chatbox as a slim bar only. Default: ON\n"
+                      "\u26a0\ufe0f No longer works in VRChat since the Unity 6 update.")
         hint.setObjectName("dim")
         hint.setWordWrap(True)
         c.addWidget(hint)
@@ -638,6 +639,23 @@ class OptionsPageMixin:
         term_row.addStretch()
         term.addLayout(term_row)
         general_lay.addWidget(term_card)
+
+        # ---- Plugins: clamp number settings to min/max
+        plug_card, plug = self._opt_card(
+            "Plugins",
+            "Keeps every number setting of a plugin inside the min/max "
+            "from its plugin.json, even if the config file was edited "
+            "by hand. Recommended for plugins that control hardware.")
+        limits_row = QHBoxLayout()
+        self.toggle_plugin_limits = ToggleSwitch()
+        self.toggle_plugin_limits.toggled.connect(
+            self.on_plugin_limits_toggled)
+        limits_row.addWidget(self.toggle_plugin_limits)
+        limits_row.addWidget(ToggleLabel(
+            "Enforce plugin setting limits",
+            self.toggle_plugin_limits, wrap=True), 1)
+        plug.addLayout(limits_row)
+        general_lay.addWidget(plug_card)
 
         # 3 ---- Fixes
         # Both buttons fix problems that only exist on Linux:
@@ -1444,6 +1462,12 @@ class OptionsPageMixin:
         self.log(f"Clear chatbox when empty: {'ON' if on else 'OFF'}")
         if on:
             self.request_send()
+
+    def on_plugin_limits_toggled(self, on):
+        self.cfg["plugin_enforce_limits"] = bool(on)
+        self.save_config()
+        self.plugins.enforce_limits = bool(on)
+        self.log(f"Enforce plugin setting limits: {'ON' if on else 'OFF'}")
 
     def on_instant_send_toggled(self, on):
         self.cfg["osc_instant_send"] = bool(on)

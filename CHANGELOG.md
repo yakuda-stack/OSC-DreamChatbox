@@ -7,6 +7,27 @@ All notable changes to OSC-DreamChatbox are documented here.
 🟢 Linux Support: Complete & Stable (v1.2.6)
 
 
+## [v1.7.2] – 2026-11-08
+
+### Added
+
+- **Plugin settings stay inside their limits.** Number and slider settings
+  of a plugin are now clamped to the `min`/`max` from its `plugin.json`
+  when they are loaded and saved, so a hand-edited `config.json` can no
+  longer hand a plugin any value. Values that are not a number fall back
+  to the default (`core/plugins.py`). New switch in Options, *Enforce
+  plugin setting limits*, on by default (General tab, new *Plugins*
+  card).
+- **Plugin store: Shocker (OpenShock + PiShock)** by ArcticTechy is now in
+  the catalogue (`config/plugins.json`).
+
+### Changed
+
+- **Slim Chatbox note:** the option now says that the trick no longer
+  works in VRChat since the Unity 6 update.
+- **RAM box on the Hardware card** keeps its content at the top instead
+  of stretching it.
+
 ## [v1.7.1] – 2026-11-03
 
 ### Added

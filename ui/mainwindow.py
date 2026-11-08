@@ -164,6 +164,8 @@ class MainWindow(ConfigMixin, AppsPageMixin, AdvancedPageMixin,
         # so the Plugins page can render the list right away. Their
         # settings live in plugins/<id>/configs/config.json, not in cfg.
         self.plugins = PluginManager(self.log, host=self)
+        self.plugins.enforce_limits = bool(
+            self.cfg.get("plugin_enforce_limits", True))
         self.plugins.discover()
 
         # --- timers ---
@@ -1045,6 +1047,10 @@ class MainWindow(ConfigMixin, AppsPageMixin, AdvancedPageMixin,
         self.toggle_clear_empty.setChecked(
             bool(self.cfg.get("clear_when_empty", False)))
         self.toggle_clear_empty.blockSignals(False)
+        self.toggle_plugin_limits.blockSignals(True)
+        self.toggle_plugin_limits.setChecked(
+            bool(self.cfg.get("plugin_enforce_limits", True)))
+        self.toggle_plugin_limits.blockSignals(False)
         self.toggle_slim.setChecked(self.cfg["slim_chatbox"])
         self.toggle_oscquery.blockSignals(True)
         self.toggle_oscquery.setChecked(
