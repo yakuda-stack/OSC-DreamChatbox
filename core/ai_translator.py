@@ -466,10 +466,14 @@ def start_ollama(log_path=None) -> tuple[bool, str]:
 
 
 def models_for(method: str) -> list[str]:
-    """Dropdown entries; for Ollama the installed models come first."""
+    """Dropdown entries; for Ollama the installed models come first.
+    v1.7.3: "Your own AI" lists the locally installed Ollama models, so
+    their names don't have to be typed by hand (any other name still works)."""
     if method == METHOD_OLLAMA:
         have = ollama_models()
         return have + [m for m in MODELS[METHOD_OLLAMA] if m not in have]
+    if method == METHOD_AI_CUSTOM:
+        return ollama_models()
     return list(MODELS.get(method, []))
 
 

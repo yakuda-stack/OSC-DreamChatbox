@@ -3,6 +3,12 @@
 The short version of every release — what you will actually notice.
 The full details are in the changelog.
 
+## v1.7.3 – 2026-11-11
+
+- **AppImage runs on more systems:** Ubuntu, Debian, Fedora, Arch, CachyOS and Linux Mint, no matter which Python is installed – missing Qt libraries on Debian are detected again, and every build is test-started before packing.
+- **No more silent start failures:** if the app can't start, it now says so and writes `last-start.log` in the config folder – send that file and the bug can be found.
+- **Your own AI: pick local models:** the model dropdown now lists your installed local models – choose one instead of typing the name, or still type your own.
+
 ## v1.7.2 – 2026-11-08
 
 - **Safer plugins:** number settings of a plugin always stay inside their min/max, even after editing the config by hand (Options → General → Plugins).

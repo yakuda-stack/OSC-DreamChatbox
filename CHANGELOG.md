@@ -7,6 +7,48 @@ All notable changes to OSC-DreamChatbox are documented here.
 🟢 Linux Support: Complete & Stable (v1.2.6)
 
 
+## [v1.7.3] – 2026-11-11
+
+### Added
+
+- **Translation → Your own AI: local models in the dropdown.** The model
+  field now lists the locally installed Ollama models, so you can pick one
+  instead of copying its name. The dropdown stays editable – any other
+  model name (LM Studio, llama.cpp, a remote server …) can still be typed
+  in. The list is loaded in the background; ⟳ reloads it (e.g. after
+  `ollama pull`). Without a running Ollama the field is simply empty, as
+  before (`core/ai_translator.models_for`, `ui/pages/textbox_page.py`).
+- **Start log: a failed start is no longer silent.** Started from the menu
+  or desktop icon there is no terminal, so a crash before the window was up
+  looked like "the icon loads for 3 seconds, then nothing". The window mode
+  now writes `~/.config/OSC-DreamChatbox/last-start.log` (Windows:
+  `%APPDATA%\OSC-DreamChatbox\last-start.log`) on every start: version,
+  platform, Python tracebacks, hard crashes (Qt / GPU driver / C modules via
+  faulthandler) and, on Linux, everything Qt prints to stderr. If the start
+  fails, a dialog (or a desktop notification) says where the file is
+  (`core/startlog.py`).
+
+### Fixed
+
+- **AppImage on Debian: missing Qt libraries are detected again.**
+  `ldconfig` lives in `/sbin` there, which is not in a normal user's
+  `PATH`, so AppRun could not check which X11 libraries the system has.
+  It now also looks in `/sbin`, `/usr/sbin` and `/usr/bin`.
+
+### Changed
+
+- **AppImage build checks the glibc version.** If any bundled library
+  needs a newer glibc than 2.35 (Ubuntu 22.04 / Mint 21), the build stops
+  and lists the files, instead of producing an AppImage that only fails on
+  older systems. Other limit: `DCB_MAX_GLIBC=2.36`.
+- **AppImage build runs a start test.** PyQt6, python-osc, zeroconf,
+  SpeechRecognition, deepl and setproctitle are imported in the bundled
+  Python and a Qt application is created (offscreen) before the AppImage
+  is packed.
+- The AppImage keeps bringing its own Python, so it does not depend on
+  the Python of the system: Ubuntu, Debian, Fedora, Arch, CachyOS and
+  Linux Mint, old and new.
+
 ## [v1.7.2] – 2026-11-08
 
 ### Added

@@ -128,3 +128,12 @@ def test_config_defaults_and_favorites():
                  "stt_ai_claude_model": 3})
     assert cfg["stt_tr_favorites"] == ["deepl", "ai_claude"]
     assert cfg["stt_ai_claude_model"] == "haiku"
+
+
+def test_custom_ai_lists_local_models(monkeypatch):
+    """v1.7.3: Your own AI - installed local models in the dropdown."""
+    from core import ai_translator as ai
+    monkeypatch.setattr(ai, "ollama_models", lambda timeout=1.0: ["gemma3:4b", "qwen3:8b"])
+    assert ai.models_for(ai.METHOD_AI_CUSTOM) == ["gemma3:4b", "qwen3:8b"]
+    monkeypatch.setattr(ai, "ollama_models", lambda timeout=1.0: [])
+    assert ai.models_for(ai.METHOD_AI_CUSTOM) == []

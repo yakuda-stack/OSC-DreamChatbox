@@ -335,6 +335,51 @@ find "$SITE" -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null || true
 echo "$DONE_VERS" > "$LIB/.python-versions"
 echo "[Info] Gebundelt für Python: $DONE_VERS"
 
+# 5a. glibc-Obergrenze prüfen
+#
+# Ältestes Ziel: Ubuntu 22.04 / Mint 21 (glibc 2.35), Debian 12 (2.36).
+# Braucht auch nur EINE .so ein neueres GLIBC_x.y, startet die AppImage
+# dort nicht ("version GLIBC_2.38 not found"). Der Build bricht ab,
+# statt dass es erst ein Nutzer merkt.
+# Andere Grenze:  DCB_MAX_GLIBC=2.36 bash scripts/build_appimage.sh
+MAX_GLIBC="${DCB_MAX_GLIBC:-2.35}"
+if command -v readelf >/dev/null 2>&1; then
+    NEED_GLIBC="$(find "$BUILD_DIR/usr" -type f -name '*.so*' -print0 \
+        | xargs -0 readelf -V 2>/dev/null \
+        | grep -oE 'GLIBC_[0-9]+\.[0-9]+' | sed 's/GLIBC_//' \
+        | sort -uV | tail -1)"
+    if [ -n "$NEED_GLIBC" ]; then
+        if [ "$(printf '%s\n%s\n' "$NEED_GLIBC" "$MAX_GLIBC" | sort -V | tail -1)" != "$MAX_GLIBC" ]; then
+            echo "FEHLER: gebundelte Bibliotheken brauchen glibc $NEED_GLIBC,"
+            echo "        erlaubt ist höchstens $MAX_GLIBC (Ubuntu 22.04 / Mint 21)."
+            find "$BUILD_DIR/usr" -type f -name '*.so*' | while read -r f; do
+                readelf -V "$f" 2>/dev/null | grep -q "GLIBC_$NEED_GLIBC" \
+                    && echo "        - ${f#$BUILD_DIR/}"
+            done | head -10
+            exit 1
+        fi
+        echo "[Info] Höchste benötigte glibc: $NEED_GLIBC (Grenze $MAX_GLIBC)"
+    fi
+else
+    echo "[Warn] readelf fehlt (binutils) — glibc-Prüfung übersprungen."
+fi
+
+# 5b. Start-Test: lädt alles im gebundelten Python?
+# offscreen = kein Fenster, geht auch ohne Bildschirm
+if ! PYTHONPATH="$SITE" PYTHONNOUSERSITE=1 QT_QPA_PLATFORM=offscreen \
+     LD_LIBRARY_PATH="$EXTRA${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+     "$PYBIN" -c "
+import PyQt6.QtWidgets as w, pythonosc, zeroconf, speech_recognition, deepl, setproctitle
+app = w.QApplication([])
+print('ok')
+" >/dev/null 2>"$OUT_DIR/import-test.log"; then
+    echo "FEHLER: Import-Test im gebundelten Python fehlgeschlagen:"
+    tail -5 "$OUT_DIR/import-test.log"
+    exit 1
+fi
+rm -f "$OUT_DIR/import-test.log"
+echo "[Info] Import-Test ok (PyQt6, python-osc, zeroconf, SpeechRecognition, deepl)"
+
 # AppRun Script
 cat > "$BUILD_DIR/AppRun" << 'APPRUN'
 #!/bin/bash
@@ -344,10 +389,18 @@ export PATH="$HERE/usr/bin:$PATH"
 # nichts aus ~/.local/lib/python* dazwischenfunken lassen
 export PYTHONNOUSERSITE=1
 
+# Debian: ldconfig liegt in /sbin, das ist für normale Nutzer nicht
+# im PATH - dann würden alle Bibliotheks-Prüfungen unten ins Leere laufen
+LDCONFIG="$(command -v ldconfig 2>/dev/null)"
+for c in /sbin/ldconfig /usr/sbin/ldconfig /usr/bin/ldconfig; do
+    [ -n "$LDCONFIG" ] && break
+    [ -x "$c" ] && LDCONFIG="$c"
+done
+
 # Qt-X11-Bibliotheken aus usr/lib/extra - nur wenn das System sie nicht
 # hat (dann gewinnt immer die Version des Systems)
-if [ -d "$HERE/usr/lib/extra" ] && command -v ldconfig >/dev/null 2>&1; then
-    libs="$(ldconfig -p 2>/dev/null)"
+if [ -d "$HERE/usr/lib/extra" ] && [ -n "$LDCONFIG" ]; then
+    libs="$("$LDCONFIG" -p 2>/dev/null)"
     for so in libxcb-cursor.so.0 libxcb-image.so.0 libxcb-render-util.so.0 \
               libxcb-util.so.1 libxcb-icccm.so.4 libxcb-keysyms.so.1 \
               libxkbcommon-x11.so.0 libxcb-randr.so.0 libxcb-xkb.so.1; do
@@ -366,8 +419,8 @@ fi
 if [ -x "$HERE/usr/python/bin/python3" ]; then
     export DREAMCHATBOX_PYTHON="$HERE/usr/python/bin/python3"
     missing=""
-    if command -v ldconfig >/dev/null 2>&1; then
-        case "$(ldconfig -p 2>/dev/null)" in *libEGL.so.1*) ;; *) missing=" libegl1";; esac
+    if [ -n "$LDCONFIG" ]; then
+        case "$("$LDCONFIG" -p 2>/dev/null)" in *libEGL.so.1*) ;; *) missing=" libegl1";; esac
     fi
     if [ -n "$missing" ]; then
         echo "OSC-DreamChatbox: es fehlt eine Systembibliothek für Qt6:$missing" >&2
@@ -424,8 +477,8 @@ export DREAMCHATBOX_PYTHON
 # Bibliotheken, die Qt6 braucht und die auf Mint/Ubuntu NICHT
 # standardmäßig installiert sind. libxcb-cursor0 ist der Klassiker.
 missing=""
-if command -v ldconfig >/dev/null 2>&1; then
-    libs="$(ldconfig -p 2>/dev/null)"
+if [ -n "$LDCONFIG" ]; then
+    libs="$("$LDCONFIG" -p 2>/dev/null)"
     case "$libs" in *libxcb-cursor.so.0*) ;; *) missing="$missing libxcb-cursor0";; esac
     case "$libs" in *libxkbcommon-x11.so.0*) ;; *) missing="$missing libxkbcommon-x11-0";; esac
     case "$libs" in *libEGL.so.1*) ;; *) missing="$missing libegl1";; esac
@@ -441,7 +494,7 @@ exec "$HERE/usr/bin/osc-dreamchatbox" "$@"
 APPRUN
 chmod +x "$BUILD_DIR/AppRun"
 
-# 5b. Dateirechte: alles für alle lesbar, Ordner/Programme ausführbar.
+# 5c. Dateirechte: alles für alle lesbar, Ordner/Programme ausführbar.
 # squashfs übernimmt die Rechte 1:1. Eine Datei mit 600 (nur Besitzer)
 # ist für jeden anderen Benutzer unlesbar -> "PermissionError: [Errno 13]"
 # beim Import, z. B. im AppImage-Katalogtest (der läuft unter einer

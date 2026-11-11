@@ -1620,10 +1620,14 @@ class TextboxPageMixin:
         self.ai_login_btn.setVisible(False)
         self.ai_start_btn.setVisible(False)
         self.ai_pull_btn.setVisible(False)
-        self.ai_refresh_btn.setVisible(method != ai.METHOD_AI_CUSTOM)
+        self.ai_refresh_btn.setVisible(True)
         self._fill_ai_models(method, ai.MODELS.get(method, []))
         if method == ai.METHOD_AI_CUSTOM:
-            self.ai_status_lbl.setText("")
+            # v1.7.3: local models (Ollama) into the dropdown - off the GUI thread
+            self.ai_status_lbl.setText("⏳ Looking for local models …")
+            self.run_async(lambda: ai.models_for(method),
+                           lambda models, m=method: self._on_custom_models(m, models),
+                           interval=150)
             return
         self.ai_status_lbl.setText("⏳ Checking …")
 
@@ -1639,6 +1643,17 @@ class TextboxPageMixin:
             return st
         self.run_async(work, lambda st, m=method: self._on_ai_status(m, st),
                        interval=150)
+
+    def _on_custom_models(self, method, models):
+        """Your own AI: installed local models into the (editable) dropdown."""
+        if method != self._tr_view_method():
+            return      # switched to another service meanwhile
+        self._fill_ai_models(method, models)
+        self.ai_status_lbl.setText(
+            f"🧩 {len(models)} local model(s) found – pick one or type "
+            f"any other name." if models else
+            "No local models found (Ollama not running) – type the model "
+            "name yourself.")
 
     def _on_ai_status(self, method, st):
         self.refresh_ai_setup()

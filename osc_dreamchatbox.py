@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-OSC-DreamChatbox v1.7.2
+OSC-DreamChatbox v1.7.3
 A clean VRChat OSC chatbox sender.
 
 Entry point only – the actual code lives in:
@@ -104,6 +104,23 @@ def main():
     if headless.wants_headless(sys.argv[1:]):
         sys.exit(headless.main(sys.argv[1:],
                                set_process_name=_set_process_name))
+    # Window mode: started from an icon there is no terminal, so a crash
+    # before the window is up used to be invisible (icon bounces, then
+    # nothing). last-start.log in the config folder keeps it - see
+    # core/startlog.py.
+    from core import startlog
+    startlog.install()
+    try:
+        _run_window()
+    except SystemExit:
+        raise
+    except BaseException as e:      # noqa: BLE001 - reported, then exit
+        startlog.fail(e)
+        sys.exit(1)
+
+
+def _run_window():
+    """Everything of the window mode (main() wraps it in the start log)."""
     _set_process_name()
     _set_windows_app_id()
     from PyQt6.QtGui import QIcon
@@ -197,6 +214,8 @@ def main():
     except Exception:
         pass
     win.show()
+    from core import startlog
+    startlog.started()
     # after show(), so the dialog has a window to sit on top of instead
     # of appearing over an empty desktop
     warn_if_no_emoji_font(win)
