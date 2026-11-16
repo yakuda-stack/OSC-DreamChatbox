@@ -3,6 +3,12 @@
 The short version of every release — what you will actually notice.
 The full details are in the changelog.
 
+## v1.7.4 – 2026-11-12
+
+- **Pick your AI model from a list:** click the model field – installed models on top, “✏ Custom …” at the bottom to type your own.
+- **Two-way translation has its own card:** between Translation and Presets, movable with the ⠿ dots.
+- **Tidier To Text card:** fold it away with *› Settings* – remembered after a restart.
+
 ## v1.7.3 – 2026-11-11
 
 - **AppImage runs on more systems:** Ubuntu, Debian, Fedora, Arch, CachyOS and Linux Mint, no matter which Python is installed – missing Qt libraries on Debian are detected again, and every build is test-started before packing.

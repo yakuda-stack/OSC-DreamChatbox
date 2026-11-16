@@ -306,6 +306,16 @@ class TextboxPageMixin:
         st_head.addWidget(self.toggle_stt_block)
         st_head.addWidget(ToggleLabel("Block apps", self.toggle_stt_block))
         sc.addLayout(st_head)
+        # v1.7.4: ⌄ Settings folds the whole card body away (the header with
+        # Block apps stays) - for a tidier page. Remembered in the config.
+        self.stt_expander = self.make_settings_expander(self.on_stt_card_open)
+        sc.addWidget(self.stt_expander)
+        self.stt_body = QWidget()
+        stt_body = QVBoxLayout(self.stt_body)
+        stt_body.setContentsMargins(0, 0, 0, 0)
+        stt_body.setSpacing(10)
+        sc.addWidget(self.stt_body)
+        sc = stt_body       # everything below goes into the foldable body
 
         # ---- main mode switch: Speech to Text vs Text to Text ----
         mode_row = QHBoxLayout()
@@ -780,10 +790,12 @@ class TextboxPageMixin:
         bb.addWidget(self.block_exc_box)
         self.block_box.setVisible(False)
         sc.addWidget(self.block_box)
-        # two-way translation: the other players, translated for you
-        # (ui/pages/twoway_page.py)
-        self.build_twoway_section(sc)
         self._sync_stt_availability()
+        opened = bool(self.cfg.get("stt_card_open", True))
+        self.stt_expander.blockSignals(True)
+        self.stt_expander.setChecked(opened)
+        self.stt_expander.blockSignals(False)
+        self.set_expanded(self.stt_expander, self.stt_body, opened)
 
         # ----- translation -----
         # Its own card since v1.6.5: the service, keys and how a
@@ -1079,13 +1091,21 @@ class TextboxPageMixin:
         am = QHBoxLayout()
         am.setContentsMargins(0, 0, 0, 0)
         am.addWidget(QLabel("Model:"))
+        # v1.7.3: a real dropdown - installed models on top, other
+        # suggestions below, "✏ Custom …" at the very bottom opens a field
+        # for any other name
         self.ai_model_combo = QComboBox()
-        self.ai_model_combo.setEditable(True)
         self.ai_model_combo.setToolTip(
-            "Pick one or type any other model name.")
-        self.ai_model_combo.currentTextChanged.connect(self.on_ai_model)
+            "Click to pick a model – installed ones are on top. "
+            "“✏ Custom …” at the bottom lets you type any other name.")
+        self.ai_model_combo.currentIndexChanged.connect(self.on_ai_model_pick)
         am.addWidget(self.ai_model_combo, 1)
         ar.addLayout(am)
+        self.ai_model_custom = QLineEdit()
+        self.ai_model_custom.setPlaceholderText("Type a model name, e.g. llama3.1:8b")
+        self.ai_model_custom.textChanged.connect(self.on_ai_model)
+        self.ai_model_custom.hide()
+        ar.addWidget(self.ai_model_custom)
         self.ai_url_row = QWidget()
         au = QHBoxLayout(self.ai_url_row)
         au.setContentsMargins(0, 0, 0, 0)
@@ -1244,14 +1264,24 @@ class TextboxPageMixin:
             self.preset_edits.append(edit)
             self.preset_rows.append(row_w)
 
+        # two-way translation: the other players, translated for you -
+        # its own card since v1.7.3 (ui/pages/twoway_page.py)
+        wcard = self.build_twoway_section()
+
         # add the cards in the saved order (drag the 3x3 dots to reorder)
-        self.tb_cards = {"chat": card, "stt": scard,
-                         "translate": tcard, "presets": pcard}
+        self.tb_cards = {"chat": card, "stt": scard, "translate": tcard,
+                         "twoway": wcard, "presets": pcard}
         self.tb_layout = layout
         for key in self.cfg["textbox_order"]:
             layout.addWidget(self.tb_cards[key])
         layout.addStretch()
         return page
+
+    def on_stt_card_open(self, opened):
+        """To Text: ⌄ Settings - show / fold away everything below the header."""
+        self.set_expanded(self.stt_expander, self.stt_body, opened)
+        self.cfg["stt_card_open"] = bool(opened)
+        self.save_config_later()
 
     def tb_card_drag(self, key, global_pos):
         order = self.cfg["textbox_order"]
@@ -1650,10 +1680,10 @@ class TextboxPageMixin:
             return      # switched to another service meanwhile
         self._fill_ai_models(method, models)
         self.ai_status_lbl.setText(
-            f"🧩 {len(models)} local model(s) found – pick one or type "
-            f"any other name." if models else
-            "No local models found (Ollama not running) – type the model "
-            "name yourself.")
+            f"🧩 {len(models)} local model(s) found – pick one, or "
+            f"“✏ Custom …” at the bottom for any other name." if models else
+            "No local models found (Ollama not running) – pick "
+            "“✏ Custom …” and type the model name.")
 
     def _on_ai_status(self, method, st):
         self.refresh_ai_setup()
@@ -1668,7 +1698,8 @@ class TextboxPageMixin:
             running = st.get("running")
             model = ai.model_of(method)
             have = st.get("have", [])
-            self._fill_ai_models(method, st.get("models", []))
+            self._fill_ai_models(method, st.get("models", []),
+                                 installed=have)
             self.ai_start_btn.setVisible(bool(inst) and not running)
             self.ai_pull_btn.setVisible(bool(running))
             if running:
@@ -1724,17 +1755,62 @@ class TextboxPageMixin:
         url = ai.ollama_url()
         return "127.0.0.1" in url or "localhost" in url
 
-    def _fill_ai_models(self, method, models):
+    #: item data of "✏ Custom …" in the model dropdown
+    MODEL_CUSTOM = "\x00custom"
+
+    def _fill_ai_models(self, method, models, installed=()):
+        """Model dropdown: installed models on top (✅), then the other
+        suggestions, then "✏ Custom …". A saved name that is in none of
+        them shows up as Custom with the name in the field below."""
         c = self.ai_model_combo
         cur = ai.model_of(method)
+        installed = [m for m in installed if m]
+        if method == ai.METHOD_AI_CUSTOM:
+            installed = [m for m in models if m]     # all local models
+        others = [m for m in models if m and m not in installed]
         c.blockSignals(True)
         c.clear()
-        for m in models:
-            c.addItem(m)
-        if cur and c.findText(cur) < 0:
-            c.addItem(cur)
-        c.setCurrentText(cur)
+        for m in installed:
+            c.addItem(f"✅ {m}", m)
+        if installed and others:
+            c.insertSeparator(c.count())
+        for m in others:
+            note = "  (not downloaded)" if method == ai.METHOD_OLLAMA else ""
+            c.addItem(m + note, m)
+        if c.count():
+            c.insertSeparator(c.count())
+        c.addItem("✏ Custom …", self.MODEL_CUSTOM)
+        i = c.findData(cur) if cur else -1
+        if i < 0 and not cur and c.count() > 1:
+            i = 0                       # nothing chosen yet: first entry
+            self._save_ai_model(method, c.itemData(0))
+        custom = i < 0
+        if custom:
+            i = c.findData(self.MODEL_CUSTOM)
+        c.setCurrentIndex(i)
         c.blockSignals(False)
+        self.ai_model_custom.blockSignals(True)
+        self.ai_model_custom.setText(cur if custom else "")
+        self.ai_model_custom.blockSignals(False)
+        self.ai_model_custom.setVisible(custom)
+
+    def on_ai_model_pick(self, _index):
+        """A dropdown entry picked: a model, or ✏ Custom (then type it)."""
+        data = self.ai_model_combo.currentData()
+        if data == self.MODEL_CUSTOM:
+            self.ai_model_custom.show()
+            self.ai_model_custom.setFocus()
+            self.on_ai_model(self.ai_model_custom.text())
+            return
+        self.ai_model_custom.hide()
+        if data:
+            self.on_ai_model(data)
+
+    def _save_ai_model(self, method, name):
+        key = ai.MODEL_KEYS.get(method)
+        if key:
+            self.cfg[key] = (name or "").strip()
+            self.save_config_later()
 
     def on_ai_model(self, text):
         method = self._tr_view_method()

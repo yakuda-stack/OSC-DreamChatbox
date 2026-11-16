@@ -284,7 +284,7 @@ class ConfigMixin:
                                 "PEANUTBUTTER"] + [""] * 14,
             "textbox_preset_count": 6,
             "textbox_pause_sec": 10,
-            "textbox_order": ["chat", "stt", "translate", "presets"],
+            "textbox_order": ["chat", "stt", "translate", "twoway", "presets"],
             "stt_language": "de-DE",
             "stt_block": False,
             "stt_output": "",
@@ -381,6 +381,8 @@ class ConfigMixin:
             "chat_anchor": "aio",
             "chat_hold_sec": 0,      # 0 = keep until cleared/replaced
             "stt_mode": "stt",       # "stt" (speech->text) | "ttt" (text->text)
+            # v1.7.4: To Text card unfolded (⌄ Settings)
+            "stt_card_open": True,
             "stt_show_both": False,  # send "source -> translation" in chat
             "aio_active": False,
             # "normal" = the five template strings on the Apps page,
@@ -756,12 +758,15 @@ class ConfigMixin:
         defaults["textbox_presets"] = presets + [""] * (20 - len(presets))
         defaults["textbox_preset_count"] = min(20, max(1, int(
             defaults.get("textbox_preset_count", 5))))
-        tvalid = ["chat", "stt", "translate", "presets"]
+        tvalid = ["chat", "stt", "translate", "twoway", "presets"]
         torder = [k for k in defaults.get("textbox_order", []) if k in tvalid]
         # v1.6.5: the Translation card is new - slot it in right below
         # To Text, where its settings used to live, not at the very end
         if "translate" not in torder and "stt" in torder:
             torder.insert(torder.index("stt") + 1, "translate")
+        # v1.7.3: Two-way got its own card - right below Translation
+        if "twoway" not in torder and "translate" in torder:
+            torder.insert(torder.index("translate") + 1, "twoway")
         torder += [k for k in tvalid if k not in torder]
         defaults["textbox_order"] = torder
         aio = defaults.get("aio_templates")

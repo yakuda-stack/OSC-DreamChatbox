@@ -7,6 +7,30 @@ All notable changes to OSC-DreamChatbox are documented here.
 🟢 Linux Support: Complete & Stable (v1.2.6)
 
 
+## [v1.7.4] – 2026-11-12
+
+### Changed
+
+- **Translation → AI model: a real dropdown.** In v1.7.3 the *Model* field
+  only looked like a text field. Now a click opens a list: your
+  **installed local models on top** (✅), the other suggestions below
+  (Ollama: *not downloaded*), and **✏ Custom …** at the very bottom –
+  picking it shows a field to type any other model name. A saved name that
+  is in no list opens as Custom with the name filled in. Works for Local AI
+  (Ollama), Claude, Gemini, ChatGPT and *Your own AI*. The list loads in
+  the background; ⟳ reloads it, e.g. after `ollama pull`
+  (`ui/pages/textbox_page.py`).
+- **To Text card can be folded away.** A *› Settings* button below the
+  title folds everything in the card away – the *Block apps* switch in
+  the header stays. Open by default, the state is remembered after a
+  restart (`stt_card_open`, `ui/pages/textbox_page.py`).
+- **Two-way translation (hear others) is its own card.** It used to be a
+  block at the bottom of the To Text card; now it sits between
+  *Translation* and *Presets* and can be moved with the ⠿ dots like the
+  other cards. Existing setups get it slotted in right below Translation,
+  a custom card order is kept (`ui/pages/twoway_page.py`,
+  `textbox_order` in `ui/config_mixin.py`).
+
 ## [v1.7.3] – 2026-11-11
 
 ### Added

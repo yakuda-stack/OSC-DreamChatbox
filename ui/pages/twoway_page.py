@@ -27,11 +27,10 @@ Mixin for MainWindow; all `self.*` refer to the MainWindow instance.
 import time
 
 from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtWidgets import (QComboBox, QDoubleSpinBox, QHBoxLayout,
+from PyQt6.QtWidgets import (QComboBox, QDoubleSpinBox, QFrame, QHBoxLayout,
                              QLabel, QLineEdit, QMenu, QMessageBox,
-                             QPlainTextEdit,
-                             QPushButton,
-                             QSlider, QSpinBox, QVBoxLayout, QWidget)
+                             QPlainTextEdit, QPushButton, QSlider, QSpinBox,
+                             QVBoxLayout, QWidget)
 
 from core import audiolevel, micgroups
 from core.constants import (CHAT_MODE_DIRECT, CHAT_MODE_LINE, CHAT_MODE_VARS,
@@ -44,7 +43,7 @@ from core.speechtotext import (LANGUAGES, OUTPUT_LANGUAGES, MicTest,
                                list_microphone_groups, resolve_entry)
 from core.translators import translate_with_fallback
 from ui.miclevel import LevelMeter
-from ui.ui_main import ToggleLabel, ToggleSwitch
+from ui.ui_main import DragHandle, ToggleLabel, ToggleSwitch
 
 #: sensitivity defaults for game audio. Automatic ON by default; with loud
 #: world music the automatic value can climb until nothing counts as
@@ -104,8 +103,10 @@ CONVERSATION_SET_NAME = "Conversation"
 
 class TwoWayMixin:
     # ------------------------------------------------------------ build
-    def build_twoway_section(self, sc):
-        """Appends the collapsible Two-way block to the To Text card."""
+    def build_twoway_section(self):
+        """The Two-way card. v1.7.3: its own card (was a block inside To
+        Text) - by default between Translation and Presets, movable with
+        the 3x3 dots like the other cards. Returns the card."""
         self.stt_twoway = SpeechWorker()
         self.twoway_router = app_capture.AppRouter(self.log)
         self.twoway_listening = False
@@ -113,11 +114,22 @@ class TwoWayMixin:
         self.twoway_timer = QTimer(self)
         self.twoway_timer.timeout.connect(self.poll_twoway)
 
+        card = QFrame()
+        card.setObjectName("card")
+        sc = QVBoxLayout(card)
+        sc.setContentsMargins(16, 14, 16, 16)
+        sc.setSpacing(10)
+        head = QHBoxLayout()
+        head.addWidget(DragHandle(lambda pos: self.tb_card_drag("twoway", pos),
+                                  lambda: self.tb_card_drag_end("twoway")))
+        title = QLabel("Two-way translation (hear others)")
+        title.setObjectName("cardtitle")
+        head.addWidget(title)
+        head.addStretch()
+        sc.addLayout(head)
         self.twoway_expander = self.make_settings_expander(
             lambda on: self.set_expanded(
-                self.twoway_expander, self.twoway_box, on,
-                "Two-way translation (hear others)"),
-            "Two-way translation (hear others)")
+                self.twoway_expander, self.twoway_box, on))
         sc.addWidget(self.twoway_expander)
         self.twoway_box = QWidget()
         tw = QVBoxLayout(self.twoway_box)
@@ -277,6 +289,7 @@ class TwoWayMixin:
 
         self.twoway_box.setVisible(False)
         sc.addWidget(self.twoway_box)
+        return card
 
     def _build_twoway_filter(self, tw):
         """Only some programs / all but some - see app_capture.py."""
