@@ -78,13 +78,29 @@ DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434"
 MODELS = {
     # small, multilingual, fast enough next to VRChat on one GPU
     METHOD_OLLAMA: ["gemma3:4b", "qwen3:4b", "llama3.2:3b",
-                    "gemma3:12b", "aya-expanse:8b"],
+                    "gemma3:12b", "aya-expanse:8b",
+                    # Google's translation-only models (55 languages)
+                    "translategemma:4b", "translategemma:12b"],
     METHOD_CLAUDE: ["haiku", "sonnet", "opus"],
     METHOD_GEMINI: ["flash", "flash-lite", "pro"],
     # luna = fast (ideal for short chat lines), terra / sol = stronger
     METHOD_CHATGPT: ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"],
 }
 MODEL_KEYS = {m: f"stt_{m}_model" for m in AI_METHODS}
+
+#: v1.7.5: recommended models get a note in the dropdown
+MODEL_BADGES = {"translategemma:12b": "\u2b50 Best for translation",
+                "translategemma:4b": "\u2b50 Good for translation (fast)"}
+
+
+def model_badge(name: str) -> str:
+    """The note for a recommended model ("" = none). Tags with a
+    quantization behind it (translategemma:12b-it-q8_0) count too."""
+    low = (name or "").strip().lower()
+    for model, badge in MODEL_BADGES.items():
+        if low == model or low.startswith(model + "-"):
+            return badge
+    return ""
 
 DEFAULTS = {
     "stt_ai_ollama_model": "gemma3:4b",
@@ -483,7 +499,33 @@ def lang_name(code: str) -> str:
     return _NAMES.get(low) or _NAMES.get(low.split("-")[0]) or code
 
 
-def make_prompt(text: str, source: str, target: str) -> str:
+def is_translategemma(model: str) -> bool:
+    return "translategemma" in (model or "").lower()
+
+
+def make_translategemma_prompt(text: str, source: str, target: str) -> str:
+    """TranslateGemma expects its own fixed template (two blank lines
+    before the text). Auto-detect: no source language in the lines."""
+    tgt = lang_name(target)
+    tcode = (target or "").strip()
+    has_src = source and source != "auto"
+    src = lang_name(source) if has_src else ""
+    role = (f"You are a professional {src} ({source.strip()}) to {tgt} "
+            f"({tcode}) translator." if has_src else
+            f"You are a professional translator into {tgt} ({tcode}).")
+    frm = f"{src} " if has_src else ""
+    return (f"{role} Your goal is to accurately convey the meaning and "
+            f"nuances of the original {frm}text while adhering to {tgt} "
+            "grammar, vocabulary, and cultural sensitivities.\n"
+            f"Produce only the {tgt} translation, without any additional "
+            "explanations or commentary. Please translate the following "
+            f"{frm}text into {tgt}:\n\n\n" + text)
+
+
+def make_prompt(text: str, source: str, target: str,
+                model: str = "") -> str:
+    if is_translategemma(model):
+        return make_translategemma_prompt(text, source, target)
     src = lang_name(source) if source and source != "auto" else ""
     frm = f"from {src} " if src else ""
     return (f"Translate the following VRChat chat message {frm}into "
@@ -513,7 +555,8 @@ def clean_answer(out: str, text: str = "") -> str:
 # ---------------------------------------------------------- translate
 def _ollama(text, source, target) -> str:
     model = model_of(METHOD_OLLAMA)
-    payload = {"model": model, "prompt": make_prompt(text, source, target),
+    payload = {"model": model,
+               "prompt": make_prompt(text, source, target, model),
                "stream": False, "keep_alive": "5m",
                "options": {"temperature": 0.2}}
     try:
@@ -656,7 +699,9 @@ def _custom(text, source, target) -> str:
     snippet = (snippet.replace("{prompt}", "{text}")
                .replace("{model}", model_of(METHOD_AI_CUSTOM)))
     try:
-        return ct.translate(snippet, "", make_prompt(text, source, target),
+        return ct.translate(snippet, "", make_prompt(
+                                text, source, target,
+                                model_of(METHOD_AI_CUSTOM)),
                             source or "auto", target, timeout=TIMEOUT) or ""
     except ct.CustomError as e:
         raise AIError(f"Custom AI: {e}") from None

@@ -103,6 +103,7 @@ Wichtige Konstanten (Limit, Rate-Limit, Pfade): `core/constants.py`
 | **KI-Übersetzung (Ollama, Claude, Gemini …)** | `ui/pages/textbox_page.py` (`on_ai_*`) | `core/ai_translator.py` |
 | **Custom-Übersetzer (curl/Befehl)** | `ui/pages/textbox_page.py` (`on_custom_*`) | `core/custom_translator.py` |
 | **Two-Way-Übersetzung** | `ui/pages/twoway_page.py` | `core/backends/app_capture.py` (nur bestimmte Programme aufnehmen) |
+| **Pop-out-Fenster (To Text, Two-Way)** | `ui/pages/textbox_page.py` (`pop_card`, `dock_card`) | `ui/card_popout.py` (das Fenster selbst) |
 | **Plugins (Seite)** | `ui/pages/plugins_page.py` | `core/plugins.py` (Laden, API, Hooks) |
 | **Plugin-Store** | `ui/pages/plugins_page.py` | `core/plugin_store.py`, `config/plugins.json` |
 | **Profile** | `ui/pages/profiles_panel.py` (Seitenleiste) | `core/profiles.py` |

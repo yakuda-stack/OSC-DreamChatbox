@@ -150,6 +150,7 @@ STYLE = """
 QMainWindow { background: #14161c; }
 QWidget { color: #d7dbe2; font-size: 14px; background: transparent; }
 QStackedWidget, QStackedWidget > QWidget { background: #14161c; }
+QDialog#popoutwin { background: #14161c; }
 #sidebar { background: #0f1116; }
 #rightpanel { background: #101218; }
 #navbtn {
@@ -217,6 +218,8 @@ QSpinBox::up-button:hover, QSpinBox::down-button:hover { background: #333947; }
     font-size: 15px; padding: 0;
 }
 #iconbtn:hover { background: #2f3542; border-color: #5b8dc9; }
+#popoutbtn { background: transparent; border: none; border-radius: 6px; padding: 0; }
+#popoutbtn:hover { background: #2f3542; }
 #sendbtn {
     background: #5b8dc9; color: #ffffff; border: none; border-radius: 8px;
     padding: 4px 16px; font-weight: 600;

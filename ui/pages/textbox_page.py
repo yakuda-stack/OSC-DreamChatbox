@@ -7,7 +7,7 @@ window class stays small. All `self.*` refer to the MainWindow instance.
 
 import os
 import time
-from PyQt6.QtCore import QTimer, Qt, QUrl
+from PyQt6.QtCore import QSize, QTimer, Qt, QUrl
 from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (
     QFileDialog, QPlainTextEdit, QCheckBox, QComboBox, QDoubleSpinBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QSlider, QSpinBox, QVBoxLayout, QWidget)
@@ -25,6 +25,7 @@ from core.speechtotext import (
     missing_dependency, reload_sr, resolve_entry, has_microphone_driver,
     reload_mic_driver)
 from ui.miclevel import LevelMeter
+from ui.card_popout import CardPopout, popout_icon
 from ui.history_edit import attach_history
 from core.plugins import ANCHOR_LABELS
 from core import pyextras
@@ -298,6 +299,7 @@ class TextboxPageMixin:
         st.setObjectName("cardtitle")
         st_head.addWidget(st)
         st_head.addStretch()
+        st_head.addWidget(self.make_popout_button("stt"))
         self.toggle_stt_block = ToggleSwitch()
         self.toggle_stt_block.toggled.connect(self.on_stt_block)
         self.toggle_stt_block.setToolTip(
@@ -308,13 +310,17 @@ class TextboxPageMixin:
         sc.addLayout(st_head)
         # v1.7.4: ⌄ Settings folds the whole card body away (the header with
         # Block apps stays) - for a tidier page. Remembered in the config.
-        self.stt_expander = self.make_settings_expander(self.on_stt_card_open)
-        sc.addWidget(self.stt_expander)
+        # v1.7.5: only the settings fold away (⌄ Speech settings) - the mode
+        # switch, Start recording / the text field and the status stay
+        # visible. `top` = always visible, `sc` = the foldable body; the
+        # expander + body are added below the status line.
+        self.stt_expander = self.make_settings_expander(
+            self.on_stt_card_open, self.STT_SETTINGS_LABEL)
         self.stt_body = QWidget()
         stt_body = QVBoxLayout(self.stt_body)
         stt_body.setContentsMargins(0, 0, 0, 0)
         stt_body.setSpacing(10)
-        sc.addWidget(self.stt_body)
+        top = sc
         sc = stt_body       # everything below goes into the foldable body
 
         # ---- main mode switch: Speech to Text vs Text to Text ----
@@ -327,7 +333,7 @@ class TextboxPageMixin:
         self.stt_mode_lbl.setStyleSheet("font-weight: 600;")
         mode_row.addWidget(self.stt_mode_lbl)
         mode_row.addStretch()
-        sc.addLayout(mode_row)
+        top.addLayout(mode_row)
         mode_hint = QLabel("OFF = Speech to Text (microphone) \u00b7 "
                            "ON = Text to Text (type & translate).")
         mode_hint.setObjectName("dim")
@@ -457,7 +463,7 @@ class TextboxPageMixin:
         self.stt_button.toggled.connect(self.on_stt_toggled)
         rec_row.addWidget(self.stt_button)
         rec_row.addStretch()
-        sc.addWidget(self.rec_row_w)
+        top.addWidget(self.rec_row_w)
 
         # ---- text input (text mode only) ----
         self.stt_text_box = QWidget()
@@ -490,12 +496,12 @@ class TextboxPageMixin:
         self.ttt_send_btn.clicked.connect(self.send_ttt)
         ttt_row.addWidget(self.ttt_send_btn)
         tb.addLayout(ttt_row)
-        sc.addWidget(self.stt_text_box)
+        top.addWidget(self.stt_text_box)
 
         self.stt_status_lbl = QLabel("")
         self.stt_status_lbl.setObjectName("dim")
         self.stt_status_lbl.setWordWrap(True)
-        sc.addWidget(self.stt_status_lbl)
+        top.addWidget(self.stt_status_lbl)
         # one-click installer for the pure-python half of Speech to Text.
         # Arch has no working package for it (the AUR one drags in
         # backends we do not use and currently fails to build), so the app
@@ -511,7 +517,9 @@ class TextboxPageMixin:
         self._stt_install_target = "speech_recognition"
         self.stt_install_btn.clicked.connect(self.on_install_speech)
         self.stt_install_btn.setVisible(False)
-        sc.addWidget(self.stt_install_btn)
+        top.addWidget(self.stt_install_btn)
+        top.addWidget(self.stt_expander)
+        top.addWidget(self.stt_body)
 
         # ---- Send as: collapsed, the summary sits in the arrow ----
         self.send_opts_expander = self.make_settings_expander(
@@ -795,7 +803,8 @@ class TextboxPageMixin:
         self.stt_expander.blockSignals(True)
         self.stt_expander.setChecked(opened)
         self.stt_expander.blockSignals(False)
-        self.set_expanded(self.stt_expander, self.stt_body, opened)
+        self.set_expanded(self.stt_expander, self.stt_body, opened,
+                          self.STT_SETTINGS_LABEL)
 
         # ----- translation -----
         # Its own card since v1.6.5: the service, keys and how a
@@ -1278,8 +1287,10 @@ class TextboxPageMixin:
         return page
 
     def on_stt_card_open(self, opened):
-        """To Text: ⌄ Settings - show / fold away everything below the header."""
-        self.set_expanded(self.stt_expander, self.stt_body, opened)
+        """To Text: ⌄ Speech settings - show / fold away the settings
+        (v1.7.5: Start recording and the status stay visible)."""
+        self.set_expanded(self.stt_expander, self.stt_body, opened,
+                          self.STT_SETTINGS_LABEL)
         self.cfg["stt_card_open"] = bool(opened)
         self.save_config_later()
 
@@ -1289,17 +1300,139 @@ class TextboxPageMixin:
         y = global_pos.y()
         others = [k for k in order if k != key]
         new_idx = sum(1 for k in others
-                      if y > self.tb_cards[k].mapToGlobal(
-                          self.tb_cards[k].rect().center()).y())
+                      if y > self._tb_slot(k).mapToGlobal(
+                          self._tb_slot(k).rect().center()).y())
         if new_idx != cur:
             order.remove(key)
             order.insert(new_idx, key)
-            self.tb_layout.removeWidget(self.tb_cards[key])
-            self.tb_layout.insertWidget(1 + new_idx, self.tb_cards[key])
+            self.tb_layout.removeWidget(self._tb_slot(key))
+            self.tb_layout.insertWidget(1 + new_idx, self._tb_slot(key))
 
     def tb_card_drag_end(self, key):
         self.save_config()
         self.log("Textbox order: " + " > ".join(self.cfg["textbox_order"]))
+
+    # ================================================================
+    # Pop-out cards (v1.7.5)
+    # ================================================================
+    # The pop-out button (box + arrow) in the header of To Text / Two-way moves the card into its own
+    # window, the app stays usable. A placeholder keeps its place in the
+    # card order; closing the window (or the button again) puts the card back there.
+    STT_SETTINGS_LABEL = "Speech settings"
+    POPOUT_TITLES = {"stt": "To Text",
+                     "twoway": "Two-way translation (hear others)"}
+
+    def _popout_state(self):
+        if not hasattr(self, "popouts"):
+            self.popouts = {}        # key -> open CardPopout
+            self.popout_slots = {}   # key -> placeholder in the page
+            self.popout_btns = {}    # key -> pop-out button in the header
+            self.popout_geom = {}    # key -> last window geometry
+        return self.popouts
+
+    def _tb_slot(self, key):
+        """What sits in the page for this card: the card or, while it is
+        popped out, its placeholder."""
+        if key in self._popout_state():
+            return self.popout_slots[key]
+        return self.tb_cards[key]
+
+    def make_popout_button(self, key):
+        """Transparent button with a drawn "open in a window" icon (box
+        + arrow, like in VRChat) - the ↗ emoji showed up as a blue tile."""
+        self._popout_state()
+        btn = QPushButton()
+        btn.setObjectName("popoutbtn")
+        btn.setFixedSize(30, 30)
+        btn.setIconSize(QSize(20, 20))
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn.clicked.connect(lambda _=False, k=key: self.toggle_card_popout(k))
+        self.popout_btns[key] = btn
+        self._sync_popout_button(key)
+        return btn
+
+    def refresh_popout_icons(self):
+        """Theme changed: redraw the icons in the new text colour."""
+        for key in getattr(self, "popout_btns", {}):
+            self._sync_popout_button(key)
+
+    def _popout_placeholder(self, key):
+        slot = self.popout_slots.get(key)
+        if slot is not None:
+            return slot
+        slot = QFrame()
+        slot.setObjectName("card")
+        row = QHBoxLayout(slot)
+        row.setContentsMargins(16, 10, 16, 10)
+        lbl = QLabel(f"{self.POPOUT_TITLES[key]} is open in its own "
+                     f"window.")
+        lbl.setObjectName("dim")
+        lbl.setWordWrap(True)
+        row.addWidget(lbl, 1)
+        back = QPushButton("Back into the app")
+        back.setObjectName("linkbtn")
+        back.setFixedHeight(30)
+        back.setCursor(Qt.CursorShape.PointingHandCursor)
+        back.clicked.connect(lambda _=False, k=key: self.toggle_card_popout(k))
+        row.addWidget(back)
+        self.popout_slots[key] = slot
+        return slot
+
+    def _sync_popout_button(self, key):
+        btn = self.popout_btns.get(key)
+        if btn is None:
+            return
+        popped = key in self.popouts
+        color = self.current_theme_tokens().get("text", "#e5e9ef")
+        btn.setIcon(popout_icon(color, inward=popped))
+        btn.setToolTip("Back into the app" if popped else
+                       "Pop out into its own window \u2013 the app stays "
+                       "usable")
+
+    def toggle_card_popout(self, key):
+        win = self._popout_state().get(key)
+        if win is not None:
+            win.close()          # finished -> dock_card()
+        else:
+            self.pop_card(key)
+
+    def pop_card(self, key):
+        if key in self._popout_state():
+            return
+        card = self.tb_cards[key]
+        width = card.width()
+        slot = self._popout_placeholder(key)
+        self.tb_layout.insertWidget(self.tb_layout.indexOf(card), slot)
+        self.tb_layout.removeWidget(card)
+        slot.show()
+        win = CardPopout(self, self.POPOUT_TITLES[key])
+        win.take(card)
+        card.show()
+        geom = self.popout_geom.get(key)
+        if geom is not None:
+            win.restoreGeometry(geom)
+        else:
+            win.resize(max(width, 520),
+                       min(card.sizeHint().height() + 40, 760))
+        win.finished.connect(lambda _r, k=key: self.dock_card(k))
+        self.popouts[key] = win
+        self._sync_popout_button(key)
+        win.show()
+        win.raise_()
+
+    def dock_card(self, key):
+        win = self._popout_state().pop(key, None)
+        if win is None:
+            return
+        self.popout_geom[key] = win.saveGeometry()
+        card = win.give_back()
+        slot = self.popout_slots[key]
+        self.tb_layout.insertWidget(self.tb_layout.indexOf(slot), card)
+        self.tb_layout.removeWidget(slot)
+        slot.hide()
+        card.show()
+        self._sync_popout_button(key)
+        win.deleteLater()
 
     # ================================================================
     # Block apps
@@ -1771,12 +1904,14 @@ class TextboxPageMixin:
         c.blockSignals(True)
         c.clear()
         for m in installed:
-            c.addItem(f"✅ {m}", m)
+            badge = ai.model_badge(m)
+            c.addItem(f"✅ {m}" + (f"   {badge}" if badge else ""), m)
         if installed and others:
             c.insertSeparator(c.count())
         for m in others:
             note = "  (not downloaded)" if method == ai.METHOD_OLLAMA else ""
-            c.addItem(m + note, m)
+            badge = ai.model_badge(m)
+            c.addItem(m + (f"   {badge}" if badge else "") + note, m)
         if c.count():
             c.insertSeparator(c.count())
         c.addItem("✏ Custom …", self.MODEL_CUSTOM)

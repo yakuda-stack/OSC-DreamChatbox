@@ -649,6 +649,8 @@ class MainWindow(ConfigMixin, AppsPageMixin, AdvancedPageMixin,
             style = STYLE
         self.setStyleSheet(style)
         # hand-painted items are outside the stylesheet's reach
+        if hasattr(self, "refresh_popout_icons"):
+            self.refresh_popout_icons()
         canvas = getattr(self, "graph_canvas", None)
         if canvas is not None:
             canvas.apply_tokens(self.current_theme_tokens())

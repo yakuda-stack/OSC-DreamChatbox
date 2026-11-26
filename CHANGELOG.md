@@ -7,6 +7,37 @@ All notable changes to OSC-DreamChatbox are documented here.
 🟢 Linux Support: Complete & Stable (v1.2.6)
 
 
+## [v1.7.5] – 2026-11-26
+
+### Added
+
+- **TranslateGemma in the Local AI model list.** `translategemma:4b`
+  (~3 GB, fast) and `translategemma:12b` (~8 GB, better) – Google's
+  models made only for translation (55 languages). Pick one and press
+  *📥 Download model* like the others. They get the official
+  TranslateGemma prompt format automatically (also under *Your own AI*)
+  (`core/ai_translator.py`). In the dropdown they are marked
+  *⭐ Best for translation* (12B) and *⭐ Good for translation (fast)* (4B).
+- **Pop-out cards.** The pop-out button (a box with an arrow, like in
+  VRChat, transparent) in the header of *To Text* and *Two-way
+  translation (hear others)* moves the card into its own window – the app
+  stays usable next to it. A placeholder keeps its place on the Textbox
+  page; the button again (arrow now points back in), *Back into the app*
+  in the placeholder or closing the window puts
+  it back at the same spot. The window size is remembered while the app
+  runs (`ui/card_popout.py`, `ui/pages/textbox_page.py`).
+
+### Changed
+
+- **To Text card tidied up.** *Speech or Text*, **Start recording** (or
+  the text field) and the status line are now always visible. Everything
+  else – translation service, input / output language, microphone,
+  *Also show direct hardware devices*, *Stop if the microphone is
+  missing*, *Send as*, microphone test and block exceptions – folds away
+  under **› Speech settings** (was *› Settings*, which hid the record
+  button too). Folded by default on a new install; the state is still
+  remembered (`stt_card_open`).
+
 ## [v1.7.4] – 2026-11-12
 
 ### Changed

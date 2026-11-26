@@ -3,6 +3,12 @@
 The short version of every release — what you will actually notice.
 The full details are in the changelog.
 
+## v1.7.5 – 2026-11-26
+
+- **TranslateGemma for local translation:** Google's translation-only models (4B fast, 12B better, 55 languages) are now in the Local AI model list, marked with ⭐ – pick one and press *📥 Download model*.
+- **Pop-out windows:** the box-with-arrow button puts *To Text* or *Two-way translation* into its own window, the app stays usable – click it again or close the window to put the card back.
+- **Start recording always in sight:** the To Text settings now fold away under *› Speech settings*, the record button stays visible.
+
 ## v1.7.4 – 2026-11-12
 
 - **Pick your AI model from a list:** click the model field – installed models on top, “✏ Custom …” at the bottom to type your own.

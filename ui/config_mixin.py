@@ -382,7 +382,7 @@ class ConfigMixin:
             "chat_hold_sec": 0,      # 0 = keep until cleared/replaced
             "stt_mode": "stt",       # "stt" (speech->text) | "ttt" (text->text)
             # v1.7.4: To Text card unfolded (⌄ Settings)
-            "stt_card_open": True,
+            "stt_card_open": False,
             "stt_show_both": False,  # send "source -> translation" in chat
             "aio_active": False,
             # "normal" = the five template strings on the Apps page,

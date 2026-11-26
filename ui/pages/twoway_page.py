@@ -126,6 +126,7 @@ class TwoWayMixin:
         title.setObjectName("cardtitle")
         head.addWidget(title)
         head.addStretch()
+        head.addWidget(self.make_popout_button("twoway"))
         sc.addLayout(head)
         self.twoway_expander = self.make_settings_expander(
             lambda on: self.set_expanded(

@@ -38,6 +38,20 @@ def test_prompt_names_the_languages():
     assert "from" not in ai.make_prompt("x", "", "ja").split("\n")[0]
 
 
+def test_translategemma_gets_its_own_template():
+    assert "translategemma:4b" in ai.MODELS[ai.METHOD_OLLAMA]
+    assert "translategemma:12b" in ai.MODELS[ai.METHOD_OLLAMA]
+    p = ai.make_prompt("hallo", "de", "en", "translategemma:12b")
+    assert p.startswith("You are a professional German (de) to English")
+    assert p.endswith(":\n\n\nhallo")
+    auto = ai.make_prompt("x", "", "ja", "translategemma:4b")
+    assert "translator into Japanese (ja)" in auto
+    assert "VRChat" in ai.make_prompt("x", "de", "en", "gemma3:4b")
+    assert "Best for translation" in ai.model_badge("translategemma:12b")
+    assert "Good for translation" in ai.model_badge("translategemma:4b-it-q8_0")
+    assert ai.model_badge("gemma3:12b") == ""
+
+
 def test_clean_answer():
     assert ai.clean_answer('"Hello there"') == "Hello there"
     assert ai.clean_answer("<think>hm</think>\nHi") == "Hi"
